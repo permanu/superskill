@@ -1,0 +1,31 @@
+{
+  "name": "obsidian-kb",
+  "version": "0.1.0",
+  "description": "Universal agentic knowledge base — CLI + MCP server backed by Obsidian vault",
+  "type": "module",
+  "main": "dist/mcp-server.js",
+  "bin": {
+    "obsidian-kb": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start:mcp": "node dist/mcp-server.js",
+    "start:cli": "node dist/cli.js",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "commander": "^13.1.0",
+    "gray-matter": "^4.0.3",
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
