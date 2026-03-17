@@ -21,44 +21,18 @@ export async function writeCommand(
 
   await vaultFs.verifyNoSymlinkEscape(path);
 
-  if (mode === "append") {
-    // If file doesn't exist, create it (same as overwrite) instead of throwing
+  if (mode === "append" || mode === "prepend") {
     const fileExists = await vaultFs.exists(path);
     if (!fileExists) {
-      const fm = fmOverrides ? createFrontmatter(fmOverrides) : createFrontmatter({});
-      const errors = validateFrontmatter(fm);
-      if (errors.length > 0) {
-        throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
-      }
-      const result = await vaultFs.write(path, serializeFrontmatter(fm, content));
-      return { written: true, ...result };
+      return createNewFile(vaultFs, path, content, fmOverrides);
     }
-    // Atomic read-modify-write: read existing, append content, write back
     const existing = await vaultFs.read(path);
     const { data, content: body } = parseFrontmatter(existing);
-    const updatedBody = body.trimEnd() + "\n" + content;
     const updatedFm = mergeFrontmatter(data, fmOverrides ?? {});
-    const result = await vaultFs.write(path, serializeFrontmatter(updatedFm, updatedBody));
-    return { written: true, ...result };
-  }
-
-  if (mode === "prepend") {
-    const fileExists = await vaultFs.exists(path);
-    if (!fileExists) {
-      // Create new file with content
-      const fm = fmOverrides ? createFrontmatter(fmOverrides) : createFrontmatter({});
-      const errors = validateFrontmatter(fm);
-      if (errors.length > 0) {
-        throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
-      }
-      const result = await vaultFs.write(path, serializeFrontmatter(fm, content));
-      return { written: true, ...result };
-    }
-    const existing = await vaultFs.read(path);
-    const { data, content: body } = parseFrontmatter(existing);
-    const updated = mergeFrontmatter(data, fmOverrides ?? {});
-    const newBody = content + "\n" + body;
-    const result = await vaultFs.write(path, serializeFrontmatter(updated, newBody));
+    const newBody = mode === "append"
+      ? body.trimEnd() + "\n" + content
+      : content + "\n" + body;
+    const result = await vaultFs.write(path, serializeFrontmatter(updatedFm, newBody));
     return { written: true, ...result };
   }
 
@@ -74,5 +48,20 @@ export async function writeCommand(
 
   const fullContent = serializeFrontmatter(fm, content);
   const result = await vaultFs.write(path, fullContent);
+  return { written: true, ...result };
+}
+
+async function createNewFile(
+  vaultFs: VaultFS,
+  path: string,
+  content: string,
+  fmOverrides?: Partial<Frontmatter>
+): Promise<{ written: boolean; path: string; bytes: number }> {
+  const fm = fmOverrides ? createFrontmatter(fmOverrides) : createFrontmatter({});
+  const errors = validateFrontmatter(fm);
+  if (errors.length > 0) {
+    throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
+  }
+  const result = await vaultFs.write(path, serializeFrontmatter(fm, content));
   return { written: true, ...result };
 }

@@ -258,6 +258,10 @@ todoCmd
   .option("--priority <level>", "Priority: high|medium|low", "medium")
   .action(async (text: string, opts: { project?: string; priority: string }) => {
     try {
+      const validTodoPriorities = ["high", "medium", "low"] as const;
+      if (!validTodoPriorities.includes(opts.priority as any)) {
+        throw new Error(`--priority must be one of: ${validTodoPriorities.join(", ")}`);
+      }
       await todoCommand(getVaultFs(), getConfig().vaultPath, {
         action: "add",
         item: text,
@@ -306,8 +310,12 @@ taskCmd
   .action(async (opts: { project?: string; status?: string; priority?: string; assignedTo?: string }) => {
     try {
       const validPriorities = ["p0", "p1", "p2"] as const;
+      const validStatuses = ["backlog", "in-progress", "blocked", "done", "cancelled"] as const;
       if (opts.priority && !validPriorities.includes(opts.priority as any)) {
         throw new Error(`--priority must be one of: ${validPriorities.join(", ")}`);
+      }
+      if (opts.status && !validStatuses.includes(opts.status as any)) {
+        throw new Error(`--status must be one of: ${validStatuses.join(", ")}`);
       }
       const result = await taskCommand(getVaultFs(), getConfig().vaultPath, {
         action: "list",
@@ -375,8 +383,12 @@ taskCmd
   .action(async (taskId: string, opts: { project?: string; status?: string; priority?: string; blockedBy?: string[]; assignedTo?: string; title?: string }) => {
     try {
       const validPriorities = ["p0", "p1", "p2"] as const;
+      const validStatuses = ["backlog", "in-progress", "blocked", "done", "cancelled"] as const;
       if (opts.priority && !validPriorities.includes(opts.priority as any)) {
         throw new Error(`--priority must be one of: ${validPriorities.join(", ")}`);
+      }
+      if (opts.status && !validStatuses.includes(opts.status as any)) {
+        throw new Error(`--status must be one of: ${validStatuses.join(", ")}`);
       }
       const result = await taskCommand(getVaultFs(), getConfig().vaultPath, {
         action: "update",

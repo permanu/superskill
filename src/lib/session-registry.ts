@@ -121,7 +121,13 @@ export class SessionRegistryManager {
       // Remove completed sessions older than 24 hours (based on completion time)
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       registry.sessions = registry.sessions.filter(
-        (s) => s.status !== "completed" || new Date(s.completed_at ?? s.started_at).getTime() > cutoff
+        (s) => {
+          if (s.status !== "completed") return true;
+          const ts = s.completed_at ?? s.started_at;
+          if (typeof ts !== "string") return false; // corrupt entry, purge it
+          const time = new Date(ts).getTime();
+          return !isNaN(time) && time > cutoff;
+        }
       );
       await this.writeRegistry(registry);
     });

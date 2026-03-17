@@ -85,8 +85,9 @@ export async function todoCommand(
 
     const { data, content: body } = parseFrontmatter(updated);
     const mergedFm = mergeFrontmatter(data, {});
-    await vaultFs.write(todoPath, serializeFrontmatter(mergedFm, body));
-    return { todos: parseTodos(updated) };
+    const finalContent = serializeFrontmatter(mergedFm, body);
+    await vaultFs.write(todoPath, finalContent);
+    return { todos: parseTodos(finalContent) };
   }
 
   if (options.action === "remove") {

@@ -230,7 +230,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
           const content = await readCommand(getVaultFs(), path);
           return { content: [{ type: "text", text: content }] };
-        } catch (readErr: any) {
+        } catch (readErr: unknown) {
           // Only fall through to directory listing on FILE_NOT_FOUND
           if (readErr instanceof VaultError && readErr.code === "FILE_NOT_FOUND") {
             const entries = await listCommand(getVaultFs(), path, depth ?? 1);

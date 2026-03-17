@@ -155,7 +155,7 @@ export async function searchStructured(
       if (match) {
         const lines = content.split("\n");
         const firstContentLine = lines.find(
-          (l) => l.startsWith("# ") || (l.trim() && !l.startsWith("---") && !l.includes(":"))
+          (l) => l.startsWith("# ") || (l.trim() && !l.startsWith("---") && !l.match(/^\w+:\s/))
         );
         results.push({
           path: relPath,

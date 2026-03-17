@@ -2,6 +2,7 @@ import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
 import { detectProject } from "../lib/project-detector.js";
 import { validateProjectSlug } from "../config.js";
+import { slugify } from "../lib/auto-number.js";
 
 export async function brainstormCommand(
   vaultFs: VaultFS,
@@ -23,10 +24,7 @@ export async function brainstormCommand(
   }
   validateProjectSlug(projectSlug);
 
-  const slug = options.topic
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  const slug = slugify(options.topic);
   const filePath = `projects/${projectSlug}/brainstorms/${slug}.md`;
   const today = new Date().toISOString().slice(0, 10);
 

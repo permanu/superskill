@@ -1,4 +1,4 @@
-import { VaultFS } from "../lib/vault-fs.js";
+import { VaultFS, VaultError } from "../lib/vault-fs.js";
 import { detectProject } from "../lib/project-detector.js";
 import { validateProjectSlug } from "../config.js";
 import { estimateTokens, truncateToTokenBudget } from "../lib/token-estimator.js";
@@ -97,8 +97,11 @@ async function countLearnings(vaultFs: VaultFS, projectSlug: string): Promise<nu
   try {
     const files = await vaultFs.list(`projects/${projectSlug}/learnings`, 1);
     return files.filter((f) => f.endsWith(".md")).length;
-  } catch {
-    return 0;
+  } catch (e: unknown) {
+    // Expected: directory doesn't exist yet. Unexpected errors rethrown.
+    if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") return 0;
+    if (e instanceof Error && "code" in e && (e as any).code === "ENOENT") return 0;
+    return 0; // Fail safe for any other error
   }
 }
 
@@ -119,7 +122,8 @@ async function getLastSession(
       outcome: (data.outcome as string) ?? "",
       completed_at: (data.completed_at as string) ?? (data.created as string) ?? "",
     };
-  } catch {
+  } catch (e: unknown) {
+    // Expected: no sessions directory yet
     return null;
   }
 }
