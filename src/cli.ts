@@ -16,6 +16,7 @@ import { graphRelatedCommand, graphCrossProjectCommand } from "./commands/graph.
 import { initCommand } from "./commands/init.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
 import { learnCommand, type Confidence } from "./commands/learn.js";
+import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
 
 let _config: ReturnType<typeof loadConfig> | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -665,6 +666,98 @@ graphCmd
           console.log(`  ${r.path}: ${r.snippet.slice(0, 100)}`);
         }
       }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── prune ─────────────────────────────────────────────
+program
+  .command("prune")
+  .description("Archive or delete stale vault content")
+  .option("-p, --project <slug>", "Project slug")
+  .option("-a, --all", "Prune all projects")
+  .option("-m, --mode <mode>", "Mode: dry-run|archive|delete", "dry-run")
+  .option("--sessions <days>", "Session retention in days", "30")
+  .option("--done-tasks <days>", "Done task retention in days", "30")
+  .option("--todos <days>", "Completed todo retention in days (0=keep)", "0")
+  .action(async (opts: { project?: string; all?: boolean; mode: string; sessions: string; doneTasks: string; todos: string }) => {
+    try {
+      const validModes = ["dry-run", "archive", "delete"] as const;
+      if (!validModes.includes(opts.mode as any)) {
+        throw new Error(`--mode must be one of: ${validModes.join(", ")}`);
+      }
+      const policy: Partial<RetentionPolicy> = {
+        sessions: parseInt(opts.sessions, 10) || 30,
+        doneTasks: parseInt(opts.doneTasks, 10) || 30,
+        todos: parseInt(opts.todos, 10) || 0,
+      };
+      const results = await pruneCommand(getVaultFs(), getConfig().vaultPath, {
+        project: opts.project,
+        mode: opts.mode as "dry-run" | "archive" | "delete",
+        policy,
+        all: opts.all,
+      });
+      for (const r of results) {
+        console.log(`\n=== ${r.project} ===`);
+        console.log(`  Scanned: ${r.stats.sessions_scanned} sessions, ${r.stats.tasks_scanned} tasks`);
+        if (r.archived.length > 0) {
+          console.log(`  ${opts.mode === "dry-run" ? "Would archive" : "Archived"}: ${r.archived.length} items`);
+          for (const a of r.archived) console.log(`    ${a.from} → ${a.to}`);
+        }
+        if (r.deleted.length > 0) {
+          console.log(`  ${opts.mode === "dry-run" ? "Would delete" : "Deleted"}: ${r.deleted.length} items`);
+          for (const d of r.deleted) console.log(`    ${d}`);
+        }
+        if (r.archived.length === 0 && r.deleted.length === 0) {
+          console.log("  Nothing to prune.");
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── stats ─────────────────────────────────────────────
+program
+  .command("stats")
+  .description("Show vault content statistics for a project")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const result = await statsCommand(getVaultFs(), getConfig().vaultPath, {
+        project: opts.project,
+      });
+      console.log(`\n=== ${result.project} ===`);
+      console.log(`  Sessions:    ${result.sessions}`);
+      console.log(`  Tasks:       ${result.tasks.total} (backlog: ${result.tasks.backlog}, in-progress: ${result.tasks.inProgress}, done: ${result.tasks.done}, cancelled: ${result.tasks.cancelled})`);
+      console.log(`  Learnings:   ${result.learnings}`);
+      console.log(`  ADRs:        ${result.adrs}`);
+      console.log(`  Brainstorms: ${result.brainstorms}`);
+      console.log(`  Total files: ${result.totalFiles}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── deprecate ─────────────────────────────────────────
+program
+  .command("deprecate <path>")
+  .description("Mark a vault item as deprecated")
+  .option("-r, --reason <text>", "Reason for deprecation")
+  .action(async (path: string, opts: { reason?: string }) => {
+    try {
+      const result = await deprecateCommand(getVaultFs(), getConfig().vaultPath, {
+        path,
+        reason: opts.reason,
+      });
+      console.log(`Deprecated: ${result.path} (status: ${result.status})`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Error: ${msg}`);

@@ -25,6 +25,7 @@ import { graphRelatedCommand, graphCrossProjectCommand } from "./commands/graph.
 import { initCommand } from "./commands/init.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
 import { learnCommand, type Confidence } from "./commands/learn.js";
+import { pruneCommand, statsCommand, deprecateCommand } from "./commands/prune.js";
 
 let _config: ReturnType<typeof loadConfig> | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -212,6 +213,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           tasks_completed: { type: "array", items: { type: "string" }, description: "Task IDs completed (for complete)" },
         },
         required: ["action"],
+      },
+    },
+    {
+      name: "vault_prune",
+      description: "Archive or delete stale vault content based on retention policies. Use mode='dry-run' first to preview.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          mode: { type: "string", enum: ["dry-run", "archive", "delete"], description: "Prune mode (default dry-run)" },
+          project: { type: "string", description: "Project slug (or omit for auto-detect)" },
+          all: { type: "boolean", description: "Prune all projects" },
+          sessions_days: { type: "number", description: "Session retention in days (default 30)" },
+          done_tasks_days: { type: "number", description: "Done task retention in days (default 30)" },
+        },
+      },
+    },
+    {
+      name: "vault_stats",
+      description: "Show content statistics for a project — file counts, task breakdown, growth monitoring.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+      },
+    },
+    {
+      name: "vault_deprecate",
+      description: "Mark a vault item (ADR, learning, etc.) as deprecated with an optional reason.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "Relative path to the item in the vault" },
+          reason: { type: "string", description: "Why this item is being deprecated" },
+        },
+        required: ["path"],
       },
     },
   ],
@@ -437,6 +474,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           tasksCompleted: Array.isArray(tasks_completed) ? tasks_completed : undefined,
         }, getVaultFs());
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "vault_prune": {
+        const { mode, project, all, sessions_days, done_tasks_days } = args as Record<string, unknown>;
+        const results = await pruneCommand(getVaultFs(), getConfig().vaultPath, {
+          mode: typeof mode === "string" ? mode as "dry-run" | "archive" | "delete" : "dry-run",
+          project: typeof project === "string" ? project : undefined,
+          all: all === true,
+          policy: {
+            sessions: typeof sessions_days === "number" ? sessions_days : 30,
+            doneTasks: typeof done_tasks_days === "number" ? done_tasks_days : 30,
+          },
+        });
+        return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+      }
+
+      case "vault_stats": {
+        const { project } = args as Record<string, unknown>;
+        const result = await statsCommand(getVaultFs(), getConfig().vaultPath, {
+          project: typeof project === "string" ? project : undefined,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "vault_deprecate": {
+        const { path, reason } = args as Record<string, unknown>;
+        if (!path || typeof path !== "string") {
+          throw new Error("Missing required field: path (string)");
+        }
+        const result = await deprecateCommand(getVaultFs(), getConfig().vaultPath, {
+          path: path as string,
+          reason: typeof reason === "string" ? reason : undefined,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
       }
 
       default:

@@ -1,4 +1,4 @@
-import { readFile, writeFile, appendFile, mkdir, readdir, stat, realpath } from "fs/promises";
+import { readFile, writeFile, appendFile, mkdir, readdir, stat, realpath, unlink, rename } from "fs/promises";
 import { join, resolve, relative, dirname } from "path";
 
 /**
@@ -123,6 +123,36 @@ export class VaultFS {
         results.push(entryRel);
       }
     }
+  }
+
+  async delete(relativePath: string): Promise<void> {
+    const abs = this.resolve(relativePath);
+    await this.verifyNoSymlinkEscape(relativePath);
+    try {
+      await unlink(abs);
+    } catch (e: any) {
+      if (e.code === "ENOENT") {
+        throw new VaultError("FILE_NOT_FOUND", `Not found: ${relativePath}`);
+      }
+      throw e;
+    }
+  }
+
+  async move(relativePath: string, newRelativePath: string): Promise<{ from: string; to: string }> {
+    const absFrom = this.resolve(relativePath);
+    const absTo = this.resolve(newRelativePath);
+    await this.verifyNoSymlinkEscape(relativePath);
+    await this.verifyNoSymlinkEscape(newRelativePath);
+    await mkdir(dirname(absTo), { recursive: true });
+    try {
+      await rename(absFrom, absTo);
+    } catch (e: any) {
+      if (e.code === "ENOENT") {
+        throw new VaultError("FILE_NOT_FOUND", `Not found: ${relativePath}`);
+      }
+      throw e;
+    }
+    return { from: relativePath, to: newRelativePath };
   }
 
   async exists(relativePath: string): Promise<boolean> {
