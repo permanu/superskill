@@ -27,11 +27,11 @@ CONTEXT=$($CLI context --detail summary 2>/dev/null || echo "")
 # 2. Get active blockers
 BLOCKERS=$($CLI todo list --blockers-only 2>/dev/null || echo "")
 
-# 3. Check for active sessions (conflict detection)
-SESSIONS=$($CLI session list 2>/dev/null || echo "")
-
-# 4. Register this session (suppress output)
+# 3. Register this session (suppress output)
 $CLI session register --tool "$TOOL" >/dev/null 2>&1 || true
+
+# 4. Get resume context (interrupted sessions, recent work, next steps)
+RESUME=$($CLI resume 2>/dev/null || echo "")
 
 # 5. Output context to stdout (tool injects as additionalContext)
 if [[ -n "$CONTEXT" ]]; then
@@ -46,10 +46,9 @@ if [[ -n "$BLOCKERS" ]]; then
   echo "$BLOCKERS"
 fi
 
-if [[ -n "$SESSIONS" ]]; then
+if [[ -n "$RESUME" ]]; then
   echo ""
-  echo "## Active Sessions (other agents working)"
-  echo "$SESSIONS"
+  echo "$RESUME"
 fi
 
 # 6. Learning count
@@ -59,17 +58,7 @@ if [[ "$LEARN_COUNT" != "0" ]]; then
   echo "## Learnings: $LEARN_COUNT available (use vault_learn list)"
 fi
 
-# 7. Last session info
-LAST_SESSION=$($CLI context --detail full 2>/dev/null | python3 -c "
-import sys,json
-try:
-  data = json.loads(sys.stdin.read())
-  ls = data.get('last_session')
-  if ls and ls.get('outcome'):
-    print(ls['outcome'])
-except:
-  pass
-" 2>/dev/null || echo "")
-if [[ -n "$LAST_SESSION" ]]; then
-  echo "## Last Session: $LAST_SESSION"
-fi
+# 7. Available vault tools reminder
+echo ""
+echo "## Available Vault Tools"
+echo "vault_project_context, vault_task, vault_learn, vault_decide, vault_brainstorm, vault_search, vault_resume, vault_prune, vault_stats, vault_deprecate"

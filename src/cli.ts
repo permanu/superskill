@@ -17,6 +17,7 @@ import { initCommand } from "./commands/init.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
+import { resumeCommand, formatResumeContext } from "./commands/resume.js";
 
 let _config: ReturnType<typeof loadConfig> | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -758,6 +759,35 @@ program
         reason: opts.reason,
       });
       console.log(`Deprecated: ${result.path} (status: ${result.status})`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── resume ────────────────────────────────────────────
+program
+  .command("resume")
+  .description("Get resume context for continuing work — shows recent sessions, interrupted work, next steps")
+  .option("-p, --project <slug>", "Project slug")
+  .option("-l, --limit <number>", "Number of recent sessions to show", "5")
+  .option("--json", "Output as JSON instead of markdown")
+  .action(async (opts: { project?: string; limit: string; json?: boolean }) => {
+    try {
+      const limit = parseInt(opts.limit, 10);
+      if (Number.isNaN(limit) || limit < 1) {
+        throw new Error("--limit must be a positive integer");
+      }
+      const result = await resumeCommand(getVaultFs(), getConfig().vaultPath, getSessionRegistry(), {
+        project: opts.project,
+        limit,
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(formatResumeContext(result));
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Error: ${msg}`);

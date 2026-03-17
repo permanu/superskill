@@ -26,6 +26,7 @@ import { initCommand } from "./commands/init.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand } from "./commands/prune.js";
+import { resumeCommand, formatResumeContext } from "./commands/resume.js";
 
 let _config: ReturnType<typeof loadConfig> | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -236,6 +237,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object" as const,
         properties: {
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+      },
+    },
+    {
+      name: "vault_resume",
+      description: "Get resume context for continuing work — recent sessions, interrupted work, in-progress tasks, suggested next steps. Call this at session start to understand what happened before.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+          limit: { type: "number", description: "Number of recent sessions to show (default 5)" },
+          format: { type: "string", enum: ["json", "markdown"], description: "Output format (default markdown)" },
         },
       },
     },
@@ -496,6 +509,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           project: typeof project === "string" ? project : undefined,
         });
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "vault_resume": {
+        const { project, limit, format } = args as Record<string, unknown>;
+        const result = await resumeCommand(getVaultFs(), getConfig().vaultPath, getSessionRegistry(), {
+          project: typeof project === "string" ? project : undefined,
+          limit: typeof limit === "number" ? limit : 5,
+        });
+        if (format === "json") {
+          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        }
+        return { content: [{ type: "text", text: formatResumeContext(result) }] };
       }
 
       case "vault_deprecate": {
