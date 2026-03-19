@@ -70,11 +70,11 @@ describe("writeCommand", () => {
   it("creates file with custom frontmatter", async () => {
     const result = await writeCommand(vaultFs, "custom.md", "content", { 
       mode: "overwrite", 
-      frontmatter: { status: "custom", tags: ["test"] }
+      frontmatter: { priority: "high", tags: ["test"] }
     });
     expect(result.written).toBe(true);
     const content = await vaultFs.read("custom.md");
-    expect(content).toContain("status: custom");
+    expect(content).toContain("priority: high");
     expect(content).toContain("tags:");
   });
   });

@@ -32,9 +32,9 @@ describe("readCommand", () => {
       await vaultFs.write("test.md", "content");
       await mkdir(join(vaultRoot, "subdir"));
         await vaultFs.write("subdir/child.md", "child");
-        const result = await listCommand(vaultFs, ".", 1);
-        expect(result).toContain("test.md");
-        expect(result).toContain("subdir/child.md");
+        const result = await listCommand(vaultFs, ".", 2);
+        expect(result).toContain("./test.md");
+        expect(result).toContain("./subdir/child.md");
       });
   });
 });
