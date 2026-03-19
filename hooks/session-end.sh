@@ -3,7 +3,7 @@
 # Marks the session as completed in the coordination registry.
 # Used by: Claude Code (Stop), OpenCode (session.deleted)
 #
-# Usage: session-end.sh [--tool claude-code|opencode|codex]
+# Usage: session-end.sh [--tool claude-code|opencode|codex] [--session-id <id>]
 
 set -euo pipefail
 
@@ -12,7 +12,23 @@ export VAULT_PATH
 
 CLI="node $HOME/tools/obsidian-kb/dist/cli.js"
 
-# Find session ID for this tool from active sessions
-# For now, just list - full session tracking requires storing the session ID
-# from bootstrap.sh (future improvement: store in /tmp/obsidian-kb-session-id)
-echo "Session ended. Use 'obsidian-kb session complete <id>' to mark complete."
+TOOL="${1:---tool}"
+TOOL_NAME="${2:-unknown}"
+SESSION_ID="${3:-}"
+
+if [[ "$TOOL" == "--tool" ]] && [[ -n "$TOOL_NAME" ]]; then
+  TOOL="$TOOL_NAME"
+fi
+
+SESSION_ID_FILE="/tmp/obsidian-kb-session-${TOOL_NAME:-unknown}-$$"
+
+if [[ -z "$SESSION_ID" ]] && [[ -f "$SESSION_ID_FILE" ]]; then
+  SESSION_ID=$(cat "$SESSION_ID_FILE")
+  rm -f "$SESSION_ID_FILE"
+fi
+
+if [[ -n "$SESSION_ID" ]]; then
+  $CLI session complete "$SESSION_ID" --tool "$TOOL" >/dev/null 2>&1 || true
+else
+  echo "Session ended. No session ID found — use 'obsidian-kb session complete <id>' to mark complete."
+fi

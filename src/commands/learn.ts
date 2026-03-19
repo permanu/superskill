@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 import { getNextNumber, slugify } from "../lib/auto-number.js";
 
 export type Confidence = "high" | "medium" | "low";
@@ -36,16 +35,7 @@ export async function learnCommand(
   path?: string;
   learnings?: LearningItem[];
 }> {
-  let projectSlug = options.project ?? null;
-
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug> to specify.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const learningsDir = `projects/${projectSlug}/learnings`;
 
@@ -136,8 +126,10 @@ async function listLearnings(vaultFs: VaultFS, learningsDir: string): Promise<Le
         created: (data.created as string) ?? "",
         path: filePath,
       });
-    } catch {
-      // Skip malformed files
+    } catch (e: unknown) {
+      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        console.error("[learn] Skipping unreadable learning file:", e instanceof Error ? e.message : e);
+      }
     }
   }
 

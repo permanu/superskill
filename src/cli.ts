@@ -85,7 +85,7 @@ program
   .command("write <path>")
   .description("Write/create a vault note")
   .requiredOption("-c, --content <text>", "Note content")
-  .option("-m, --mode <mode>", "Write mode: overwrite|append|prepend", "overwrite")
+  .option("-m, --mode <mode>", "Write mode: overwrite|append|prepend", "append")
   .option("-f, --frontmatter <json>", "Frontmatter as JSON")
   .action(async (path: string, opts: { content: string; mode: string; frontmatter?: string }) => {
     try {
@@ -796,3 +796,8 @@ program
   });
 
 program.parse();
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+  process.exit(1);
+});

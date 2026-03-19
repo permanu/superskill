@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 import { getNextNumber, slugify } from "../lib/auto-number.js";
 
 export type TaskStatus = "backlog" | "in-progress" | "blocked" | "done" | "cancelled";
@@ -47,16 +46,7 @@ export async function taskCommand(
   tasks?: TaskItem[];
   board?: Record<string, TaskItem[]>;
 }> {
-  let projectSlug = options.project ?? null;
-
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug> to specify.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const tasksDir = `projects/${projectSlug}/tasks`;
 
@@ -217,8 +207,10 @@ async function listTasks(vaultFs: VaultFS, tasksDir: string): Promise<TaskItem[]
         updated: (data.updated as string) ?? "",
         path: filePath,
       });
-    } catch {
-      // Skip malformed files
+    } catch (e: unknown) {
+      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        console.error("[task] Skipping unreadable task file:", e instanceof Error ? e.message : e);
+      }
     }
   }
 

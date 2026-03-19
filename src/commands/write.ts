@@ -17,7 +17,7 @@ export async function writeCommand(
     frontmatter?: Partial<Frontmatter>;
   } = {}
 ): Promise<{ written: boolean; path: string; bytes: number }> {
-  const { mode = "overwrite", frontmatter: fmOverrides } = options;
+  const { mode = "append", frontmatter: fmOverrides } = options;
 
   await vaultFs.verifyNoSymlinkEscape(path);
 

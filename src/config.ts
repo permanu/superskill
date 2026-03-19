@@ -1,5 +1,6 @@
 import { homedir } from "os";
 import { resolve } from "path";
+import { detectProject } from "./lib/project-detector.js";
 
 export interface Config {
   vaultPath: string;
@@ -21,6 +22,23 @@ export function validateProjectSlug(slug: string): string {
     throw new Error(`Invalid project slug "${slug}". Must not contain path separators or traversal.`);
   }
   return slug;
+}
+
+/**
+ * Resolve a project slug: use explicit value, auto-detect from CWD, or throw.
+ */
+export async function resolveProject(
+  vaultPath: string,
+  explicitSlug?: string | null
+): Promise<string> {
+  let slug = explicitSlug ?? null;
+  if (!slug) {
+    slug = await detectProject(process.cwd(), vaultPath);
+  }
+  if (!slug) {
+    throw new Error("Could not detect project. Use --project <slug> to specify.");
+  }
+  return validateProjectSlug(slug);
 }
 
 export function loadConfig(): Config {

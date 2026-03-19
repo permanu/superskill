@@ -1,7 +1,11 @@
 /**
- * Rough token estimation using chars/4 heuristic.
- * Known inaccuracy: code-heavy content with short tokens (brackets, operators)
- * may undercount by 20-30%. We add a 15% safety margin.
+ * Rough token estimation using chars/4 heuristic with a 15% safety margin.
+ *
+ * Accuracy notes:
+ * - English prose: typically within ±10%
+ * - Code-heavy content (short tokens like brackets, operators): may undercount by 20-30%
+ * - The 1.15 multiplier provides a safety buffer; actual tokenizer counts (e.g., tiktoken)
+ *   may differ significantly. For precise budgeting, use a proper tokenizer.
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4 * 1.15);

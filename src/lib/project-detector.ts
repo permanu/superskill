@@ -16,22 +16,36 @@ interface CacheEntry {
 }
 
 const CACHE_TTL_MS = 60_000; // 1 minute
+
 let cache: CacheEntry | null = null;
+
+export function invalidateProjectMapCache(): void {
+  cache = null;
+}
+
+function setCache(entry: CacheEntry): void {
+  cache = entry;
+}
+
+function getCache(vaultPath: string): ProjectMap | null {
+  const now = Date.now();
+  if (cache && cache.vaultPath === vaultPath && now - cache.time < CACHE_TTL_MS) {
+    return cache.map;
+  }
+  return null;
+}
 
 /**
  * Load the project map from the vault. Cache is keyed by vaultPath.
  */
 async function loadProjectMap(vaultPath: string): Promise<ProjectMap> {
-  const now = Date.now();
-  if (cache && cache.vaultPath === vaultPath && now - cache.time < CACHE_TTL_MS) {
-    return cache.map;
-  }
+  const cached = getCache(vaultPath);
+  if (cached) return cached;
 
   const mapPath = resolve(vaultPath, "project-map.json");
   try {
     const raw = await readFile(mapPath, "utf-8");
     const parsed = JSON.parse(raw);
-    // Validate: must be a plain object with string values
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       return {};
     }
@@ -41,10 +55,9 @@ async function loadProjectMap(vaultPath: string): Promise<ProjectMap> {
         map[key] = value;
       }
     }
-    cache = { map, time: now, vaultPath };
+    setCache({ map, time: Date.now(), vaultPath });
     return map;
   } catch (e: any) {
-    // ENOENT is expected (no project-map.json); rethrow permission errors
     if (e?.code === "EACCES") {
       console.error(`Warning: permission denied reading ${mapPath}`);
     } else if (e?.code !== "ENOENT" && !(e instanceof SyntaxError)) {
@@ -126,11 +139,4 @@ export async function detectProject(cwd: string, vaultPath: string): Promise<str
   }
 
   return null;
-}
-
-/**
- * Invalidate the cached project map.
- */
-export function invalidateProjectMapCache(): void {
-  cache = null;
 }

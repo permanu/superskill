@@ -1,6 +1,5 @@
-import { readFile, writeFile, mkdir, unlink, stat } from "fs/promises";
+import { readFile, writeFile, mkdir, unlink, stat, open } from "fs/promises";
 import { resolve, dirname } from "path";
-import { existsSync } from "fs";
 import { randomBytes } from "crypto";
 
 export interface Session {
@@ -187,7 +186,10 @@ export class SessionRegistryManager {
       );
 
       return { sessions: validSessions };
-    } catch {
+    } catch (e: any) {
+      if (e?.code !== "ENOENT") {
+        console.error("[session-registry] Error reading registry:", e.message);
+      }
       return { sessions: [] };
     }
   }
@@ -210,14 +212,18 @@ export class SessionRegistryManager {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        // Try to create lock file (exclusive)
         const lockContent = JSON.stringify({
           pid: process.pid,
           tool: "obsidian-kb",
           timestamp: new Date().toISOString(),
         });
 
-        await writeFile(lockPath, lockContent, { flag: "wx" });
+        const fd = await open(lockPath, "wx");
+        try {
+          await fd.write(Buffer.from(lockContent, "utf-8"));
+        } finally {
+          await fd.close();
+        }
 
         // Lock acquired — run the function
         try {

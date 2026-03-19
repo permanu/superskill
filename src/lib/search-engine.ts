@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { resolve, relative } from "path";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import { parseFrontmatter } from "./frontmatter.js";
 import { escapeRegex } from "./escape-regex.js";
 
@@ -84,8 +84,10 @@ export async function searchText(
           results.push({ path: relPath, snippet, line: lineNum });
           if (results.length >= limit) break;
         }
-      } catch {
-        // skip malformed lines
+      } catch (e: any) {
+        if (e.code !== "ENOENT") {
+          console.error("[search] Skipping malformed rg line:", e.message);
+        }
       }
     }
 
@@ -130,6 +132,8 @@ export async function searchStructured(
     throw e;
   }
 
+  const MAX_FILE_SIZE = 100_000; // 100 KB — skip large files in structured search
+
   for (const absPath of candidates) {
     if (results.length >= limit) break;
 
@@ -137,6 +141,9 @@ export async function searchStructured(
     if (relPath.startsWith(".") || relPath.startsWith("..")) continue;
 
     try {
+      const fileStat = await stat(absPath);
+      if (fileStat.size > MAX_FILE_SIZE) continue;
+
       const content = await readFile(absPath, "utf-8");
       const { data } = parseFrontmatter(content);
 
@@ -163,8 +170,10 @@ export async function searchStructured(
           line: 1,
         });
       }
-    } catch {
-      // skip unreadable files
+    } catch (e: any) {
+      if (e.code !== "ENOENT") {
+        console.error(`[search] Skipping unreadable file ${absPath}:`, e.message);
+      }
     }
   }
 

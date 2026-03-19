@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import { join, basename } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";

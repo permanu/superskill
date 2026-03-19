@@ -52,7 +52,7 @@ if [[ -n "$RESUME" ]]; then
 fi
 
 # 6. Learning count
-LEARN_COUNT=$($CLI learn list 2>/dev/null | python3 -c "import sys,json; print(len(json.loads(sys.stdin.read()).get('learnings',[])))" 2>/dev/null || echo "0")
+LEARN_COUNT=$($CLI learn list 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).learnings?.length??0)}catch{console.log(0)}})" 2>/dev/null || echo "0")
 if [[ "$LEARN_COUNT" != "0" ]]; then
   echo ""
   echo "## Learnings: $LEARN_COUNT available (use vault_learn list)"

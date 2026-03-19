@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
 
 export interface ResumeContext {
@@ -31,14 +30,7 @@ export async function resumeCommand(
     limit?: number;
   }
 ): Promise<ResumeContext> {
-  let projectSlug = options.project ?? null;
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug>.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const limit = options.limit ?? 5;
 
@@ -59,9 +51,17 @@ export async function resumeCommand(
           files_touched: Array.isArray(data.files_touched) ? data.files_touched as string[] : [],
           tasks_completed: Array.isArray(data.tasks_completed) ? data.tasks_completed as string[] : [],
         });
-      } catch { /* skip */ }
+      } catch (e: unknown) {
+        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+          console.error("[resume] Skipping unreadable session file:", e instanceof Error ? e.message : e);
+        }
+      }
     }
-  } catch { /* no sessions dir */ }
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+      console.error("[resume] Error listing session files:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // Get active and stale (interrupted) sessions
   const allSessions = await registry.listActive();
@@ -80,7 +80,11 @@ export async function resumeCommand(
         }
       }
     }
-  } catch { /* no registry */ }
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+      console.error("[resume] Error reading session registry:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // Build suggested next steps
   const suggestedNextSteps: string[] = [];
@@ -113,9 +117,17 @@ export async function resumeCommand(
           const title = titleMatch ? titleMatch[1].trim() : file;
           suggestedNextSteps.push(`In-progress task: ${title}`);
         }
-      } catch { /* skip */ }
+      } catch (e: unknown) {
+        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+          console.error("[resume] Skipping unreadable task file:", e instanceof Error ? e.message : e);
+        }
+      }
     }
-  } catch { /* no tasks */ }
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+      console.error("[resume] Error listing task files:", e instanceof Error ? e.message : e);
+    }
+  }
 
   return {
     project: projectSlug,

@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 import { slugify } from "../lib/auto-number.js";
 
 export async function brainstormCommand(
@@ -13,16 +12,7 @@ export async function brainstormCommand(
     project?: string;
   }
 ): Promise<{ path: string; total_entries: number }> {
-  let projectSlug = options.project ?? null;
-
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug> to specify.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const slug = slugify(options.topic);
   const filePath = `projects/${projectSlug}/brainstorms/${slug}.md`;

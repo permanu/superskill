@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, mergeFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 
 /**
  * Retention policies per content type. All values in days.
@@ -84,14 +83,7 @@ export async function pruneCommand(
       results.push(result);
     }
   } else {
-    let projectSlug = options.project ?? null;
-    if (!projectSlug) {
-      projectSlug = await detectProject(process.cwd(), vaultPath);
-    }
-    if (!projectSlug) {
-      throw new Error("Could not detect project. Use --project <slug> or --all.");
-    }
-    validateProjectSlug(projectSlug);
+    const projectSlug = await resolveProject(vaultPath, options.project);
     const result = await pruneProject(vaultFs, projectSlug, options.mode, policy);
     results.push(result);
   }
@@ -107,14 +99,7 @@ export async function statsCommand(
   vaultPath: string,
   options: { project?: string }
 ): Promise<VaultStats> {
-  let projectSlug = options.project ?? null;
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug>.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const base = `projects/${projectSlug}`;
 
@@ -271,8 +256,10 @@ async function pruneByAge(
         await vaultFs.delete(file);
         result.deleted.push(file);
       }
-    } catch {
-      // skip unreadable files
+    } catch (e: unknown) {
+      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        console.error(`[prune] Skipping unreadable session file: ${file}:`, e instanceof Error ? e.message : e);
+      }
     }
   }
 }
@@ -297,7 +284,7 @@ async function pruneByStatus(
 
   for (const file of files) {
     if (!file.endsWith(".md")) continue;
-    (result.stats as any)[scanCounter]++;
+    (result.stats[scanCounter] as number)++;
 
     try {
       const content = await vaultFs.read(file);
@@ -321,8 +308,10 @@ async function pruneByStatus(
         await vaultFs.delete(file);
         result.deleted.push(file);
       }
-    } catch {
-      // skip
+    } catch (e: unknown) {
+      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        console.error(`[prune] Skipping unreadable task file: ${file}:`, e instanceof Error ? e.message : e);
+      }
     }
   }
 }
@@ -355,8 +344,10 @@ async function pruneTodos(
         result.deleted.push(`${todoPath}: ${line.trim()}`);
       }
     }
-  } catch {
-    // no todos file
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+      console.error(`[prune] Error reading todos file:`, e instanceof Error ? e.message : e);
+    }
   }
 }
 

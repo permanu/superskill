@@ -1,6 +1,6 @@
 {
   "name": "obsidian-kb",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Universal agentic knowledge base — CLI + MCP server backed by Obsidian vault",
   "type": "module",
   "main": "dist/mcp-server.js",
@@ -12,19 +12,34 @@
     "dev": "tsc --watch",
     "start:mcp": "node dist/mcp-server.js",
     "start:cli": "node dist/cli.js",
-    "test": "node --test dist/**/*.test.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest watch",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "commander": "^13.1.0",
-    "gray-matter": "^4.0.3",
-    "glob": "^11.0.0"
+    "gray-matter": "^4.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "@vitest/coverage-v8": "^3.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   },
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/obsidian-kb.git"
+  },
+  "keywords": [
+    "mcp",
+    "obsidian",
+    "knowledge-base",
+    "ai",
+    "cli"
+  ],
   "engines": {
     "node": ">=20.0.0"
   }

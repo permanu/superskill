@@ -12,7 +12,7 @@ export class VaultFS {
    * Resolve a relative vault path to an absolute path.
    * Rejects traversal attacks, absolute paths, and personal vault access.
    */
-  resolve(relativePath: string): string {
+  private resolve(relativePath: string): string {
     // Reject non-ASCII characters (prevents Unicode homoglyph attacks on APFS)
     if (/[^\x20-\x7E]/.test(relativePath)) {
       throw new VaultError("PERMISSION_DENIED", `Non-ASCII characters not allowed in paths: ${relativePath}`);

@@ -18,7 +18,6 @@ import { writeCommand } from "./commands/write.js";
 import { searchCommand } from "./commands/search.js";
 import { contextCommand } from "./commands/context.js";
 import { decideCommand } from "./commands/decide.js";
-import { todoCommand } from "./commands/todo.js";
 import { brainstormCommand } from "./commands/brainstorm.js";
 import { sessionCommand } from "./commands/session.js";
 import { graphRelatedCommand, graphCrossProjectCommand } from "./commands/graph.js";
@@ -74,7 +73,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           path: { type: "string", description: "Relative path within vault" },
           content: { type: "string", description: "Markdown content to write" },
-          mode: { type: "string", enum: ["overwrite", "append", "prepend"], description: "Write mode (default overwrite)" },
+          mode: { type: "string", enum: ["overwrite", "append", "prepend"], description: "Write mode (default append)" },
           frontmatter: { type: "object", description: "YAML frontmatter key-value pairs" },
         },
         required: ["path", "content"],
@@ -173,7 +172,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "vault_todo",
-      description: "[Deprecated — use vault_task] Read or modify the project todo list.",
+      description: "[Deprecated — use vault_task] Manage project todos. Delegates to vault_task internally.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -442,12 +441,84 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!validTodoActions.includes(action as any)) {
           throw new Error(`Invalid action: ${action}. Must be one of: ${validTodoActions.join(", ")}`);
         }
-        const result = await todoCommand(getVaultFs(), getConfig().vaultPath, {
-          action: action as "list" | "add" | "complete" | "remove",
-          item: typeof item === "string" ? item : undefined,
-          priority: typeof priority === "string" ? priority as "high" | "medium" | "low" : undefined,
-          project: typeof project === "string" ? project : undefined,
-        });
+
+        const priorityMap: Record<string, "p0" | "p1" | "p2"> = { high: "p0", medium: "p1", low: "p2" };
+        const taskPriority = priority && typeof priority === "string" && priority in priorityMap
+          ? priorityMap[priority]
+          : "p1";
+
+        let result: Record<string, unknown>;
+        switch (action as "list" | "add" | "complete" | "remove") {
+          case "list": {
+            const tasks = await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "list",
+              project: typeof project === "string" ? project : undefined,
+            });
+            const todos: Array<{ text: string; priority: string; completed: boolean; task_id: string }> = (tasks.tasks ?? []).map((t) => ({
+              text: t.title,
+              priority: t.priority,
+              completed: t.status === "done" || t.status === "cancelled",
+              task_id: t.id,
+            }));
+            result = { todos };
+            break;
+          }
+          case "add": {
+            if (!item || typeof item !== "string") {
+              throw new Error("Missing required field: item (string)");
+            }
+            const addResult = await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "add",
+              title: item,
+              priority: taskPriority,
+              project: typeof project === "string" ? project : undefined,
+            });
+            result = { added: true, task_id: addResult.task_id, path: addResult.path };
+            break;
+          }
+          case "complete": {
+            if (!item || typeof item !== "string") {
+              throw new Error("Missing required field: item (string)");
+            }
+            const listResult = await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "list",
+              project: typeof project === "string" ? project : undefined,
+            });
+            const match = (listResult.tasks ?? []).find((t) => t.title === item);
+            if (!match) {
+              throw new Error(`Todo not found: ${item}`);
+            }
+            await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "update",
+              taskId: match.id,
+              status: "done",
+              project: typeof project === "string" ? project : undefined,
+            });
+            result = { completed: true, task_id: match.id };
+            break;
+          }
+          case "remove": {
+            if (!item || typeof item !== "string") {
+              throw new Error("Missing required field: item (string)");
+            }
+            const listRes = await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "list",
+              project: typeof project === "string" ? project : undefined,
+            });
+            const removeMatch = (listRes.tasks ?? []).find((t) => t.title === item);
+            if (!removeMatch) {
+              throw new Error(`Todo not found: ${item}`);
+            }
+            await taskCommand(getVaultFs(), getConfig().vaultPath, {
+              action: "update",
+              taskId: removeMatch.id,
+              status: "cancelled",
+              project: typeof project === "string" ? project : undefined,
+            });
+            result = { removed: true, task_id: removeMatch.id };
+            break;
+          }
+        }
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
 
@@ -634,17 +705,17 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
       let todoSection = "";
       try {
-        const todos = await todoCommand(getVaultFs(), getConfig().vaultPath, {
+        const tasks = await taskCommand(getVaultFs(), getConfig().vaultPath, {
           action: "list",
           project: result.project_slug,
-          blockersOnly: true,
+          status: "blocked",
         });
-        if (todos.todos.length > 0) {
+        if (tasks.tasks && tasks.tasks.length > 0) {
           todoSection = "\n\n## Active Blockers\n" +
-            todos.todos.map((t) => `- [${t.priority.toUpperCase()}] ${t.text}`).join("\n");
+            tasks.tasks.map((t) => `- [${t.priority.toUpperCase()}] ${t.title} (${t.id})`).join("\n");
         }
       } catch {
-        // No todos file, skip
+        // No tasks found, skip
       }
 
       let learningSection = "";

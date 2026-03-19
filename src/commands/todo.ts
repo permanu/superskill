@@ -1,7 +1,6 @@
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
-import { detectProject } from "../lib/project-detector.js";
-import { validateProjectSlug } from "../config.js";
+import { resolveProject } from "../config.js";
 import { escapeRegex } from "../lib/escape-regex.js";
 
 export interface TodoItem {
@@ -21,16 +20,7 @@ export async function todoCommand(
     blockersOnly?: boolean;
   }
 ): Promise<{ todos: TodoItem[] }> {
-  let projectSlug = options.project ?? null;
-
-  if (!projectSlug) {
-    projectSlug = await detectProject(process.cwd(), vaultPath);
-  }
-
-  if (!projectSlug) {
-    throw new Error("Could not detect project. Use --project <slug> to specify.");
-  }
-  validateProjectSlug(projectSlug);
+  const projectSlug = await resolveProject(vaultPath, options.project);
 
   const todoPath = `projects/${projectSlug}/todos.md`;
   const exists = await vaultFs.exists(todoPath);
