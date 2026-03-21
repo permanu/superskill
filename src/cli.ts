@@ -56,12 +56,16 @@ function createCtx(): CommandContext {
   };
 }
 
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 const program = new Command();
 
 program
   .name("obsidian-mcp")
   .description("Universal agentic knowledge base — CLI backed by Obsidian vault")
-  .version("0.1.1");
+  .version(version);
 
 // ── read ──────────────────────────────────────────────
 program

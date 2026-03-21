@@ -1,6 +1,6 @@
 {
   "name": "@gopherine/obsidian-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Universal agentic knowledge base — CLI + MCP server backed by Obsidian vault",
   "type": "module",
   "main": "dist/mcp-server.js",

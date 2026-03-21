@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-21
+
+### Added
+- **Auto-setup**: `obsidian-mcp-cli setup` and `teardown` commands for multi-client MCP registration
+- Supports 8 AI clients: Claude Code, Claude Desktop, Cursor, OpenCode, Crush CLI, Codex CLI, Gemini CLI, Droid
+- Auto-detects installed clients and configures MCP server entries + behavioral instructions
+- Postinstall script prints detected clients after `npm install`
+- Preuninstall script cleans up configuration on `npm uninstall`
+- `--all`, `--clients`, `--dry-run`, `--force`, `--vault-path` flags for fine-grained control
+- Idempotent setup with marker-based instruction injection and backup-before-write safety
+
+## [0.1.1] - 2026-03-20
+
 ### Added
 - Skill installer plugin with full lifecycle management (`vault_skill_*` tools)
 - CLI shorthand commands for faster operations (`r`, `w`, `s`, `c`, `t`, `l`, `sk`)
@@ -55,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Brainstorm documents
 - Knowledge graph traversal
 
-[Unreleased]: https://github.com/gopherine/obsidian-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/gopherine/obsidian-mcp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/gopherine/obsidian-mcp/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/gopherine/obsidian-mcp/compare/v0.1.0...v0.1.1
 [0.2.0]: https://github.com/gopherine/obsidian-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gopherine/obsidian-mcp/releases/tag/v0.1.0
