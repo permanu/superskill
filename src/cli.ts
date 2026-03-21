@@ -20,6 +20,7 @@ import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
 import { resumeCommand, formatResumeContext } from "./commands/resume.js";
 import type { CommandContext, Logger } from "./core/types.js";
+import { registerSetupCommands } from "./setup/index.js";
 
 let _config: Config | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -802,6 +803,9 @@ program
       process.exit(1);
     }
   });
+
+// ── setup / teardown ─────────────────────────────────
+registerSetupCommands(program);
 
 program.parse();
 
