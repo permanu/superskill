@@ -33,7 +33,9 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "postinstall": "node dist/setup/postinstall.js || true",
+    "preuninstall": "node dist/setup/preuninstall.js || true"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
