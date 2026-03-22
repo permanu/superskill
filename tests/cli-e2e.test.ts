@@ -398,6 +398,6 @@ describe("CLI E2E: error handling", () => {
     ({ vaultRoot, cleanup } = await setupVault());
     const r = await runCli(["--help"], { env: env(vaultRoot) });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("obsidian-mcp");
+    expect(r.stdout).toContain("superskill");
   });
 });

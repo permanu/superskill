@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js";
 import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";
@@ -28,7 +29,7 @@ export function teardownClient(
           const { config: updated, removed } = removeMcpEntry(
             existing,
             config.rootKey,
-            "obsidian-mcp"
+            "superskill"
           );
           if (removed) {
             writeJsonConfig(mcpConfigPath, updated);

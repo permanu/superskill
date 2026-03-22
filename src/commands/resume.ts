@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import type { CommandContext } from "../core/types.js";
-import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
+import type { Session } from "../lib/session-registry.js";
+import { getSkillAwarenessBlock } from "../commands/skill/marketplace.js";
 
 export interface ResumeContext {
   project: string;
@@ -169,6 +170,9 @@ export function formatResumeContext(ctx: ResumeContext): string {
     }
     lines.push("");
   }
+
+  // Inject skill awareness so agents know SuperSkill is available
+  lines.push(getSkillAwarenessBlock());
 
   return lines.join("\n");
 }

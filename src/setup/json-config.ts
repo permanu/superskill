@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
@@ -17,7 +18,7 @@ export function writeJsonConfig(filePath: string, config: Record<string, any>): 
     mkdirSync(dir, { recursive: true });
   }
   if (existsSync(filePath)) {
-    copyFileSync(filePath, `${filePath}.bak.obsidian-mcp`);
+    copyFileSync(filePath, `${filePath}.bak.superskill`);
   }
   writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }

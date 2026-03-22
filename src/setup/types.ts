@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { platform, homedir } from "os";
 import { join } from "path";
 
@@ -58,17 +59,17 @@ export interface TeardownResult {
   error?: string;
 }
 
-export const INSTRUCTION_TEXT = `You have an Obsidian knowledge base available via MCP (obsidian-mcp).
+export const INSTRUCTION_TEXT = `You have a SuperSkill knowledge base available via MCP (superskill).
 Always check it at the start of every session:
 1. Use vault_project_context to load context for the current project
 2. Use vault_search to find relevant decisions, learnings, and tasks
 3. Use vault_session to register your session for coordination
 Treat the vault as your persistent memory across sessions.`;
 
-export const MARKER_START_HTML = "<!-- obsidian-mcp:start -->";
-export const MARKER_END_HTML = "<!-- obsidian-mcp:end -->";
-export const MARKER_START_TOML = "# obsidian-mcp:start";
-export const MARKER_END_TOML = "# obsidian-mcp:end";
+export const MARKER_START_HTML = "<!-- superskill:start -->";
+export const MARKER_END_HTML = "<!-- superskill:end -->";
+export const MARKER_START_TOML = "# superskill:start";
+export const MARKER_END_TOML = "# superskill:end";
 
 export function resolveHome(p: string): string {
   return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;

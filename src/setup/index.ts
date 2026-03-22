@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import type { Command } from "commander";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClients } from "./detect.js";
@@ -9,11 +10,11 @@ import { resolveHome, currentPlatform } from "./types.js";
 export function registerSetupCommands(program: Command): void {
   program
     .command("setup")
-    .description("Auto-configure AI clients to use obsidian-mcp as knowledge base")
+    .description("Auto-configure AI clients to use superskill as knowledge base")
     .option("--all", "Configure all supported clients (even undetected)")
     .option("--clients <list>", "Comma-separated client slugs")
     .option("--dry-run", "Show what would change without writing")
-    .option("--force", "Overwrite existing obsidian-mcp entries")
+    .option("--force", "Overwrite existing superskill entries")
     .option("--vault-path <path>", "Override vault path")
     .action(async (opts: { all?: boolean; clients?: string; dryRun?: boolean; force?: boolean; vaultPath?: string }) => {
       const vaultPath = opts.vaultPath ?? process.env.VAULT_PATH ?? "~/Vaults/ai";
@@ -67,7 +68,7 @@ export function registerSetupCommands(program: Command): void {
 
       if (targets.length === 0) {
         console.log("\nNo clients to configure.");
-        console.log('Run "obsidian-mcp-cli setup --all" to configure all supported clients.\n');
+        console.log('Run "superskill-cli setup --all" to configure all supported clients.\n');
         return;
       }
 
@@ -112,13 +113,13 @@ export function registerSetupCommands(program: Command): void {
       const unconfigured = CLIENT_REGISTRY.filter((c) => !targetSlugs.has(c.slug));
       if (unconfigured.length > 0 && !opts.all) {
         console.log(`Not configured: ${unconfigured.map((c) => c.name).join(", ")}`);
-        console.log('Run "obsidian-mcp-cli setup --all" to configure them.\n');
+        console.log('Run "superskill-cli setup --all" to configure them.\n');
       }
     });
 
   program
     .command("teardown")
-    .description("Remove obsidian-mcp configuration from AI clients")
+    .description("Remove superskill configuration from AI clients")
     .option("--clients <list>", "Comma-separated client slugs")
     .option("--dry-run", "Show what would be removed")
     .option("--silent", "Suppress output")
@@ -137,7 +138,7 @@ export function registerSetupCommands(program: Command): void {
         return;
       }
 
-      console.log("\nRemoving obsidian-mcp configuration...\n");
+      console.log("\nRemoving superskill configuration...\n");
       for (const r of results) {
         console.log(`  ${r.client}`);
         if (r.error) {

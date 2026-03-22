@@ -1,12 +1,12 @@
 {
-  "name": "@gopherine/obsidian-mcp",
-  "version": "0.1.2",
-  "description": "Universal agentic knowledge base — CLI + MCP server backed by Obsidian vault",
+  "name": "superskill",
+  "version": "0.2.0",
+  "description": "Universal agentic knowledge base + context optimizer + skill marketplace for AI tools",
   "type": "module",
   "main": "dist/mcp-server.js",
   "bin": {
-    "obsidian-mcp": "dist/mcp-server.js",
-    "obsidian-mcp-cli": "dist/cli.js"
+    "superskill": "dist/mcp-server.js",
+    "superskill-cli": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -48,16 +48,16 @@
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
-  "license": "AGPL-3.0",
-  "author": "gopherine",
+  "license": "AGPL-3.0-or-later",
+  "author": "Permanu (Atharva Pandey)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gopherine/obsidian-mcp.git"
+    "url": "https://github.com/permanu/superskill.git"
   },
   "keywords": [
     "mcp",
     "mcp-server",
-    "obsidian",
+    "superskill",
     "knowledge-base",
     "ai",
     "cli",

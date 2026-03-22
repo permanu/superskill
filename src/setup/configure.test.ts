@@ -35,7 +35,7 @@ describe("buildMcpEntry", () => {
     const entry = buildMcpEntry("string", "env", "~/Vaults/ai");
     expect(entry).toEqual({
       command: "npx",
-      args: ["-y", "@gopherine/obsidian-mcp"],
+      args: ["-y", "superskill"],
       env: { VAULT_PATH: "~/Vaults/ai" },
     });
   });
@@ -44,7 +44,7 @@ describe("buildMcpEntry", () => {
     const entry = buildMcpEntry("array", "environment", "~/Vaults/ai", { type: "local" });
     expect(entry).toEqual({
       type: "local",
-      command: ["npx", "-y", "@gopherine/obsidian-mcp"],
+      command: ["npx", "-y", "superskill"],
       environment: { VAULT_PATH: "~/Vaults/ai" },
     });
   });
@@ -53,7 +53,7 @@ describe("buildMcpEntry", () => {
 describe("configureClient", () => {
   it("configures JSON client with MCP entry and markdown instruction", () => {
     vi.mocked(readJsonConfig).mockReturnValue({ mcpServers: {} });
-    vi.mocked(addMcpEntry).mockReturnValue({ config: { mcpServers: { "obsidian-mcp": {} } }, alreadyExists: false });
+    vi.mocked(addMcpEntry).mockReturnValue({ config: { mcpServers: { "superskill": {} } }, alreadyExists: false });
     vi.mocked(writeMarkdownInstruction).mockReturnValue("created");
 
     const result = configureClient(makeDetected("claude-code"), "~/Vaults/ai");
@@ -62,7 +62,7 @@ describe("configureClient", () => {
   });
 
   it("skips when MCP entry already exists", () => {
-    vi.mocked(readJsonConfig).mockReturnValue({ mcpServers: { "obsidian-mcp": {} } });
+    vi.mocked(readJsonConfig).mockReturnValue({ mcpServers: { "superskill": {} } });
     vi.mocked(addMcpEntry).mockReturnValue({ config: {}, alreadyExists: true });
     vi.mocked(writeMarkdownInstruction).mockReturnValue("exists");
 

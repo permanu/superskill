@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import type { ClientConfig } from "./types.js";
 
 function home(sub: string): Record<"darwin" | "linux" | "win32", string> {
@@ -41,7 +42,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     commandType: "string",
     envKey: "env",
     instructionStrategy: "mdc-file",
-    instructionPaths: home(".cursor/rules/obsidian-kb.mdc"),
+    instructionPaths: home(".cursor/rules/superskill.mdc"),
     verified: true,
   },
   {
@@ -54,7 +55,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     envKey: "environment",
     extraFields: { type: "local" },
     instructionStrategy: "config-array",
-    instructionPaths: home(".config/opencode/obsidian-mcp-instructions.md"),
+    instructionPaths: home(".config/opencode/superskill-instructions.md"),
     verified: false,
   },
   {

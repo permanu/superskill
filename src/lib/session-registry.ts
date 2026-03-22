@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { readFile, writeFile, mkdir, unlink, stat, open } from "fs/promises";
 import { resolve, dirname } from "path";
 import { randomBytes } from "crypto";
@@ -216,7 +217,7 @@ export class SessionRegistryManager {
       try {
         const lockContent = JSON.stringify({
           pid: process.pid,
-          tool: "obsidian-mcp",
+          tool: "superskill",
           timestamp: new Date().toISOString(),
         });
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import type { CommandContext, CommandHandler, CommandRegistration, MCPToolDefinition } from "./types.js";
 import { readCommand, listCommand } from "../commands/read.js";
 import { writeCommand } from "../commands/write.js";
@@ -13,6 +14,9 @@ import type { Confidence } from "../commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand } from "../commands/prune.js";
 import { resumeCommand } from "../commands/resume.js";
 import { initCommand } from "../commands/init.js";
+import { skillCommand } from "../commands/skill/index.js";
+import { generateManifest, loadSkillContent, activateSkills, getSkillAwarenessBlock } from "../commands/skill/marketplace.js";
+import { autoDetect, getRelevantDomains } from "../lib/auto-profile.js";
 
 export type { CommandRegistration } from "./types.js";
 
@@ -408,6 +412,166 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       project: s(raw.project),
       limit: typeof raw.limit === "number" ? raw.limit : 5,
+    }),
+  });
+
+  r.register("vault_skill", {
+    handler: (async (args: {
+      action: string;
+      source?: string;
+      skill_path?: string;
+      skill_name?: string;
+      force?: boolean;
+      domain?: string;
+      repo?: string;
+      search?: string;
+      profile?: string;
+      auto_detect?: boolean;
+      include_non_colliding?: boolean;
+      output_path?: string;
+      project_path?: string;
+    }, ctx: CommandContext) => {
+      let resolvedProfile = args.profile;
+
+      // Auto-detect profile when action=generate and no explicit profile or auto_detect=true
+      if (args.action === "generate" && (!resolvedProfile || args.auto_detect)) {
+        const autoConfig = await autoDetect(args.project_path ?? process.cwd());
+        resolvedProfile = autoConfig.profile;
+        const relevantDomains = getRelevantDomains(autoConfig.detectedStack);
+        // Return detection info as part of the result for observability
+        const skillResult = await skillCommand(ctx.vaultFs, ctx.vaultPath, {
+          action: args.action as any,
+          source: args.source,
+          skillPath: args.skill_path,
+          skillName: args.skill_name,
+          force: args.force,
+          domain: args.domain,
+          repo: args.repo,
+          search: args.search,
+          profile: resolvedProfile,
+          includeNonColliding: args.include_non_colliding,
+          outputPath: args.output_path,
+          relevantDomains,
+        });
+        return {
+          ...skillResult,
+          auto_detection: {
+            profile: autoConfig.profile,
+            size: autoConfig.size,
+            reason: autoConfig.reason,
+            detected_stack: autoConfig.detectedStack,
+            detected_tool: autoConfig.detectedTool,
+          },
+        };
+      }
+
+      return skillCommand(ctx.vaultFs, ctx.vaultPath, {
+        action: args.action as any,
+        source: args.source,
+        skillPath: args.skill_path,
+        skillName: args.skill_name,
+        force: args.force,
+        domain: args.domain,
+        repo: args.repo,
+        search: args.search,
+        profile: resolvedProfile,
+        includeNonColliding: args.include_non_colliding,
+        outputPath: args.output_path,
+      });
+    }) as CommandHandler,
+    toolDef: {
+      name: "vault_skill",
+      description: "Skill marketplace — install, manage, and generate AI skills. Includes catalog browsing, collision detection across repos (ECC, Superpowers, gstack, etc.), profile-based resolution, and super-skill generation.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["install", "list", "validate", "delete", "catalog", "collisions", "resolve", "generate"], description: "Skill action: install/list/validate/delete for individual skills; catalog/collisions/resolve/generate for marketplace" },
+          source: { type: "string", description: "File path or URL to install from (required for install)" },
+          skill_path: { type: "string", description: "Path to skill file to validate (required for validate)" },
+          skill_name: { type: "string", description: "Skill name to delete (required for delete)" },
+          force: { type: "boolean", description: "Overwrite existing skill on install (default false)" },
+          domain: { type: "string", description: "Filter catalog by domain ID (e.g. tdd, security, planning)" },
+          repo: { type: "string", description: "Filter catalog by repo (ecc, superpowers, gstack, anthropics, etc.)" },
+          search: { type: "string", description: "Text search across catalog skills" },
+          profile: { type: "string", description: "Profile for resolve/generate: ecc-first, superpowers-first, minimal. Omit to use auto-detection." },
+          auto_detect: { type: "boolean", description: "Auto-detect profile and size from project stack and AI tool context (default: true when profile is omitted)" },
+          include_non_colliding: { type: "boolean", description: "Include non-colliding skills in generate (default true)" },
+          output_path: { type: "string", description: "Custom vault path for generated super-skill (default: skills/super-skill/SKILL.md)" },
+          project_path: { type: "string", description: "Absolute path to project for stack detection (default: process.cwd())" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as string,
+      source: s(raw.source),
+      skill_path: s(raw.skill_path),
+      skill_name: s(raw.skill_name),
+      force: raw.force === true,
+      domain: s(raw.domain),
+      repo: s(raw.repo),
+      search: s(raw.search),
+      profile: s(raw.profile),
+      auto_detect: raw.auto_detect === true,
+      include_non_colliding: raw.include_non_colliding === true ? true : raw.include_non_colliding === false ? false : undefined,
+      output_path: s(raw.output_path),
+      project_path: s(raw.project_path),
+    }),
+  });
+
+  r.register("superskill", {
+    handler: (async (args: { task?: string; skill_id?: string; domain?: string; action?: string; profile?: string }) => {
+      if (args.action === "manifest") {
+        return generateManifest({ profile: args.profile });
+      }
+      if (args.action === "load" && args.skill_id) {
+        return loadSkillContent(args.skill_id);
+      }
+      // Default: smart activate
+      return activateSkills({
+        task: args.task ?? args.skill_id ?? "",
+        profile: args.profile,
+        skill_id: args.skill_id,
+        domain: args.domain,
+      });
+    }) as CommandHandler,
+    toolDef: {
+      name: "superskill",
+      description: `Load expert methodology before starting work. YOU decide when a task needs a skill — use your judgment based on the user's intent, not just their exact words.
+
+Pick the domain that fits the user's intent:
+- **brainstorming**: Thinking through problems, exploring ideas, discussing approaches, ideating, "let's think about this", "what if we...", creative exploration
+- **planning**: Making plans, designing architecture, implementation strategy, "how should we build this", scoping work, checkpoints
+- **code-review**: Reviewing code, PR review, checking quality, giving feedback, "look at this code", code critique
+- **tdd**: Writing tests, test-driven development, coverage, specs, "make sure this works", quality assurance, verification of behavior
+- **debugging**: Finding bugs, investigating errors, troubleshooting, "why isn't this working", fixing issues, root cause analysis
+- **security**: Security review, vulnerabilities, auth, permissions, "is this safe", OWASP, penetration testing, hardening
+- **verification**: Build checks, lint, type checking, CI validation, "does this compile", pre-commit verification
+- **shipping**: Deploying, releasing, CI/CD, Docker, "ship it", going to production, rollbacks
+- **frontend-design**: UI/UX design, components, layouts, CSS, "make it look good", visual design, responsive design
+- **agent-orchestration**: Multi-agent coordination, parallel tasks, subagents, "run these in parallel"
+- **database**: SQL, schemas, migrations, queries, data modeling, "optimize this query"
+
+Multiple domains can be comma-separated: domain: "planning,security"`,
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          domain: { type: "string", description: "The skill domain(s) to load. Preferred — you pick the domain based on user intent. Comma-separate for multiple: 'planning,security'" },
+          task: { type: "string", description: "Free-text fallback: describe the task and SuperSkill will try to auto-match a domain. Use 'domain' instead when you know which domain fits." },
+          skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'ecc/tdd-workflow'). For precise control." },
+          action: { type: "string", enum: ["activate", "manifest", "load"], description: "Action: activate (default), manifest (list all), load (by skill_id)" },
+          profile: { type: "string", description: "Profile: ecc-first, superpowers-first, minimal. Auto-detected if omitted." },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      task: s(raw.task),
+      skill_id: s(raw.skill_id),
+      domain: s(raw.domain),
+      action: s(raw.action),
+      profile: s(raw.profile),
     }),
   });
 

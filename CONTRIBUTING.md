@@ -6,8 +6,8 @@ Thank you for your interest in contributing!
 
 ```bash
 # Clone the repo
-git clone https://github.com/gopherine/obsidian-mcp.git
-cd obsidian-mcp
+git clone https://github.com/permanu/superskill.git
+cd superskill
 
 # Install dependencies
 npm install

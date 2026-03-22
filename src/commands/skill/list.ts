@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { SkillRegistryManager } from "../../lib/skill-registry.js";
 import { InstalledSkill } from "./schema.js";
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type { DetectedClient, SetupResult } from "./types.js";
@@ -18,10 +19,10 @@ export function buildMcpEntry(
   const base: Record<string, unknown> = { ...extraFields };
 
   if (commandType === "array") {
-    base.command = ["npx", "-y", "@gopherine/obsidian-mcp"];
+    base.command = ["npx", "-y", "superskill"];
   } else {
     base.command = "npx";
-    base.args = ["-y", "@gopherine/obsidian-mcp"];
+    base.args = ["-y", "superskill"];
   }
 
   base[envKey] = { VAULT_PATH: vaultPath };
@@ -29,11 +30,11 @@ export function buildMcpEntry(
 }
 
 function buildTomlBlock(vaultPath: string): string {
-  return `[mcp_servers.obsidian-mcp]
+  return `[mcp_servers.superskill]
 command = "npx"
-args = ["-y", "@gopherine/obsidian-mcp"]
+args = ["-y", "superskill"]
 
-[mcp_servers.obsidian-mcp.env]
+[mcp_servers.superskill.env]
 VAULT_PATH = "${vaultPath}"`;
 }
 
@@ -69,7 +70,7 @@ export function configureClient(
         const merged = addMcpEntry(
           existing,
           config.rootKey,
-          "obsidian-mcp",
+          "superskill",
           entry,
           options.force
         );

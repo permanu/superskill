@@ -45,7 +45,7 @@ describe("writeJsonConfig", () => {
     writeJsonConfig("/path/config.json", { key: "value" });
     expect(mockCopy).toHaveBeenCalledWith(
       "/path/config.json",
-      "/path/config.json.bak.obsidian-mcp"
+      "/path/config.json.bak.superskill"
     );
   });
 
@@ -66,44 +66,44 @@ describe("writeJsonConfig", () => {
 describe("addMcpEntry", () => {
   it("adds entry under correct root key", () => {
     const config = { mcpServers: {} };
-    const result = addMcpEntry(config, "mcpServers", "obsidian-mcp", { command: "npx" });
+    const result = addMcpEntry(config, "mcpServers", "superskill", { command: "npx" });
     expect(result.alreadyExists).toBe(false);
-    expect(result.config.mcpServers["obsidian-mcp"]).toEqual({ command: "npx" });
+    expect(result.config.mcpServers["superskill"]).toEqual({ command: "npx" });
   });
 
   it("creates root key if missing", () => {
     const config = {};
-    const result = addMcpEntry(config, "mcpServers", "obsidian-mcp", { command: "npx" });
-    expect(result.config.mcpServers["obsidian-mcp"]).toEqual({ command: "npx" });
+    const result = addMcpEntry(config, "mcpServers", "superskill", { command: "npx" });
+    expect(result.config.mcpServers["superskill"]).toEqual({ command: "npx" });
   });
 
   it("preserves existing entries", () => {
     const config = { mcpServers: { other: { command: "other" } } };
-    const result = addMcpEntry(config, "mcpServers", "obsidian-mcp", { command: "npx" });
+    const result = addMcpEntry(config, "mcpServers", "superskill", { command: "npx" });
     expect(result.config.mcpServers.other).toEqual({ command: "other" });
-    expect(result.config.mcpServers["obsidian-mcp"]).toEqual({ command: "npx" });
+    expect(result.config.mcpServers["superskill"]).toEqual({ command: "npx" });
   });
 
   it("returns alreadyExists=true when entry present and force=false", () => {
-    const config = { mcpServers: { "obsidian-mcp": { command: "old" } } };
-    const result = addMcpEntry(config, "mcpServers", "obsidian-mcp", { command: "npx" }, false);
+    const config = { mcpServers: { "superskill": { command: "old" } } };
+    const result = addMcpEntry(config, "mcpServers", "superskill", { command: "npx" }, false);
     expect(result.alreadyExists).toBe(true);
-    expect(result.config.mcpServers["obsidian-mcp"]).toEqual({ command: "old" });
+    expect(result.config.mcpServers["superskill"]).toEqual({ command: "old" });
   });
 });
 
 describe("removeMcpEntry", () => {
   it("removes the entry", () => {
-    const config = { mcpServers: { "obsidian-mcp": { command: "npx" }, other: { command: "x" } } };
-    const result = removeMcpEntry(config, "mcpServers", "obsidian-mcp");
-    expect(result.config.mcpServers["obsidian-mcp"]).toBeUndefined();
+    const config = { mcpServers: { "superskill": { command: "npx" }, other: { command: "x" } } };
+    const result = removeMcpEntry(config, "mcpServers", "superskill");
+    expect(result.config.mcpServers["superskill"]).toBeUndefined();
     expect(result.config.mcpServers.other).toEqual({ command: "x" });
     expect(result.removed).toBe(true);
   });
 
   it("returns removed=false when entry not found", () => {
     const config = { mcpServers: {} };
-    const result = removeMcpEntry(config, "mcpServers", "obsidian-mcp");
+    const result = removeMcpEntry(config, "mcpServers", "superskill");
     expect(result.removed).toBe(false);
   });
 });

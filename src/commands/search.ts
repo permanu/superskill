@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import type { CommandContext } from "../core/types.js";
 import { searchText, searchStructured, type SearchResult } from "../lib/search-engine.js";
 

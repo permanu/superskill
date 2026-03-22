@@ -37,7 +37,7 @@ describe("teardownClient", () => {
   it("removes JSON MCP entry and markdown instruction", () => {
     mockExists.mockReturnValue(true);
     vi.mocked(readJsonConfig).mockReturnValue({
-      mcpServers: { "obsidian-mcp": { command: "npx" } },
+      mcpServers: { "superskill": { command: "npx" } },
     });
     vi.mocked(removeMcpEntry).mockReturnValue({
       config: { mcpServers: {} },

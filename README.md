@@ -1,109 +1,128 @@
-# obsidian-mcp
+# SuperSkill
 
-**Universal Agentic Knowledge Base** — A CLI tool and MCP server backed by an Obsidian vault that serves as shared memory for AI coding tools.
+**Universal skill marketplace + knowledge vault for AI coding agents.** Auto-detects your stack, resolves skill collisions across repos, and loads expert methodologies on demand.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![npm](https://img.shields.io/npm/v/superskill)](https://www.npmjs.com/package/superskill)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
-[![Release](https://img.shields.io/github/v/release/gopherine/obsidian-mcp)](https://github.com/gopherine/obsidian-mcp/releases)
 
-## Features
+## What It Does
 
-- **MCP Server** — Works as an MCP server for Claude Desktop, Cursor, OpenCode, and any MCP-compatible client
-- **CLI Tool** — Full CLI interface for manual vault operations
-- **Project Auto-Discovery** — Detects projects from CWD via git root and project-map.json
-- **Knowledge Management** — Tasks, decisions (ADRs), learnings, sessions, brainstorms
-- **Full-Text Search** — Powered by ripgrep
-- **Skill Installer** — Install and manage AI skills from git repos, local files, or URLs
-- **Multi-Agent Coordination** — Session registry for agent swarms
+- **Skill Marketplace** — 87 skills from 9 repos (ECC, Superpowers, gstack, Anthropic, design repos). Catalog, search, filter by domain.
+- **Collision Detection** — 12 domains where skills from different repos compete (TDD, planning, code review, etc.). Profile-based resolution picks the best skill per domain.
+- **Per-Project Filtering** — Auto-detects your stack (Go+Echo, React+Next, Django, etc.) and loads only relevant skills. Go project? No Django/Spring/frontend skills loaded.
+- **Progressive Disclosure** — Lightweight manifest (~100 tokens/skill) + on-demand loading. Small context models get essentials only.
+- **Knowledge Vault** — Persistent project memory: tasks, decisions (ADRs), learnings, sessions, brainstorms. Cross-tool, cross-session continuity.
+- **Multi-Agent Coordination** — Session registry for agent swarms. No file conflicts.
 
-## Installation
+## Install
+
+### Claude Code Plugin (recommended)
 
 ```bash
-npm install -g @gopherine/obsidian-mcp
+/plugin marketplace add permanu/superskill
+/plugin install superskill
 ```
 
-Or use directly with npx (no install needed):
+### npm (any MCP-compatible tool)
+
 ```bash
-npx @gopherine/obsidian-mcp
+npm install -g superskill
 ```
 
-Or clone and build:
+Or use directly:
 ```bash
-git clone https://github.com/gopherine/obsidian-mcp.git
-cd obsidian-mcp
+npx superskill
+```
+
+### From source
+
+```bash
+git clone https://github.com/permanu/superskill.git
+cd superskill
 npm install && npm run build
 ```
 
-> **Note:** The default binary runs the MCP server. The CLI is available as `obsidian-mcp-cli`.
-
 ## Quick Start
 
-```bash
-# MCP server (add to your MCP client config — see below)
-npx @gopherine/obsidian-mcp
+Once installed, SuperSkill auto-detects your project and loads skills on demand. The main MCP tool is `superskill` — the LLM calls it automatically when it recognizes a task that matches a skill domain.
 
-# CLI tool
-npx @gopherine/obsidian-mcp-cli --help
+### How It Works
+
+1. Agent starts session → SuperSkill injects skill awareness via `vault_resume`
+2. User says "let's think about this problem"
+3. Agent recognizes brainstorming intent → calls `superskill({domain: "brainstorming"})`
+4. SuperSkill returns expert methodology → agent follows it
+
+No manual commands needed. The LLM decides when to use skills based on your intent.
+
+### Skill Domains
+
+| Domain | What It Covers |
+|--------|---------------|
+| `brainstorming` | Thinking through problems, exploring ideas, ideating |
+| `planning` | Architecture, implementation strategy, scoping |
+| `code-review` | PR review, code quality, feedback |
+| `tdd` | Writing tests, coverage, test-driven development |
+| `debugging` | Investigating errors, troubleshooting, root cause |
+| `security` | Vulnerability review, auth, OWASP, hardening |
+| `verification` | Build checks, lint, type validation |
+| `shipping` | Deployment, CI/CD, releases, rollbacks |
+| `frontend-design` | UI/UX, components, visual design |
+| `agent-orchestration` | Multi-agent, parallel tasks, subagents |
+| `database` | SQL, schemas, migrations, query optimization |
+
+### CLI
+
+```bash
+# Marketplace
+superskill-cli skill catalog                        # 87 skills, 9 repos
+superskill-cli skill catalog --search "tdd"         # search
+superskill-cli skill collisions                     # 12 collision domains
+superskill-cli skill resolve --profile ecc-first    # see winners
+
+# Generate super-skill (auto-detects stack)
+superskill-cli skill generate                       # Go project → 14 skills, React → different set
+
+# Smart activate (describe task, get skill)
+superskill-cli skill activate "brainstorm this"     # → loads brainstorming skill
+superskill-cli skill activate "write tests"         # → loads TDD skill
+superskill-cli skill activate "review PR" --domain code-review  # direct domain
+
+# Progressive disclosure
+superskill-cli skill manifest                       # lightweight index
+superskill-cli skill load ecc/tdd-workflow          # load one skill
+
+# Knowledge vault
+superskill-cli context                              # project context
+superskill-cli task add "Fix auth bug" --priority p0
+superskill-cli task board                           # kanban view
+superskill-cli learn add --title "Redis pattern"    # capture learning
+superskill-cli decide --title "Use PostgreSQL"      # log ADR
+superskill-cli resume                               # what happened last session
 ```
 
-## CLI Commands
+## MCP Setup (non-plugin)
 
-| Shorthand | Full Command | Description |
-|-----------|--------------|-------------|
-| `r` | `read <path>` | Read a vault note |
-| `w` | `write <path>` | Write/create a vault note |
-| `s` | `search <query>` | Search the vault |
-| `c` | `context` | Get project context |
-| `i` | `init <path>` | Initialize project context |
-| `d` | `decide` | Log an architecture decision |
-| `t` | `task` | Manage tasks |
-| `t add` | `task add` | Add a task |
-| `t ls` | `task list` | List tasks |
-| `t b` | `task board` | Show kanban board |
-| `l` | `learn` | Manage learnings |
-| `l add` | `learn add` | Capture a learning |
-| `l ls` | `learn list` | List learnings |
-| `sk i` | `skill install` | Install a skill |
-| `sk ls` | `skill list` | List installed skills |
-| `sk rm` | `skill delete` | Remove a skill |
-
-## MCP Setup
+For tools that don't support Claude Code plugins, configure as a standard MCP server:
 
 ### Claude Code
 
-Add to your project's `CLAUDE.md` or run:
 ```bash
-claude mcp add obsidian-mcp -- npx -y @gopherine/obsidian-mcp
+claude mcp add superskill -e VAULT_PATH=~/Vaults/ai -- npx -y superskill
 ```
 
-Or add to `~/.claude.json`:
-```json
-{
-  "mcpServers": {
-    "obsidian-mcp": {
-      "command": "npx",
-      "args": ["-y", "@gopherine/obsidian-mcp"]
-    }
-  }
-}
-```
+### Claude Desktop / Cursor / Codex / OpenCode
 
-Set your vault path:
-```bash
-claude mcp add obsidian-mcp -e VAULT_PATH=~/Vaults/ai -- npx -y @gopherine/obsidian-mcp
-```
-
-### Claude Desktop
-
-Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+Add to your MCP config:
 
 ```json
 {
   "mcpServers": {
-    "obsidian-mcp": {
+    "superskill": {
       "command": "npx",
-      "args": ["-y", "@gopherine/obsidian-mcp"],
+      "args": ["-y", "superskill"],
       "env": {
         "VAULT_PATH": "~/Vaults/ai"
       }
@@ -112,57 +131,31 @@ Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_
 }
 ```
 
-### Cursor
+## MCP Tools
 
-Add to your `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "obsidian-mcp": {
-      "command": "npx",
-      "args": ["-y", "@gopherine/obsidian-mcp"]
-    }
-  }
-}
-```
-
-### OpenCode
-
-Add to your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "obsidian-mcp": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@gopherine/obsidian-mcp"]
-    }
-  }
-}
-```
-
-### OpenAI Codex
-
-Add to your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "obsidian-mcp": {
-      "command": "npx",
-      "args": ["-y", "@gopherine/obsidian-mcp"]
-    }
-  }
-}
-```
+| Tool | Description |
+|------|-------------|
+| `superskill` | **Main tool** — load expert methodology by domain, task description, or skill ID |
+| `vault_read` | Read file or directory from vault |
+| `vault_write` | Write/append/prepend content |
+| `vault_search` | Full-text search across vault |
+| `vault_project_context` | Get project context (auto-detects from CWD) |
+| `vault_init` | Generate draft context.md from a git repo |
+| `vault_decide` | Log architecture decision |
+| `vault_task` | Manage tasks (add/list/update/board) |
+| `vault_learn` | Capture/list learnings |
+| `vault_session` | Multi-agent session coordination |
+| `vault_skill` | Skill marketplace operations (catalog/collisions/resolve/generate) |
+| `vault_resume` | Resume context — recent sessions, interrupted work, next steps |
+| `vault_prune` | Archive/delete stale content |
+| `vault_stats` | Content statistics |
+| `vault_deprecate` | Mark items as deprecated |
 
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `VAULT_PATH` | `~/Vaults/ai` | Path to Obsidian vault |
+| `VAULT_PATH` | `~/Vaults/ai` | Path to knowledge vault |
 | `MAX_INJECT_TOKENS` | `1500` | Max tokens for context injection |
 | `SESSION_TTL_HOURS` | `2` | Session heartbeat TTL |
 
@@ -176,6 +169,7 @@ Add to your MCP configuration:
 │   └── locks/                 # PID lockfiles
 ├── skills/
 │   ├── installed/             # Installed skills
+│   ├── super-skill/           # Generated super-skill files
 │   └── registry.json          # Skill metadata
 └── projects/<slug>/
     ├── context.md             # Project overview
@@ -187,49 +181,18 @@ Add to your MCP configuration:
     └── _archive/              # Pruned content
 ```
 
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `vault_read` | Read file or directory |
-| `vault_write` | Write/append/prepend content |
-| `vault_search` | Full-text search |
-| `vault_project_context` | Get project context |
-| `vault_init` | Generate draft context.md |
-| `vault_decide` | Log architecture decision |
-| `vault_task` | Manage tasks (add/list/update/board) |
-| `vault_learn` | Capture/list learnings |
-| `vault_session` | Register/heartbeat/complete sessions |
-| `vault_skill_*` | Skill installer operations |
-| `vault_prune` | Archive/delete stale content |
-| `vault_stats` | Content statistics |
-| `vault_resume` | Resume context for continuing work |
-| `vault_deprecate` | Mark items as deprecated |
-
 ## Testing
 
 ```bash
-# Run all tests with Vitest
-npm test
-
-# Run with coverage (target: 90%+)
-npm run test:coverage
-
-# Run specific test file
-npm test src/commands/task.test.ts
-
-# Watch mode
-npm run test:watch
+npm test                           # Run all tests (Vitest)
+npm run test:coverage              # With coverage
+npm test src/lib/auto-profile.test.ts  # Specific file
 ```
-
-Tests use **table-driven pattern** for comprehensive coverage. All test files are `*.test.ts` alongside source files.
-
-## Documentation
-
-- [Contributing](./CONTRIBUTING.md)
-- [Code of Conduct](./CODE_OF_CONDUCT.md)
-- [Changelog](./CHANGELOG.md)
 
 ## License
 
-AGPL-3.0 — See [LICENSE](./LICENSE)
+AGPL-3.0-or-later — See [LICENSE](./LICENSE)
+
+Commercial license available for organizations with >$1M annual revenue. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md).
+
+Copyright 2026 Permanu (Atharva Pandey)

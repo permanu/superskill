@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -20,6 +21,7 @@ import { readCommand, listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
 import { searchText, searchStructured } from "./lib/search-engine.js";
 import { formatResumeContext } from "./commands/resume.js";
+import { getSkillAwarenessBlock } from "./commands/skill/marketplace.js";
 
 const registry = createRegistry();
 
@@ -55,7 +57,7 @@ function createCtx(): CommandContext {
 }
 
 const server = new Server(
-  { name: "obsidian-mcp", version: "0.1.1" },
+  { name: "superskill", version: "0.2.0" },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
@@ -328,7 +330,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}`,
+              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}${getSkillAwarenessBlock()}`,
             },
           },
         ],

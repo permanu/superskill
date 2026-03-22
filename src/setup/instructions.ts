@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { dirname } from "path";
 import {
@@ -54,7 +55,7 @@ function removeMarkedBlock(content: string): string {
 }
 
 const MDC_CONTENT = `---
-description: Obsidian knowledge base integration
+description: SuperSkill knowledge base integration
 alwaysApply: true
 ---
 

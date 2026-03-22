@@ -10,7 +10,7 @@ describe("setup/teardown integration", () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "obsidian-mcp-setup-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "superskill-setup-test-"));
   });
 
   afterEach(() => {
@@ -23,26 +23,26 @@ describe("setup/teardown integration", () => {
 
     // Add
     const config = readJsonConfig(configPath);
-    const merged = addMcpEntry(config!, "mcpServers", "obsidian-mcp", {
+    const merged = addMcpEntry(config!, "mcpServers", "superskill", {
       command: "npx",
-      args: ["-y", "@gopherine/obsidian-mcp"],
+      args: ["-y", "superskill"],
     });
     writeJsonConfig(configPath, merged.config);
 
     const after = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(after.existing).toBe(true);
-    expect(after.mcpServers["obsidian-mcp"].command).toBe("npx");
+    expect(after.mcpServers["superskill"].command).toBe("npx");
 
     // Backup should exist
-    expect(existsSync(`${configPath}.bak.obsidian-mcp`)).toBe(true);
+    expect(existsSync(`${configPath}.bak.superskill`)).toBe(true);
 
     // Remove
-    const { config: cleaned, removed } = removeMcpEntry(after, "mcpServers", "obsidian-mcp");
+    const { config: cleaned, removed } = removeMcpEntry(after, "mcpServers", "superskill");
     writeJsonConfig(configPath, cleaned);
     expect(removed).toBe(true);
 
     const final = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(final.mcpServers["obsidian-mcp"]).toBeUndefined();
+    expect(final.mcpServers["superskill"]).toBeUndefined();
     expect(final.existing).toBe(true);
   });
 
@@ -56,7 +56,7 @@ describe("setup/teardown integration", () => {
 
     const content = readFileSync(mdPath, "utf-8");
     expect(content).toContain("# Existing content");
-    expect(content).toContain("<!-- obsidian-mcp:start -->");
+    expect(content).toContain("<!-- superskill:start -->");
     expect(content).toContain("vault_project_context");
 
     // Idempotent
@@ -66,18 +66,18 @@ describe("setup/teardown integration", () => {
     expect(removeMarkdownInstruction(mdPath)).toBe(true);
     const cleaned = readFileSync(mdPath, "utf-8");
     expect(cleaned).toContain("# Existing content");
-    expect(cleaned).not.toContain("obsidian-mcp");
+    expect(cleaned).not.toContain("superskill");
 
     // Remove again — nothing to do
     expect(removeMarkdownInstruction(mdPath)).toBe(false);
   });
 
   it("writes and removes TOML block", () => {
-    const block = '[mcp_servers.obsidian-mcp]\ncommand = "npx"';
+    const block = '[mcp_servers.superskill]\ncommand = "npx"';
 
     // Insert
     const result = insertTomlBlock("", block);
-    expect(result).toContain("# obsidian-mcp:start");
+    expect(result).toContain("# superskill:start");
 
     // Idempotent
     expect(insertTomlBlock(result!, block)).toBeNull();
@@ -85,6 +85,6 @@ describe("setup/teardown integration", () => {
     // Remove
     const { content, removed } = removeTomlBlock(result!);
     expect(removed).toBe(true);
-    expect(content).not.toContain("obsidian-mcp");
+    expect(content).not.toContain("superskill");
   });
 });

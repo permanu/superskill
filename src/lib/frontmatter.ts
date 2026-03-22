@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import matter from "gray-matter";
 
 export interface Frontmatter {

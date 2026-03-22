@@ -28,8 +28,8 @@ describe("writeMarkdownInstruction", () => {
     const result = writeMarkdownInstruction("/path/CLAUDE.md");
     expect(result).toBe("created");
     const written = mockWrite.mock.calls[0][1] as string;
-    expect(written).toContain("<!-- obsidian-mcp:start -->");
-    expect(written).toContain("<!-- obsidian-mcp:end -->");
+    expect(written).toContain("<!-- superskill:start -->");
+    expect(written).toContain("<!-- superskill:end -->");
     expect(written).toContain("vault_project_context");
   });
 
@@ -40,12 +40,12 @@ describe("writeMarkdownInstruction", () => {
     expect(result).toBe("appended");
     const written = mockWrite.mock.calls[0][1] as string;
     expect(written).toContain("# Existing content");
-    expect(written).toContain("<!-- obsidian-mcp:start -->");
+    expect(written).toContain("<!-- superskill:start -->");
   });
 
   it("returns 'exists' when markers already present", () => {
     mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue("<!-- obsidian-mcp:start -->\nstuff\n<!-- obsidian-mcp:end -->\n");
+    mockRead.mockReturnValue("<!-- superskill:start -->\nstuff\n<!-- superskill:end -->\n");
     expect(writeMarkdownInstruction("/path/CLAUDE.md")).toBe("exists");
     expect(mockWrite).not.toHaveBeenCalled();
   });
@@ -55,11 +55,11 @@ describe("removeMarkdownInstruction", () => {
   it("removes block between markers", () => {
     mockExists.mockReturnValue(true);
     mockRead.mockReturnValue(
-      "# Existing\n\n<!-- obsidian-mcp:start -->\ninstruction\n<!-- obsidian-mcp:end -->\n"
+      "# Existing\n\n<!-- superskill:start -->\ninstruction\n<!-- superskill:end -->\n"
     );
     expect(removeMarkdownInstruction("/path/CLAUDE.md")).toBe(true);
     const written = mockWrite.mock.calls[0][1] as string;
-    expect(written).not.toContain("obsidian-mcp");
+    expect(written).not.toContain("superskill");
     expect(written).toContain("# Existing");
   });
 
@@ -78,9 +78,9 @@ describe("removeMarkdownInstruction", () => {
 describe("writeMdcInstruction", () => {
   it("writes .mdc file with frontmatter", () => {
     mockExists.mockReturnValue(false);
-    writeMdcInstruction("/path/obsidian-kb.mdc");
+    writeMdcInstruction("/path/superskill.mdc");
     const written = mockWrite.mock.calls[0][1] as string;
-    expect(written).toContain("description: Obsidian knowledge base integration");
+    expect(written).toContain("description: SuperSkill knowledge base integration");
     expect(written).toContain("alwaysApply: true");
     expect(written).toContain("vault_project_context");
   });
@@ -89,14 +89,14 @@ describe("writeMdcInstruction", () => {
 describe("removeMdcInstruction", () => {
   it("deletes the .mdc file when it exists", () => {
     mockExists.mockReturnValue(true);
-    const result = removeMdcInstruction("/path/obsidian-kb.mdc");
+    const result = removeMdcInstruction("/path/superskill.mdc");
     expect(result).toBe(true);
-    expect(mockUnlink).toHaveBeenCalledWith("/path/obsidian-kb.mdc");
+    expect(mockUnlink).toHaveBeenCalledWith("/path/superskill.mdc");
   });
 
   it("returns false when file does not exist", () => {
     mockExists.mockReturnValue(false);
-    expect(removeMdcInstruction("/path/obsidian-kb.mdc")).toBe(false);
+    expect(removeMdcInstruction("/path/superskill.mdc")).toBe(false);
     expect(mockUnlink).not.toHaveBeenCalled();
   });
 });

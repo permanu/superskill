@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
 import { homedir } from "os";
 import { resolve } from "path";
 import { detectProject } from "./lib/project-detector.js";
