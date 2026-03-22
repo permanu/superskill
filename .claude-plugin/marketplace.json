@@ -1,0 +1,23 @@
+{
+  "name": "superskill",
+  "owner": {
+    "name": "Permanu (Atharva Pandey)",
+    "email": "license@permanu.com"
+  },
+  "metadata": {
+    "description": "Universal skill marketplace + knowledge vault for AI coding agents",
+    "version": "0.2.1"
+  },
+  "plugins": [
+    {
+      "name": "superskill",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/permanu/superskill.git"
+      },
+      "description": "Universal skill marketplace + knowledge vault. Auto-detects your stack, resolves skill collisions across 9 repos, loads expert methodologies (TDD, brainstorming, code review, debugging, security, etc.) on demand.",
+      "version": "0.2.1",
+      "strict": true
+    }
+  ]
+}
