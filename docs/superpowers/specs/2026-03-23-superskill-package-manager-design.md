@@ -129,7 +129,7 @@ LLM calls: superskill({task: "write tests for my Go API"})
   ├─ 2. Tokenize task, score against triggers + stack context
   ├─ 3. Check session memory for prior choices
   │
-  ├─ 0 matches → "No matching skill. Proceeding without methodology."
+  ├─ 0 matches → Web discovery (see below)
   ├─ 1 match  → Load from cache (or fetch), return content
   └─ 2+ matches →
       ├─ Session has saved choice? → Load saved choice
@@ -142,6 +142,34 @@ LLM calls: superskill({task: "write tests for my Go API"})
            └─ User picks → LLM calls superskill({skill_id: "ecc/..."})
                          → Save choice to session → Return content
 ```
+
+### Web Discovery (zero-match fallback)
+
+When the registry has no matching skill, superskill searches the web instead of giving up.
+
+**Search order:**
+1. GitHub search API — repos containing `SKILL.md` + task keywords
+2. GitHub topic search — repos tagged `mcp-skill`, `claude-code-skill`, `ai-skill`
+3. npm search — packages with `superskill-skill` or `mcp-skill` keyword
+
+**Flow:**
+```
+0 matches in registry
+  → "No skill in catalog. Searching..."
+  → Found N candidates
+  → Present to user with trust signals (repo name, stars, last updated)
+  → User confirms → fetch, validate, cache
+  → Activated. Next time: served from cache.
+```
+
+**Safety:**
+- Never auto-load from unknown sources — user confirmation required
+- Show trust signals: star count, last commit date, source repo
+- First-time sources get a warning: "This is from an unverified source"
+- Users can allowlist trusted sources after first use
+- Optionally submit discovered skills to the registry via automated PR (with consent)
+
+This makes the registry the fast path and the web the safety net. The catalog can never be incomplete.
 
 ### Matching Algorithm
 
