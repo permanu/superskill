@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **README overhaul** — Repositioned as product storefront. One-liner value prop, 3-step setup, collapsible skill catalog, supported tools table. Removed internal implementation details. (#13)
+- **marketplace.ts split** — 809-line god file decomposed into 5 focused modules: activate.ts, resolve.ts, generate.ts, manifest.ts, helpers.ts. Barrel re-export preserves backward compatibility.
+
+### Performance
+- **Web discovery caching** — Results cached at `~/.superskill/discovery-cache.json` with 24h TTL, max 100 entries with LRU eviction. Avoids GitHub API rate limits on repeated searches.
+
+### Testing
+- **11 integration tests** for the full activation flow — direct skill_id load, domain activation, task trigger matching, multi-domain, web discovery fallback, GitHub URL loading, 3-per-domain cap, manifest generation
 
 ## [0.2.6] - 2026-03-23
 
