@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Local analytics** — Privacy-first skill activation tracking at `~/.superskill/analytics.json`. Tracks activations, match methods, failed searches, and web discovery attempts. Auto-rotates at 1000 entries. (#9)
+- **Contributing guide** — Release discipline, PR workflow, skill submission process, test patterns, and security guidelines (#8)
+
 ### Fixed
 - **Security scanner false positive** — Role-play instructions ("you are now acting as X") moved from hard block to soft warning. Skills legitimately adopt personas; only memory wipe instructions remain blocked.
 
-### Added
-- **Contributing guide** — Release discipline, PR workflow, skill submission process, test patterns, and security guidelines
+### Changed
+- **README overhaul** — Repositioned as product storefront. One-liner value prop, 3-step setup, collapsible skill catalog, supported tools table. Removed internal implementation details. (#13)
 
 ## [0.2.6] - 2026-03-23
 
