@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-03-23
+
+### Added
+- **Web Discovery** — When no skill matches in the catalog, superskill searches GitHub for community skills instead of giving up. Results include trust signals (stars, freshness, source repo) and require user confirmation before loading
+- **Full domain coverage** — Task matching expanded from 11 to 28 domains. Skills in Go, Python, Django, Swift, Docker, content-business, 3D animation, and more are now discoverable
+
+### Fixed
+- **Invisible skills bug** — Tool description and task matching previously hardcoded 11 of 28 domains, making half the catalog invisible to LLMs
+- **Single skill per domain** — Activating a domain now loads up to 3 skills (collision winner + alternatives) instead of just one
+- **False positive patterns** — Tightened regex for `go`, `eval`, `query`, `ship` to prevent over-triggering
+
+### Changed
+- **Tool description** — Replaced 15-line domain taxonomy with 4-line verb-led trigger format
+- **`task` is now the primary param** — `domain` accepted as optional alias
+
 ## [0.2.4] - 2026-03-23
 
 ### Added
@@ -67,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI shorthand commands (`r`, `w`, `s`, `c`, `t`, `l`, `sk`)
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`)
 
+[0.2.5]: https://github.com/permanu/superskill/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/permanu/superskill/compare/v0.2.0...v0.2.4
 [0.2.0]: https://github.com/permanu/superskill/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/permanu/superskill/compare/v0.1.1...v0.1.2
