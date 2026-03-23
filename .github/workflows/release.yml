@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: sudo apt-get install -y ripgrep
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:coverage
+
+  publish-npm:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm run build
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract the section for this version from CHANGELOG.md
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Get content between this version header and the next version header
+          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          # Write to file to preserve newlines
+          echo "$NOTES" > /tmp/release-notes.md
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV=$(git tag --sort=-v:refname | head -2 | tail -1)
+          echo "TAG=${PREV}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          PREV="${{ steps.prev_tag.outputs.TAG }}"
+
+          # Build release body
+          {
+            cat /tmp/release-notes.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Install:** \`npm install -g superskill\` or via Claude Code \`/plugin install superskill\`"
+            echo ""
+            echo "**Full Changelog:** https://github.com/permanu/superskill/compare/${PREV}...v${VERSION}"
+          } > /tmp/release-body.md
+
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release-body.md
