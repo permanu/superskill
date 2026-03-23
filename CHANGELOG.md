@@ -10,13 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Claude Code Plugin Discovery** — `marketplace.json` manifest for first-class plugin marketplace listing
 - **Legacy Migration** — Setup automatically detects and removes old `obsidian-mcp` / `obsidian-kb` MCP entries during install
+- **Package Manager Design Spec** — Architecture for evolving SuperSkill into a dynamic skill package manager with on-demand fetch, version-pinned caching, and intelligent routing
 
 ### Fixed
 - **Plugin MCP server** now uses `npx superskill@latest` instead of local `dist/` path — works reliably as an installed plugin without requiring the repo to be cloned locally
 - **Teardown** cleans up all legacy entry names (`obsidian-mcp`, `obsidian-kb`) in addition to `superskill`
-
-### Changed
-- Version bump from 0.2.0 to 0.2.4
 
 ## [0.2.0] - 2026-03-22
 
