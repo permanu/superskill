@@ -12,6 +12,7 @@ import {
 } from "./catalog.js";
 import type { CatalogSkill } from "./catalog.js";
 import { searchGitHubForSkills, formatDiscoveryResults } from "./web-discovery.js";
+import { trackActivation, trackFailedSearch, trackWebDiscovery } from "../../lib/analytics.js";
 
 // ── Result Types ─────────────────────────────────────
 
@@ -597,6 +598,7 @@ export async function activateSkills(options: {
       return { success: false, skills_loaded: [], content: "", matched_domains: [], total_tokens: 0, error: result.error };
     }
     const entry = CATALOG.find((s) => s.id === options.skill_id);
+    trackActivation({ skill_id: options.skill_id, match_method: "skill_id", task_query: options.task, matched: true });
     return {
       success: true,
       skills_loaded: [{ id: options.skill_id, name: entry?.name ?? options.skill_id, domains: entry?.domains ?? [] }],
@@ -619,9 +621,13 @@ export async function activateSkills(options: {
   }
 
   if (matchedDomains.length === 0) {
+    // Track failed domain match before attempting web discovery
+    trackFailedSearch(options.task, 0);
+
     // Web discovery fallback — search GitHub for community skills
     const discovery = await searchGitHubForSkills(options.task);
     const content = formatDiscoveryResults(options.task, discovery.results);
+    trackWebDiscovery(options.task, discovery.results.length > 0);
     return {
       success: true,
       skills_loaded: [],
@@ -693,6 +699,12 @@ export async function activateSkills(options: {
   }
 
   const content = sections.join("\n\n---\n\n");
+
+  // Track each loaded skill activation
+  const matchMethod: "domain" | "trigger" = options.domain ? "domain" : "trigger";
+  for (const skill of loaded) {
+    trackActivation({ skill_id: skill.id, match_method: matchMethod, task_query: options.task, matched: true });
+  }
 
   return {
     success: true,
