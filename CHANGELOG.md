@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Prefetch core skills on install** — 8 core skills (brainstorming, planning, TDD, code review, debugging, security, verification, shipping) fetched from source repos during `npm install` and cached at `~/.superskill/cache/` for offline availability (#6)
 - **Local analytics** — Privacy-first skill activation tracking at `~/.superskill/analytics.json`. Tracks activations, match methods, failed searches, and web discovery attempts. Auto-rotates at 1000 entries. (#9)
 - **Contributing guide** — Release discipline, PR workflow, skill submission process, test patterns, and security guidelines (#8)
 
