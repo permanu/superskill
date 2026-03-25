@@ -60,7 +60,7 @@ function createCtx(): CommandContext {
 }
 
 const server = new Server(
-  { name: "superskill", version: "0.4.0" },
+  { name: "superskill", version: "0.5.0" },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
