@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export interface DetectedTool {
-  tool: 'claude-code' | 'opencode' | 'cursor' | 'codex' | 'gemini-cli' | 'unknown';
+  tool: 'claude-code' | 'opencode' | 'cursor' | 'codex' | 'gemini-cli' | 'windsurf' | 'aider' | 'continue' | 'unknown';
   model?: string;
   contextWindow?: number;
 }
@@ -82,6 +82,24 @@ export function detectTool(): DetectedTool {
   if (hasEnvPrefix('GEMINI_')) {
     const model = getEnv('GEMINI_MODEL') ?? undefined;
     return { tool: 'gemini-cli', model, contextWindow: lookupContextWindow(model) };
+  }
+
+  // ── Windsurf ──────────────────────────────────────────
+  if (hasEnvPrefix('WINDSURF_') || hasEnvPrefix('CODEIUM_')) {
+    const model = getEnv('WINDSURF_MODEL') ?? undefined;
+    return { tool: 'windsurf', model, contextWindow: lookupContextWindow(model) };
+  }
+
+  // ── Aider ─────────────────────────────────────────────
+  if (hasEnvPrefix('AIDER_')) {
+    const model = getEnv('AIDER_MODEL') ?? undefined;
+    return { tool: 'aider', model, contextWindow: lookupContextWindow(model) };
+  }
+
+  // ── Continue ──────────────────────────────────────────
+  if (hasEnvPrefix('CONTINUE_')) {
+    const model = getEnv('CONTINUE_MODEL') ?? undefined;
+    return { tool: 'continue', model, contextWindow: lookupContextWindow(model) };
   }
 
   // ── Unknown / fallback ───────────────────────────────

@@ -6,7 +6,7 @@
  * Prefetched skills are downloaded on install for offline availability.
  */
 
-import { readFile, writeFile, mkdir, rename, readdir } from "fs/promises";
+import { readFile, writeFile, mkdir, rename, readdir, unlink, stat } from "fs/promises";
 import { resolve, dirname, join } from "path";
 import { homedir, tmpdir } from "os";
 import { randomBytes } from "crypto";
@@ -29,6 +29,9 @@ export const PREFETCH_SKILL_IDS: string[] = [
   "ecc/deployment-patterns",
 ];
 
+/** Maximum total cache size before LRU eviction kicks in */
+const MAX_CACHE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+
 // Allow tests to override the cache dir
 let cacheDir = CACHE_DIR;
 export function setCacheDir(dir: string): void { cacheDir = dir; }
@@ -39,9 +42,9 @@ export function getCacheDir(): string { return cacheDir; }
 /**
  * Get cached skill content. Returns null if not cached.
  */
-export async function getCachedSkill(skillId: string): Promise<string | null> {
+export async function getCachedSkill(skillId: string, version?: string): Promise<string | null> {
   try {
-    const path = skillCachePath(skillId);
+    const path = skillCachePath(skillId, version);
     return await readFile(path, "utf-8");
   } catch {
     return null;
@@ -50,14 +53,17 @@ export async function getCachedSkill(skillId: string): Promise<string | null> {
 
 /**
  * Write skill content to cache. Uses atomic write (temp + rename).
+ * Triggers LRU eviction when total cache size exceeds MAX_CACHE_SIZE_BYTES.
  */
-export async function cacheSkill(skillId: string, content: string): Promise<void> {
+export async function cacheSkill(skillId: string, content: string, version?: string): Promise<void> {
   try {
-    const path = skillCachePath(skillId);
+    const path = skillCachePath(skillId, version);
     await mkdir(dirname(path), { recursive: true });
     const tmp = join(tmpdir(), `superskill-cache-${randomBytes(8).toString("hex")}`);
     await writeFile(tmp, content, "utf-8");
     await rename(tmp, path);
+    // Evict stale entries if cache has grown too large
+    await evictLRU();
   } catch {
     // Cache write failure is non-fatal
   }
@@ -66,9 +72,9 @@ export async function cacheSkill(skillId: string, content: string): Promise<void
 /**
  * Check if a skill is cached.
  */
-export async function isSkillCached(skillId: string): Promise<boolean> {
+export async function isSkillCached(skillId: string, version?: string): Promise<boolean> {
   try {
-    await readFile(skillCachePath(skillId), "utf-8");
+    await readFile(skillCachePath(skillId, version), "utf-8");
     return true;
   } catch {
     return false;
@@ -152,13 +158,83 @@ export async function listCachedSkills(): Promise<string[]> {
   }
 }
 
+// ── Eviction & Invalidation ─────────────────────────
+
+/**
+ * Evict least-recently-accessed cached files until total size is under
+ * MAX_CACHE_SIZE_BYTES. Core prefetch skills are exempt from eviction.
+ * Returns the number of evicted entries.
+ */
+export async function evictLRU(): Promise<number> {
+  // Collect all cached files with stats
+  interface CacheEntry { path: string; skillId: string; size: number; atimeMs: number }
+  const entries: CacheEntry[] = [];
+
+  const repos = await readdir(cacheDir).catch(() => [] as string[]);
+  for (const repo of repos) {
+    const repoDir = join(cacheDir, repo);
+    const files = await readdir(repoDir).catch(() => [] as string[]);
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      const filePath = join(repoDir, file);
+      try {
+        const st = await stat(filePath);
+        // Derive skillId (strip version tag and .md for comparison)
+        const base = file.replace(".md", "").replace(/@[^@]+$/, "");
+        entries.push({ path: filePath, skillId: `${repo}/${base}`, size: st.size, atimeMs: st.atimeMs });
+      } catch {
+        // stat failed — skip
+      }
+    }
+  }
+
+  const totalSize = entries.reduce((sum, e) => sum + e.size, 0);
+  if (totalSize <= MAX_CACHE_SIZE_BYTES) return 0;
+
+  // Sort oldest-accessed first
+  entries.sort((a, b) => a.atimeMs - b.atimeMs);
+
+  const coreSet = new Set(PREFETCH_SKILL_IDS);
+  let currentSize = totalSize;
+  let evicted = 0;
+
+  for (const entry of entries) {
+    if (currentSize <= MAX_CACHE_SIZE_BYTES) break;
+    // Never evict core prefetch skills
+    if (coreSet.has(entry.skillId)) continue;
+    try {
+      await unlink(entry.path);
+      currentSize -= entry.size;
+      evicted++;
+    } catch {
+      // Already gone — ignore
+    }
+  }
+
+  return evicted;
+}
+
+/**
+ * Remove a specific versioned cache entry (e.g. when the registry reports a
+ * newer version). Returns true if a file was actually deleted.
+ */
+export async function invalidateVersion(skillId: string, oldVersion: string): Promise<boolean> {
+  try {
+    const path = skillCachePath(skillId, oldVersion);
+    await unlink(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────
 
-function skillCachePath(skillId: string): string {
-  // "ecc/tdd-workflow" → ~/.superskill/cache/ecc/tdd-workflow.md
+function skillCachePath(skillId: string, version?: string): string {
   const [repo, ...rest] = skillId.split("/");
   const name = rest.join("/");
-  return resolve(cacheDir, repo, `${name}.md`);
+  const suffix = version ? `${name}@${version}.md` : `${name}.md`;
+  return resolve(cacheDir, repo, suffix);
 }
 
 async function fetchSkillFromSource(source: string): Promise<string> {

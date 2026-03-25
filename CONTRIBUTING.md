@@ -12,6 +12,75 @@ npm run build
 npm test
 ```
 
+## Adding a Skill
+
+SuperSkill uses the [Agent Skills](https://skills.sh) standard. Every skill is a `SKILL.md` file with YAML frontmatter.
+
+### Skill Authoring Quick Start
+
+1. Copy the template: `cp docs/SKILL-TEMPLATE.md my-skill/SKILL.md`
+2. Fill in frontmatter and content
+3. Validate: `superskill-cli skill validate my-skill/SKILL.md`
+4. Submit a PR using the [skill submission template](.github/PULL_REQUEST_TEMPLATE/skill_submission.md)
+
+### Skill Structure
+
+A skill is a single `SKILL.md` file. The YAML frontmatter defines metadata for discovery and validation. The Markdown body contains the actual methodology or instructions that get injected into the AI context.
+
+### Frontmatter Reference
+
+| Field       | Required | Description                              |
+|-------------|----------|------------------------------------------|
+| name        | Yes      | Human-readable skill name                |
+| description | Yes      | One-line description (used for matching) |
+| version     | Yes      | SemVer (e.g., 1.0.0)                    |
+| tags        | No       | Array of keywords for discovery          |
+
+### Writing Good Content
+
+- Lead with the methodology, not setup instructions
+- Include concrete examples
+- Keep under 3000 tokens (check with `superskill-cli skill validate`)
+- Use sections: Overview, When to Use, Steps, Examples
+
+### Trigger Keywords
+
+Triggers are how SuperSkill matches tasks to skills. Include 3-7 keywords per skill:
+
+- Action verbs users would say
+- Tool/framework names
+- Synonyms (e.g., "ship" and "deploy")
+
+### Validation
+
+Run before submitting:
+
+```bash
+superskill-cli skill validate path/to/SKILL.md
+```
+
+Checks:
+
+- Required frontmatter fields present
+- Description not empty
+- Version is valid semver
+- Content not empty
+
+### Publishing via skills.sh
+
+The recommended way to share skills:
+
+1. Create a GitHub repo with your `SKILL.md` files
+2. Users install with: `superskill-cli skill add your-username/your-repo`
+
+### Adding to the Built-in Registry
+
+For high-quality, widely-useful skills:
+
+1. Fork this repo
+2. Add skill metadata to `registry/index.json`
+3. Open a PR using the skill submission template
+
 ## Development Workflow
 
 ### Branching
@@ -92,33 +161,6 @@ Keep an `[Unreleased]` section at the top. Move entries to a versioned section w
 ### Added
 - ...
 ```
-
-## Adding Skills to the Registry
-
-### Current: Static Catalog
-
-Skills are defined in `src/commands/skill/catalog.ts`. To add a skill:
-
-1. Find the skill's source URL (raw GitHub URL to the SKILL.md file)
-2. Add an entry to the `CATALOG` array:
-
-```typescript
-{
-  id: "source/skill-name",
-  name: "Human-Readable Name",
-  repo: "source",
-  domains: ["relevant-domain"],
-  source: "https://raw.githubusercontent.com/owner/repo/main/path/SKILL.md",
-  description: "One-line description",
-},
-```
-
-3. Add trigger patterns in the `TASK_DOMAIN_MAP` if your skill introduces a new domain
-4. Add tests in `marketplace.test.ts`
-
-### Future: Registry JSON (v0.3.0)
-
-Skills will be defined in `registry/index.json` instead of TypeScript. See the [design spec](docs/superpowers/specs/2026-03-23-superskill-package-manager-design.md) for the planned format.
 
 ## Writing Tests
 

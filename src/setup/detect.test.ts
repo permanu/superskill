@@ -30,6 +30,26 @@ describe("detectClient", () => {
   });
 });
 
+describe("CLIENT_REGISTRY entries", () => {
+  it("includes windsurf client", () => {
+    const windsurf = CLIENT_REGISTRY.find((c) => c.slug === "windsurf");
+    expect(windsurf).toBeDefined();
+    expect(windsurf!.name).toBe("Windsurf");
+  });
+
+  it("includes aider client", () => {
+    const aider = CLIENT_REGISTRY.find((c) => c.slug === "aider");
+    expect(aider).toBeDefined();
+    expect(aider!.name).toBe("Aider");
+  });
+
+  it("includes continue client", () => {
+    const cont = CLIENT_REGISTRY.find((c) => c.slug === "continue");
+    expect(cont).toBeDefined();
+    expect(cont!.name).toBe("Continue");
+  });
+});
+
 describe("detectClients", () => {
   it("returns only clients whose config exists", () => {
     mockExists.mockImplementation((p) =>

@@ -13,7 +13,7 @@ const ALL_TOOL_KEYS = [
   "ANTHROPIC_MODEL",
   "CLAUDE_MODEL",
 ];
-const ALL_TOOL_PREFIXES = ["OPENCODE_", "CURSOR_", "CODEX_", "GEMINI_"];
+const ALL_TOOL_PREFIXES = ["OPENCODE_", "CURSOR_", "CODEX_", "GEMINI_", "WINDSURF_", "CODEIUM_", "AIDER_", "CONTINUE_"];
 
 function clearAllToolEnv(): Record<string, string | undefined> {
   const saved: Record<string, string | undefined> = {};
@@ -150,6 +150,67 @@ describe("detectTool", () => {
       withEnv({ GEMINI_API_KEY: "key123", GEMINI_MODEL: "gemini-2.5-pro" }, () => {
         const result = detectTool();
         expect(result.contextWindow).toBe(1_000_000);
+      });
+    });
+  });
+
+  describe("windsurf detection", () => {
+    it("detects WINDSURF_ prefix env var", () => {
+      withEnv({ WINDSURF_SESSION: "abc" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("windsurf");
+      });
+    });
+
+    it("detects CODEIUM_ prefix env var", () => {
+      withEnv({ CODEIUM_API_KEY: "key123" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("windsurf");
+      });
+    });
+
+    it("reads model from WINDSURF_MODEL", () => {
+      withEnv({ WINDSURF_SESSION: "abc", WINDSURF_MODEL: "gpt-4o" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("windsurf");
+        expect(result.model).toBe("gpt-4o");
+        expect(result.contextWindow).toBe(128_000);
+      });
+    });
+  });
+
+  describe("aider detection", () => {
+    it("detects AIDER_ prefix env var", () => {
+      withEnv({ AIDER_SESSION: "xyz" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("aider");
+      });
+    });
+
+    it("reads model from AIDER_MODEL", () => {
+      withEnv({ AIDER_MODEL: "gpt-4o" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("aider");
+        expect(result.model).toBe("gpt-4o");
+        expect(result.contextWindow).toBe(128_000);
+      });
+    });
+  });
+
+  describe("continue detection", () => {
+    it("detects CONTINUE_ prefix env var", () => {
+      withEnv({ CONTINUE_SESSION: "abc" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("continue");
+      });
+    });
+
+    it("reads model from CONTINUE_MODEL", () => {
+      withEnv({ CONTINUE_MODEL: "claude-sonnet-4-6" }, () => {
+        const result = detectTool();
+        expect(result.tool).toBe("continue");
+        expect(result.model).toBe("claude-sonnet-4-6");
+        expect(result.contextWindow).toBe(200_000);
       });
     });
   });
