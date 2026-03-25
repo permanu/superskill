@@ -64,12 +64,17 @@ interface SkillDir {
 export function getSkillDirectories(projectDir?: string): SkillDir[] {
   const home = homedir();
   const dirs: SkillDir[] = [
-    // Global skill directories
+    // Global skill directories — all 11 supported AI tools
     { path: resolve(home, ".claude", "skills"), scope: "global", source_tool: "claude" },
     { path: resolve(home, ".cursor", "skills"), scope: "global", source_tool: "cursor" },
     { path: resolve(home, ".codex", "skills"), scope: "global", source_tool: "codex" },
     { path: resolve(home, ".gemini", "skills"), scope: "global", source_tool: "gemini" },
     { path: resolve(home, ".config", "opencode", "skills"), scope: "global", source_tool: "opencode" },
+    { path: resolve(home, ".codeium", "windsurf", "skills"), scope: "global", source_tool: "windsurf" },
+    { path: resolve(home, ".aider", "skills"), scope: "global", source_tool: "aider" },
+    { path: resolve(home, ".continue", "skills"), scope: "global", source_tool: "continue" },
+    { path: resolve(home, ".config", "crush", "skills"), scope: "global", source_tool: "crush" },
+    { path: resolve(home, ".factory", "skills"), scope: "global", source_tool: "droid" },
   ];
 
   // Project-level skill directories

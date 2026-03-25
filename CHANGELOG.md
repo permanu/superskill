@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-25
+
+### Added
+- **Version-pinned skill cache** — Cache paths include version (`name@1.0.0.md`), with LRU eviction at 5MB. Core prefetch skills exempt from eviction. (#3)
+- **Context-aware skill budgeting** — Skills are loaded within a token budget (15% of detected context window, 2k-50k range). Priority-respecting cutoff ensures highest-scored skill always loads. (#10)
+- **Windsurf, Aider, Continue support** — Tool detection and setup for 3 new AI tools (11 total). (#14)
+- **`superskill-cli onboard` command** — Auto-detects AI tools, configures MCP, scans installed skills. Non-interactive for CI/MCP compatibility. (#15)
+- **Skill authoring guide** — CONTRIBUTING.md with authoring docs, SKILL-TEMPLATE.md with triggers field, PR template for skill submissions. (#8)
+- **Full skill directory scanning** — Scanner now covers all 11 AI tool directories (added Windsurf, Aider, Continue, Crush, Droid)
+
+### Changed
+- **Registry version synced to 0.5.0** — Was stuck at 0.3.0 since initial release
+- **Cache uses mtime** — Replaced atime (unreliable on Linux/containers) with mtime for LRU ordering
+- **Error handling improved** — Cache write failures now logged with context, temp files cleaned up on failure
+
+### Removed
+- **Dead backward-compatible exports** — Unused `DOMAINS`, `CATALOG`, `DOMAIN_PRIORITY` static exports removed from catalog.ts
+
 ## [0.4.0] - 2026-03-25
 
 ### Added

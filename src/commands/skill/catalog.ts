@@ -196,14 +196,6 @@ export function getDomainPriority(domainId: string): 'core' | 'extended' | 'refe
   return FALLBACK_PRIORITY[domainId];
 }
 
-// Backward-compatible exports — these delegate to the getter functions
-// NOTE: These are evaluated at import time, so they return the fallback values.
-// Code that needs registry data should use getDomains()/getCatalog() instead.
-export const DOMAINS: SkillDomain[] = FALLBACK_DOMAINS;
-export const CATALOG: CatalogSkill[] = FALLBACK_CATALOG;
-
-export const DOMAIN_PRIORITY: Record<string, 'core' | 'extended' | 'reference'> = FALLBACK_PRIORITY;
-
 // ── Collision Detection ──────────────────────────────
 
 export function detectCollisions(): Collision[] {

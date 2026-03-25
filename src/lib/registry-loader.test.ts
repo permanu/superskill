@@ -65,7 +65,7 @@ describe("registry-loader", () => {
       _setUserRegistryPath(join(testDir, "nonexistent.json"));
 
       const registry = await loadRegistry();
-      expect(registry.registry_version).toBe("0.3.0");
+      expect(registry.registry_version).toBe("0.5.0");
       expect(registry.skills.length).toBeGreaterThanOrEqual(87);
       expect(registry.domains.length).toBe(28);
     });
@@ -86,7 +86,7 @@ describe("registry-loader", () => {
       _setUserRegistryPath(userFile);
 
       const registry = await loadRegistry();
-      expect(registry.registry_version).toBe("0.3.0");
+      expect(registry.registry_version).toBe("0.5.0");
       expect(registry.skills.length).toBeGreaterThanOrEqual(87);
     });
 
@@ -96,7 +96,7 @@ describe("registry-loader", () => {
       _setUserRegistryPath(userFile);
 
       const registry = await loadRegistry();
-      expect(registry.registry_version).toBe("0.3.0");
+      expect(registry.registry_version).toBe("0.5.0");
     });
 
     it("caches the registry in memory", async () => {
