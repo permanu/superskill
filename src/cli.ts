@@ -1167,7 +1167,7 @@ skillCmd
 // ── setup / teardown ─────────────────────────────────
 registerSetupCommands(program);
 
-// Load registry and scan installed skills before parsing
+// Load registry and scan installed skills, then parse CLI
 (async () => {
   try {
     let registry = await loadRegistry();
@@ -1178,10 +1178,10 @@ registerSetupCommands(program);
     }
     setRegistryData(registry);
   } catch {
-    // Non-fatal
+    // Non-fatal: fallback catalog used
   }
+  program.parse();
 })();
-program.parse();
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled rejection:", reason);
