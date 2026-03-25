@@ -16,6 +16,7 @@ import { brainstormCommand } from "./commands/brainstorm.js";
 import { sessionCommand } from "./commands/session.js";
 import { graphRelatedCommand, graphCrossProjectCommand } from "./commands/graph.js";
 import { initCommand } from "./commands/init.js";
+import { onboard } from "./commands/onboard.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
@@ -227,6 +228,33 @@ program
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
+  });
+
+// ── onboard ───────────────────────────────────────────
+program
+  .command("onboard")
+  .description("Set up SuperSkill for all detected AI tools")
+  .option("--vault-path <path>", "vault directory path")
+  .action(async (opts) => {
+    const result = await onboard({ vaultPath: opts.vaultPath });
+
+    console.log("\n  SuperSkill Setup Complete\n");
+    console.log(`  Vault: ${result.vaultPath}`);
+    console.log(`  Detected: ${result.detectedClients.length} AI tool(s) — ${result.detectedClients.join(", ") || "none"}`);
+    console.log(`  Configured: ${result.configuredClients.length} tool(s) — ${result.configuredClients.join(", ") || "none"}`);
+    console.log(`  Installed skills: ${result.installedSkills}`);
+
+    if (result.errors.length > 0) {
+      console.log(`\n  Warnings:`);
+      for (const err of result.errors) {
+        console.log(`    - ${err}`);
+      }
+    }
+
+    console.log("\n  Next steps:");
+    console.log("    superskill-cli skill add <owner/repo>   Install skills from GitHub");
+    console.log("    superskill-cli skill installed           List installed skills");
+    console.log("    superskill-cli skill catalog             Browse built-in skills\n");
   });
 
 // ── decide ────────────────────────────────────────────

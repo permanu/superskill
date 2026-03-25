@@ -5,7 +5,7 @@ The runtime intelligence layer for AI agent skills.
 [![npm](https://img.shields.io/npm/v/superskill)](https://www.npmjs.com/package/superskill)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://www.gnu.org/licenses/agpl-3.0)
 [![skills](https://img.shields.io/badge/built--in_skills-87-purple)](https://github.com/permanu/superskill)
-[![tools](https://img.shields.io/badge/AI%20tools-8-green)](https://github.com/permanu/superskill)
+[![tools](https://img.shields.io/badge/AI%20tools-11-green)](https://github.com/permanu/superskill)
 
 ## The Problem
 
@@ -91,6 +91,9 @@ npx skills add affaan-m/everything-claude-code  # ECC skill suite
 | **OpenCode** | MCP config | Community |
 | **Crush CLI** | MCP config | Community |
 | **Droid** | MCP config | Community |
+| **Windsurf** | MCP config | Community |
+| **Aider** | MCP config | Community |
+| **Continue** | MCP config | Community |
 
 ## Built-in Skill Catalog
 

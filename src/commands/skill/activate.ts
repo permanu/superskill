@@ -8,6 +8,7 @@ import { fetchSkillContent, formatSection } from "./helpers.js";
 import { matchTask } from "../../lib/trigger-matcher.js";
 import { loadRegistry } from "../../lib/registry-loader.js";
 import { globalSkillSession } from "../../lib/skill-session.js";
+import { getSkillBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
 
 // ── Task → Domain Mapping ────────────────────────────
 
@@ -216,6 +217,22 @@ export async function activateSkills(options: {
         name: result.value.entry.name,
         domains: result.value.entry.domains,
       });
+    }
+  }
+
+  // Apply context budget — drop lowest-priority skills if they exceed the budget
+  const budget = getSkillBudget();
+  if (sections.length > 1) {
+    const { included, excluded, usedTokens } = fitSkillsToBudget(sections, budget.totalBudget);
+    if (excluded.length > 0) {
+      const keptSections = included.map(i => sections[i]);
+      const keptLoaded = included.map(i => loaded[i]);
+      const droppedNames = excluded.map(i => loaded[i].name);
+      sections.length = 0;
+      sections.push(...keptSections);
+      loaded.length = 0;
+      loaded.push(...keptLoaded);
+      sections.push(`\n[Context budget: loaded ${included.length} skill(s), ${droppedNames.length} deferred: ${droppedNames.join(", ")}]`);
     }
   }
 
