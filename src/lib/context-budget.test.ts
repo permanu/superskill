@@ -1,47 +1,65 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getSkillBudget, fitSkillsToBudget } from "./context-budget.js";
+import { describe, it, expect } from "vitest";
+import { getPhaseBudget, getSkillBudget, fitSkillsToBudget } from "./context-budget.js";
 
-// Mock tool-detector so we can control contextWindow / model
-vi.mock("./tool-detector.js", () => ({
-  detectTool: vi.fn(() => ({ tool: "unknown", contextWindow: 128_000 })),
-}));
-
-import { detectTool } from "./tool-detector.js";
-const mockedDetectTool = vi.mocked(detectTool);
-
-describe("getSkillBudget", () => {
-  beforeEach(() => {
-    mockedDetectTool.mockReturnValue({ tool: "unknown", contextWindow: 128_000 });
+describe("getPhaseBudget", () => {
+  it("returns 10% for explore phase", () => {
+    const result = getPhaseBudget("explore");
+    expect(result.totalBudget).toBe(12_800);
+    expect(result.contextWindow).toBe(128_000);
+    expect(result.phase).toBe("explore");
   });
 
+  it("returns 15% for implement phase", () => {
+    const result = getPhaseBudget("implement");
+    expect(result.totalBudget).toBe(19_200);
+    expect(result.phase).toBe("implement");
+  });
+
+  it("returns 8% for review phase", () => {
+    const result = getPhaseBudget("review");
+    expect(result.totalBudget).toBe(10_240);
+    expect(result.phase).toBe("review");
+  });
+
+  it("returns 5% for ship phase", () => {
+    const result = getPhaseBudget("ship");
+    expect(result.totalBudget).toBe(6_400);
+    expect(result.phase).toBe("ship");
+  });
+
+  it("clamps to MIN_BUDGET_TOKENS for tiny context windows", () => {
+    const result = getPhaseBudget("explore", 4_000);
+    expect(result.totalBudget).toBe(2_000);
+  });
+
+  it("clamps to MAX_BUDGET_TOKENS for very large context windows", () => {
+    const result = getPhaseBudget("implement", 1_000_000);
+    expect(result.totalBudget).toBe(50_000);
+  });
+});
+
+describe("getSkillBudget", () => {
   it("returns 15% of default 128k context window (clamped)", () => {
     const result = getSkillBudget();
-    // 128_000 * 0.15 = 19_200
     expect(result.totalBudget).toBe(19_200);
     expect(result.contextWindow).toBe(128_000);
   });
 
   it("clamps to MIN_BUDGET_TOKENS for tiny context windows", () => {
-    mockedDetectTool.mockReturnValue({ tool: "unknown", contextWindow: 4_000 });
-    const result = getSkillBudget();
-    // 4_000 * 0.15 = 600 → clamped to 2_000
+    const result = getSkillBudget(4_000);
     expect(result.totalBudget).toBe(2_000);
   });
 
   it("clamps to MAX_BUDGET_TOKENS for very large context windows", () => {
-    mockedDetectTool.mockReturnValue({ tool: "claude-code", model: "claude-opus-4-6", contextWindow: 1_000_000 });
-    const result = getSkillBudget();
-    // 1_000_000 * 0.15 = 150_000 → clamped to 50_000
+    const result = getSkillBudget(1_000_000);
     expect(result.totalBudget).toBe(50_000);
-    expect(result.model).toBe("claude-opus-4-6");
   });
 
-  it("falls back to 128k when contextWindow is undefined", () => {
-    mockedDetectTool.mockReturnValue({ tool: "unknown" });
-    const result = getSkillBudget();
-    expect(result.contextWindow).toBe(128_000);
-    expect(result.totalBudget).toBe(19_200);
+  it("accepts a custom context window", () => {
+    const result = getSkillBudget(200_000);
+    expect(result.totalBudget).toBe(30_000);
+    expect(result.contextWindow).toBe(200_000);
   });
 });
 
@@ -55,8 +73,7 @@ describe("fitSkillsToBudget", () => {
   });
 
   it("excludes skills that exceed budget", () => {
-    // Each 'a'.repeat(1000) ≈ 288 tokens (1000/4*1.15)
-    const big = "a".repeat(4000); // ~1150 tokens
+    const big = "a".repeat(4000);
     const contents = [big, big, big];
     const result = fitSkillsToBudget(contents, 2000);
     expect(result.included).toEqual([0]);
@@ -64,11 +81,10 @@ describe("fitSkillsToBudget", () => {
   });
 
   it("preserves priority order — earlier items preferred", () => {
-    const small = "a".repeat(100); // ~29 tokens
-    const big = "a".repeat(4000); // ~1150 tokens
+    const small = "a".repeat(100);
+    const big = "a".repeat(4000);
     const contents = [small, big, small];
     const result = fitSkillsToBudget(contents, 1200);
-    // small fits (29), big fits (29+1150=1179), second small would be 1208 > 1200
     expect(result.included).toEqual([0, 1]);
     expect(result.excluded).toEqual([2]);
   });
@@ -89,11 +105,10 @@ describe("fitSkillsToBudget", () => {
   });
 
   it("excludes all remaining skills after first that does not fit", () => {
-    const small = "a".repeat(100); // ~29 tokens
-    const big = "a".repeat(40000); // ~11500 tokens
+    const small = "a".repeat(100);
+    const big = "a".repeat(40000);
     const contents = [small, big, small];
     const result = fitSkillsToBudget(contents, 100);
-    // big exceeds budget → big and all after it are excluded (priority order)
     expect(result.included).toEqual([0]);
     expect(result.excluded).toEqual([1, 2]);
   });

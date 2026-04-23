@@ -1,31 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { detectTool } from "./tool-detector.js";
+import type { ProjectPhase } from "./graph/schema.js";
 import { estimateTokens } from "./token-estimator.js";
 
-/** Max fraction of context window to allocate to skills (15%) */
-const SKILL_BUDGET_RATIO = 0.15;
+const DEFAULT_CONTEXT_WINDOW = 128_000;
 const MIN_BUDGET_TOKENS = 2_000;
 const MAX_BUDGET_TOKENS = 50_000;
+
+const PHASE_BUDGET_RATIOS: Record<ProjectPhase, number> = {
+  explore: 0.10,
+  implement: 0.15,
+  review: 0.08,
+  ship: 0.05,
+};
 
 export interface BudgetResult {
   totalBudget: number;
   contextWindow: number;
-  model?: string;
+  phase?: ProjectPhase;
 }
 
-export function getSkillBudget(): BudgetResult {
-  const detected = detectTool();
-  const contextWindow = detected.contextWindow ?? 128_000;
-  const raw = Math.floor(contextWindow * SKILL_BUDGET_RATIO);
+export function getPhaseBudget(phase: ProjectPhase, contextWindow = DEFAULT_CONTEXT_WINDOW): BudgetResult {
+  const ratio = PHASE_BUDGET_RATIOS[phase];
+  const raw = Math.floor(contextWindow * ratio);
   const totalBudget = Math.max(MIN_BUDGET_TOKENS, Math.min(MAX_BUDGET_TOKENS, raw));
-  return { totalBudget, contextWindow, model: detected.model };
+  return { totalBudget, contextWindow, phase };
 }
 
-/**
- * Given a list of skill contents ordered by priority, return as many as fit
- * within the token budget. Returns indices of skills that fit.
- */
+export function getSkillBudget(contextWindow = DEFAULT_CONTEXT_WINDOW): BudgetResult {
+  const raw = Math.floor(contextWindow * 0.15);
+  const totalBudget = Math.max(MIN_BUDGET_TOKENS, Math.min(MAX_BUDGET_TOKENS, raw));
+  return { totalBudget, contextWindow };
+}
+
 export function fitSkillsToBudget(
   contents: string[],
   budget: number
@@ -40,7 +47,6 @@ export function fitSkillsToBudget(
       included.push(i);
       usedTokens += tokens;
     } else {
-      // Once budget is exceeded, all remaining skills are excluded (priority order)
       for (let j = i; j < contents.length; j++) {
         excluded.push(j);
       }

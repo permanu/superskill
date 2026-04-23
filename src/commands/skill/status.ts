@@ -8,6 +8,7 @@ import type { SkillNode, ProjectNode, SessionNode } from "../../lib/graph/schema
 
 export interface StatusResult {
   initialized: boolean;
+  message?: string;
   project: { stack: string[]; tools: string[]; phase: string } | null;
   skills: Array<{
     id: string;
@@ -44,6 +45,7 @@ export async function statusCommand(
   if (graph.nodes.length === 0) {
     return {
       initialized: false,
+      message: "No knowledge graph found. Run `superskill init` first to initialize this project.",
       project: null,
       skills: [],
       sessions: [],
