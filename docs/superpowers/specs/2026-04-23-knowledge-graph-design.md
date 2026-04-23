@@ -68,17 +68,15 @@ Session→File      {action: "modified"}         // files touched in session
 
 ```
 .superskill/
-  graph.json              # {nodes: [...], edges: [...]}
-  skill-cache/            # fetched SKILL.md content
-    {hash}.md             # keyed by skill ID hash
-  audit-cache.json        # cached skills.sh audit results
+  graph.json              # {nodes: [...], edges: [...]} — the knowledge graph
+  skill-cache/            # symlinks to ~/.superskill/skills/ (dedup)
 
 ~/.superskill/
   skills/                 # shared skill content (dedup across projects)
     {owner}/{repo}/{skill}/SKILL.md
     {owner}/{repo}/{skill}/meta.json   # {installs, stars, fetched_at}
-  audits/                 # shared audit cache
-    {owner}/{repo}/{skill}.json
+  audits/                 # shared audit cache (dedup across projects)
+    {owner}/{repo}/{skill}.json        # {gen, socket, snyk, fetched_at}
 ```
 
 `graph.json` target: 200-500 tokens for a mature project.
