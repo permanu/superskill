@@ -848,9 +848,10 @@ const skillCmd = program
 skillCmd
   .command("init")
   .description("Initialize superskill for the current project")
-  .action(async () => {
+  .option("--bridge", "Enable native skill bridge (replaces native skill files with superskill redirects)")
+  .action(async (opts: { bridge?: boolean }) => {
     try {
-      const result = await initProject({}, createCtx());
+      const result = await initProject({ bridge: opts.bridge }, createCtx());
       if (result.success) {
         console.log(`Initialized superskill graph:`);
         console.log(`  Stack: ${result.project_stack.join(", ") || "(none detected)"}`);

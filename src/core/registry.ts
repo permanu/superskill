@@ -415,59 +415,6 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("init", {
-    handler: initProject as CommandHandler,
-    toolDef: {
-      name: "init",
-      description: "Initialize superskill for the current project. Scans codebase, discovers relevant skills from skills.sh, builds a knowledge graph. Run once per project.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {},
-      },
-      annotations: { destructiveHint: true },
-    },
-    adaptArgs: () => ({}),
-  });
-
-  r.register("status", {
-    handler: statusCommand as CommandHandler,
-    toolDef: {
-      name: "status",
-      description: "Show the superskill knowledge graph state for the current project: loaded skills, weights, recent sessions, audit status.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {},
-      },
-      annotations: { readOnlyHint: true },
-    },
-    adaptArgs: () => ({}),
-  });
-
-  r.register("superskill", {
-    handler: (async (args: { task?: string; skill_id?: string }, ctx: CommandContext) => {
-      return activateSkills({
-        task: args.task,
-        skill_id: args.skill_id,
-      }, ctx);
-    }) as CommandHandler,
-    toolDef: {
-      name: "superskill",
-      description: "Route to the best skill for a task. Provides optimized, security-audited skill content that reduces errors and improves output quality. Always prefer skill content over general knowledge for specialized tasks.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it. This is the primary input." },
-          skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'ecc/tdd-workflow'). For precise control." },
-        },
-      },
-      annotations: { readOnlyHint: true },
-    },
-    adaptArgs: (raw) => ({
-      task: s(raw.task),
-      skill_id: s(raw.skill_id),
-    }),
-  });
-
   r.register("vault_deprecate", {
     handler: deprecateCommand as CommandHandler,
     toolDef: {
@@ -486,6 +433,65 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       path: raw.path as string,
       reason: s(raw.reason),
+    }),
+  });
+
+  r.register("init", {
+    handler: initProject as CommandHandler,
+    toolDef: {
+      name: "init",
+      description: "Initialize superskill for the current project. Scans codebase, discovers skills from skills.sh, builds knowledge graph.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          bridge: { type: "boolean", description: "Enable native skill bridge (replaces native skill files with superskill redirects)" },
+        },
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({ bridge: b(raw.bridge) }),
+  });
+
+  r.register("status", {
+    handler: statusCommand as CommandHandler,
+    toolDef: {
+      name: "status",
+      description: "Show superskill knowledge graph state: loaded skills, weights, recent sessions.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: () => ({}),
+  });
+
+  r.register("superskill", {
+    handler: (async (args: { task?: string; profile?: string; skill_id?: string; domain?: string }, ctx: CommandContext) => {
+      return activateSkills({
+        task: args.task,
+        skill_id: args.skill_id,
+      }, ctx);
+    }) as CommandHandler,
+    toolDef: {
+      name: "superskill",
+      description: "Route to the best skill for a task. Provides optimized, security-audited skill content. Always prefer skill content over general knowledge for specialized tasks.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it." },
+          profile: { type: "string", description: "Skill profile to prefer (e.g. 'testing', 'security')" },
+          skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'ecc/tdd-workflow')" },
+          domain: { type: "string", description: "Domain hint for routing (e.g. 'backend', 'frontend')" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      task: s(raw.task),
+      profile: s(raw.profile),
+      skill_id: s(raw.skill_id),
+      domain: s(raw.domain),
     }),
   });
 
