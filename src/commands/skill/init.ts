@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { readFile, appendFile, access, readdir, stat } from "node:fs/promises";
+import { readFile, appendFile, access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import matter from "gray-matter";
@@ -8,7 +8,7 @@ import type { CommandContext } from "../../core/types.js";
 import { detectStack } from "../../lib/stack-detector.js";
 import { detectTool } from "../../lib/tool-detector.js";
 import { findSkills, type CliSearchResult } from "../../lib/skills-sh/cli.js";
-import { getAudit, isStale, refreshAudit } from "../../lib/skills-sh/audit-cache.js";
+import { getAudit, isStale, refreshAuditWithMeta } from "../../lib/skills-sh/audit-cache.js";
 import {
   createEmptyGraph,
   ensureSuperskillDir,
@@ -17,12 +17,12 @@ import {
   addEdge,
 } from "../../lib/graph/store.js";
 import { normalizeInstalls } from "../../lib/graph/learner.js";
+import { auditIsBlocked } from "../../lib/security-gate.js";
 import type {
   Graph,
   ProjectNode,
   SkillNode,
   AuditResult,
-  AuditStatus,
 } from "../../lib/graph/schema.js";
 
 export interface InitResult {
@@ -34,11 +34,6 @@ export interface InitResult {
   skills_blocked: number;
   graph_path: string;
   error?: string;
-}
-
-function auditIsBlocked(audits: AuditResult): boolean {
-  const vals: AuditStatus[] = [audits.gen, audits.socket, audits.snyk];
-  return vals.some((v) => v === "fail");
 }
 
 const SUPER_SKILL_APPEND = `
@@ -133,13 +128,17 @@ async function buildRoutedSkillNode(
 ): Promise<{ node: SkillNode | null; blocked: boolean }> {
   const cached = await getAudit(candidate.id);
   let audits: AuditResult = { gen: "unknown", socket: "unknown", snyk: "unknown" };
+  let installs = 0;
+  let stars = 0;
 
   if (cached && !isStale(cached)) {
     audits = { gen: cached.gen, socket: cached.socket, snyk: cached.snyk };
   } else {
-    const refreshed = await refreshAudit(candidate.id);
+    const refreshed = await refreshAuditWithMeta(candidate.id);
     if (refreshed) {
-      audits = { gen: refreshed.gen, socket: refreshed.socket, snyk: refreshed.snyk };
+      audits = { gen: refreshed.audit.gen, socket: refreshed.audit.socket, snyk: refreshed.audit.snyk };
+      installs = refreshed.page.installs;
+      stars = refreshed.page.stars;
     }
   }
 
@@ -153,9 +152,9 @@ async function buildRoutedSkillNode(
       id: candidate.id,
       source: "routed",
       audits,
-      installs: 0,
-      stars: 0,
-      w: normalizeInstalls(0),
+      installs,
+      stars,
+      w: normalizeInstalls(installs),
       ts: Date.now(),
     },
     blocked: false,

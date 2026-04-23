@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 /**
  * Validate that a path is safe to read from outside the vault.
- * Used only by vault_init to scan git repos.
+ * Used only by generate_context to scan git repos.
  *
  * Enforces:
  * - Must be under $HOME

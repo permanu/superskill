@@ -208,8 +208,9 @@ describe("loadContent", () => {
     await rm(skillCacheDir, { recursive: true, force: true });
   });
 
-  it("reads SKILL.md from global cache", async () => {
-    await writeFile(join(skillCacheDir, "SKILL.md"), "# My Skill\n\nSome rules here.\n```js\ncode block\n```\n\nMore text.", "utf-8");
+  it("reads SKILL.md from global cache and compresses long code blocks", async () => {
+    const longBlock = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    await writeFile(join(skillCacheDir, "SKILL.md"), `# My Skill\n\nSome rules here.\n\`\`\`js\n${longBlock}\n\`\`\`\n\nMore text.`, "utf-8");
     const result = await loadContent(testDir, ["owner/repo@my-skill"]);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].id).toBe("owner/repo@my-skill");

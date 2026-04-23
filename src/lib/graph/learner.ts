@@ -7,7 +7,9 @@ import type {
   ProjectSkillEdge,
   SkillSkillEdge,
 } from "./schema.js";
-import { addNode, addEdge, updateNode, findNode, pruneSessions, decayWeights } from "./store.js";
+import { addNode, addEdge, updateNode, findNode, findNodes, pruneSessions, decayWeights } from "./store.js";
+
+const SESSION_WINDOW_MS = 3_600_000;
 
 export function boostWeight(w: number): number {
   return w * 0.9 + 1.0 * 0.1;
@@ -20,6 +22,37 @@ export function decayWeight(w: number): number {
 export function normalizeInstalls(installs: number): number {
   if (installs <= 0) return 0;
   return Math.min(1, Math.log10(installs + 1) / 6);
+}
+
+export function findOrCreateSession(
+  graph: Graph,
+  intent: string,
+): { graph: Graph; sessionId: string } {
+  const sessions = findNodes<SessionNode>(graph, "session");
+  const now = Date.now();
+
+  const recent = sessions
+    .filter((s) => s.outcome === null && now - s.ts < SESSION_WINDOW_MS)
+    .sort((a, b) => b.ts - a.ts);
+
+  if (recent.length > 0) {
+    return { graph, sessionId: recent[0].id };
+  }
+
+  let updated = graph;
+  const stale = sessions.filter((s) => s.outcome === null && now - s.ts >= SESSION_WINDOW_MS);
+  for (const s of stale) {
+    updated = updateNode(updated, "session", s.id, {
+      outcome: "success",
+    } as Partial<SessionNode>);
+  }
+  if (stale.length > 0) {
+    const allActivatedIds = new Set(stale.flatMap((s) => s.skills));
+    updated = decayWeights(updated, allActivatedIds, 0.05, 0.1);
+    updated = pruneSessions(updated, 50);
+  }
+
+  return startSession(updated, intent);
 }
 
 export function startSession(

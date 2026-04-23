@@ -2,6 +2,10 @@
 
 import type { AuditResult, AuditStatus } from "../graph/schema.js";
 
+// HTML parsing is inherently fragile — skills.sh is a Next.js app and its markup
+// may change without notice. These regex patterns target server-rendered content
+// and should be validated against real pages when updating.
+
 const FETCH_TIMEOUT_MS = 10_000;
 
 export interface SkillPageData {

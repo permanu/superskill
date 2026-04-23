@@ -16,7 +16,7 @@ vi.mock("../../lib/skills-sh/cli.js", () => ({
 vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
   getAudit: async () => null,
   isStale: () => true,
-  refreshAudit: (...args: unknown[]) => mockRefreshAudit(...args),
+  refreshAuditWithMeta: (...args: unknown[]) => mockRefreshAudit(...args),
 }));
 
 function createMockCtx(projectDir: string): CommandContext {
@@ -124,11 +124,15 @@ describe("initProject", () => {
     ]);
 
     mockRefreshAudit.mockResolvedValueOnce({
-      gen: "fail",
-      socket: "pass",
-      snyk: "pass",
-      fetched_at: Date.now(),
-      skill_id: "evil/repo@malicious",
+      audit: {
+        gen: "fail",
+        socket: "pass",
+        snyk: "pass",
+      },
+      page: {
+        installs: 100,
+        stars: 50,
+      },
     });
 
     const ctx = createMockCtx(projectDir);

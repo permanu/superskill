@@ -4,12 +4,14 @@ import type { CommandContext } from "../../core/types.js";
 import { loadGraph, writeGraph } from "../../lib/graph/store.js";
 import { matchTask } from "../../lib/graph/router.js";
 import { loadNeighborhood, loadContent } from "../../lib/graph/loader.js";
-import { startSession, recordActivation } from "../../lib/graph/learner.js";
-import { getSkillBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
+import { findOrCreateSession, recordActivation } from "../../lib/graph/learner.js";
+import { getPhaseBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
+import { getPhaseForTask } from "../../lib/graph/router.js";
 import { findSkills } from "../../lib/skills-sh/cli.js";
 import { getAudit, isStale, refreshAudit } from "../../lib/skills-sh/audit-cache.js";
 import { scanForPromptInjection } from "../../lib/security-scanner.js";
-import type { SkillNode, AuditResult, AuditStatus } from "../../lib/graph/schema.js";
+import { auditIsBlocked, auditIsWarn } from "../../lib/security-gate.js";
+import type { SkillNode, AuditResult } from "../../lib/graph/schema.js";
 
 export interface ActivateResult {
   success: boolean;
@@ -19,16 +21,6 @@ export interface ActivateResult {
   total_tokens: number;
   warnings: string[];
   error?: string;
-}
-
-function auditIsBlocked(audits: AuditResult): boolean {
-  const vals: AuditStatus[] = [audits.gen, audits.socket, audits.snyk];
-  return vals.some((v) => v === "fail");
-}
-
-function auditIsWarn(audits: AuditResult): boolean {
-  const vals: AuditStatus[] = [audits.gen, audits.socket, audits.snyk];
-  return vals.some((v) => v === "warn");
 }
 
 export async function activateSkills(
@@ -108,7 +100,8 @@ export async function activateSkills(
 
     const contentResult = await loadContent(projectDir, safeIds);
 
-    const budget = getSkillBudget();
+    const phase = getPhaseForTask(task);
+    const budget = getPhaseBudget(phase);
     const contents: string[] = [];
     const contentSkillIds: string[] = [];
 
@@ -134,7 +127,7 @@ export async function activateSkills(
     const finalContent = included.map((i) => contents[i]).join("\n\n---\n\n");
 
     let updatedGraph = graph;
-    const { graph: sessionGraph, sessionId } = startSession(graph, task);
+    const { graph: sessionGraph, sessionId } = findOrCreateSession(graph, task);
     updatedGraph = sessionGraph;
     for (const skillId of safeIds) {
       updatedGraph = recordActivation(updatedGraph, sessionId, skillId, []);

@@ -153,12 +153,12 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_init", {
+  r.register("generate_context", {
     handler: (async (args: { projectPath: string; slug?: string }) => {
       return initCommand(args.projectPath, args.slug);
     }) as CommandHandler,
     toolDef: {
-      name: "vault_init",
+      name: "generate_context",
       description: "Scan a git repo and generate a draft context.md. Returns the draft — does NOT write to vault. Human reviews before committing.",
       inputSchema: {
         type: "object" as const,

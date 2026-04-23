@@ -26,6 +26,7 @@ import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills } from "./commands/skill/activate.js";
 import { statusCommand } from "./commands/skill/status.js";
+import { getTimeAgo } from "./lib/time-utils.js";
 
 let _config: Config | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -249,9 +250,9 @@ program
     }
 
     console.log("\n  Next steps:");
-    console.log("    superskill-cli skill add <owner/repo>   Install skills from GitHub");
-    console.log("    superskill-cli skill installed           List installed skills");
-    console.log("    superskill-cli skill catalog             Browse built-in skills\n");
+    console.log("    superskill skill init              Initialize knowledge graph for this project");
+    console.log("    superskill skill activate [task]   Activate skills for a task");
+    console.log("    superskill skill status            Show graph state\n");
   });
 
 // ── decide ────────────────────────────────────────────
@@ -929,16 +930,6 @@ skillCmd
       process.exit(1);
     }
   });
-function getTimeAgo(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  if (hours < 1) return "just now";
-  if (hours === 1) return "1h ago";
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "1d ago";
-  return `${days}d ago`;
-}
 
 // ── setup / teardown ─────────────────────────────────
 registerSetupCommands(program);

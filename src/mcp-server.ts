@@ -21,6 +21,7 @@ import { readCommand, listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
 import { searchText, searchStructured } from "./lib/search-engine.js";
 import { formatResumeContext } from "./commands/resume.js";
+import { getTimeAgo } from "./lib/time-utils.js";
 
 const registry = createRegistry();
 
@@ -304,17 +305,6 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     };
   }
 });
-
-function getTimeAgo(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  if (hours < 1) return "just now";
-  if (hours === 1) return "1h ago";
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "1d ago";
-  return `${days}d ago`;
-}
 
 // ── Start ─────────────────────────────────────────────
 

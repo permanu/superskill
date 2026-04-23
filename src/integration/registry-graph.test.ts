@@ -90,7 +90,7 @@ describe("integration > command registry", () => {
       expect(names).toContain("resume");
       expect(names).toContain("deprecate");
       expect(names).toContain("project_context");
-      expect(names).toContain("vault_init");
+      expect(names).toContain("generate_context");
       expect(names).toContain("init");
       expect(names).toContain("status");
       expect(names).toContain("superskill");

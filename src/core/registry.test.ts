@@ -169,7 +169,7 @@ describe("createRegistry", () => {
       "write",
       "search",
       "project_context",
-      "vault_init",
+      "generate_context",
       "decide",
       "task",
       "learn",

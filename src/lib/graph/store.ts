@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Operations on .superskill/ use raw fs (not VaultFS) because .superskill/ is
+// project-local, not inside the vault. VaultFS enforces vault-specific security policies.
+
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";

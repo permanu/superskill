@@ -11,6 +11,8 @@ export interface SkillMeta {
   fetched_at: number;
 }
 
+// Module-level override for test isolation. Not thread-safe — only used in tests.
+
 let cacheDirOverride: string | null = null;
 
 export function setGlobalCacheDir(dir: string | null): void {

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { AuditResult } from "../graph/schema.js";
-import { fetchSkillPage } from "./client.js";
+import { fetchSkillPage, type SkillPageData } from "./client.js";
 
 export interface CachedAudit extends AuditResult {
   fetched_at: number;
@@ -13,6 +13,8 @@ export interface CachedAudit extends AuditResult {
 }
 
 const DEFAULT_STALE_MS = 86_400_000;
+
+// Module-level override for test isolation. Not thread-safe — only used in tests.
 
 let cacheDirOverride: string | null = null;
 
@@ -92,6 +94,13 @@ export async function setAudit(
 export async function refreshAudit(
   skillId: string,
 ): Promise<CachedAudit | null> {
+  const result = await refreshAuditWithMeta(skillId);
+  return result?.audit ?? null;
+}
+
+export async function refreshAuditWithMeta(
+  skillId: string,
+): Promise<{ audit: CachedAudit; page: SkillPageData } | null> {
   const parsed = parseSkillId(skillId);
   if (!parsed) {
     console.error(
@@ -105,13 +114,13 @@ export async function refreshAudit(
     parsed.skill,
   );
   if (!pageData) return null;
-  const data: CachedAudit = {
+  const audit: CachedAudit = {
     gen: pageData.audits.gen,
     socket: pageData.audits.socket,
     snyk: pageData.audits.snyk,
     fetched_at: Date.now(),
     skill_id: skillId,
   };
-  await setAudit(skillId, data);
-  return data;
+  await setAudit(skillId, audit);
+  return { audit, page: pageData };
 }

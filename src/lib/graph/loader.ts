@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -88,6 +88,8 @@ export function loadNeighborhood(
   return { matchedSkills, coActivatedSkills, recentSessions };
 }
 
+const SKILL_CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export async function loadContent(
   projectDir: string,
   skillIds: string[],
@@ -111,6 +113,11 @@ export async function loadContent(
     let content: string | null = null;
     for (const path of [localPath, cachePath]) {
       try {
+        const fileStat = await stat(path);
+        if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
+          console.error(`[graph-loader] stale cache for skill: ${skillId} (${path})`);
+          continue;
+        }
         const raw = await readFile(path, "utf-8");
         content = compressContent(raw);
         break;
@@ -131,7 +138,10 @@ export async function loadContent(
 
 function compressContent(content: string): string {
   let result = content;
-  result = result.replace(/```[\s\S]*?```/g, "");
+  result = result.replace(/```[\s\S]*?```/g, (match) => {
+    if (match.split("\n").length <= 5) return match;
+    return "";
+  });
   result = result.replace(/\n{3,}/g, "\n\n");
   return result.trim();
 }
