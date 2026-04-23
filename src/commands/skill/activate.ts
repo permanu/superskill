@@ -129,7 +129,7 @@ export async function activateSkills(
     let updatedGraph = graph;
     const { graph: sessionGraph, sessionId } = findOrCreateSession(graph, task);
     updatedGraph = sessionGraph;
-    for (const skillId of safeIds) {
+    for (const skillId of contentSkillIds) {
       updatedGraph = recordActivation(updatedGraph, sessionId, skillId, []);
     }
     await writeGraph(projectDir, updatedGraph);

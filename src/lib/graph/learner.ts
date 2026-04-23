@@ -15,8 +15,9 @@ export function boostWeight(w: number): number {
   return w * 0.9 + 1.0 * 0.1;
 }
 
-export function decayWeight(w: number): number {
-  return Math.max(0.1, w * 0.95);
+export function normalizeStars(stars: number): number {
+  if (stars <= 0) return 0;
+  return Math.min(1, Math.log10(stars + 1) / 6);
 }
 
 export function normalizeInstalls(installs: number): number {

@@ -56,8 +56,8 @@ export async function installSkill(
   options?: { global?: boolean; yes?: boolean },
 ): Promise<boolean> {
   const args = ["skills", "add", packageRef];
-  if (options?.global !== false) args.push("-g");
-  if (options?.yes !== false) args.push("-y");
+  if (options?.global ?? true) args.push("-g");
+  if (options?.yes ?? true) args.push("-y");
   try {
     await execFileAsync("npx", args, { timeout: INSTALL_TIMEOUT_MS });
     return true;

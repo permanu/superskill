@@ -16,7 +16,7 @@ import {
   addNode,
   addEdge,
 } from "../../lib/graph/store.js";
-import { normalizeInstalls } from "../../lib/graph/learner.js";
+import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
 import { auditIsBlocked } from "../../lib/security-gate.js";
 import type {
   Graph,
@@ -94,7 +94,9 @@ async function scanNativeSkillDirs(projectDir: string): Promise<string[]> {
 async function collectSkillFiles(
   dir: string,
   results: string[],
+  depth = 0,
 ): Promise<void> {
+  if (depth > 5) return;
   try {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -102,7 +104,7 @@ async function collectSkillFiles(
       if (entry.isDirectory()) {
         if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".agents") continue;
         if (entry.name === "node_modules" || entry.name === "dist") continue;
-        await collectSkillFiles(fullPath, results);
+        await collectSkillFiles(fullPath, results, depth + 1);
       } else if (entry.name === "SKILL.md") {
         results.push(fullPath);
       }
@@ -154,7 +156,7 @@ async function buildRoutedSkillNode(
       audits,
       installs,
       stars,
-      w: normalizeInstalls(installs),
+      w: Math.max(normalizeInstalls(installs), normalizeStars(stars)),
       ts: Date.now(),
     },
     blocked: false,

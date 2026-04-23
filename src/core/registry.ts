@@ -448,7 +448,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("superskill", {
-    handler: (async (args: { task?: string; profile?: string; skill_id?: string; domain?: string }, ctx: CommandContext) => {
+    handler: (async (args: { task?: string; skill_id?: string }, ctx: CommandContext) => {
       return activateSkills({
         task: args.task,
         skill_id: args.skill_id,
@@ -461,18 +461,14 @@ export function createRegistry(): CommandRegistry {
         type: "object" as const,
         properties: {
           task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it." },
-          profile: { type: "string", description: "Skill profile to prefer (e.g. 'testing', 'security')" },
-          skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'ecc/tdd-workflow')" },
-          domain: { type: "string", description: "Domain hint for routing (e.g. 'backend', 'frontend')" },
+          skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'vercel-labs/agent-skills@react-best-practices')" },
         },
       },
       annotations: { readOnlyHint: true },
     },
     adaptArgs: (raw) => ({
       task: s(raw.task),
-      profile: s(raw.profile),
       skill_id: s(raw.skill_id),
-      domain: s(raw.domain),
     }),
   });
 

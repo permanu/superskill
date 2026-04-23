@@ -96,7 +96,6 @@ function extractSkillMd(html: string): string {
     /<section[^>]*class="[^"]*skill-content[^"]*"[^>]*>([\s\S]*?)<\/section>/i,
     /<div[^>]*id="skill-md"[^>]*>([\s\S]*?)<\/div>/i,
     /<pre[^>]*class="[^"]*skill-md[^"]*"[^>]*>([\s\S]*?)<\/pre>/i,
-    /<article[^>]*>([\s\S]*?)<\/article>/i,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);

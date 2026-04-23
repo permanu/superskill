@@ -77,7 +77,7 @@ export function matchTask(task: string, graph: Graph): string[] {
 
     const edge = edgeMap.get(skill.id);
     const weight = edge ? edge.w : 0.1;
-    const combinedScore = matchScore * 0.6 + weight * 0.4;
+    const combinedScore = matchScore * 0.5 + weight * 0.3 + skill.w * 0.2;
 
     scored.push({ id: skill.id, score: combinedScore });
   }

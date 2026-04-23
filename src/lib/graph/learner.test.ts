@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { Graph, SessionNode, ProjectSkillEdge, SkillSkillEdge } from "./schema.js";
 import {
   boostWeight,
-  decayWeight,
   normalizeInstalls,
+  normalizeStars,
   startSession,
   recordActivation,
   endSession,
@@ -65,24 +65,34 @@ describe("boostWeight", () => {
   });
 });
 
-describe("decayWeight", () => {
-  it("decays weight by 5%", () => {
-    expect(decayWeight(1.0)).toBeCloseTo(0.95);
-    expect(decayWeight(0.5)).toBeCloseTo(0.475);
+describe("normalizeStars", () => {
+  it("maps 0 stars to 0", () => {
+    expect(normalizeStars(0)).toBe(0);
   });
 
-  it("never goes below floor of 0.1", () => {
-    expect(decayWeight(0.05)).toBe(0.1);
-    expect(decayWeight(0.01)).toBe(0.1);
-    expect(decayWeight(0.0)).toBe(0.1);
+  it("maps negative stars to 0", () => {
+    expect(normalizeStars(-100)).toBe(0);
   });
 
-  it("decays toward 0.1 floor with repeated applications", () => {
-    let w = 1.0;
-    for (let i = 0; i < 100; i++) {
-      w = decayWeight(w);
+  it("maps high star counts to near 1", () => {
+    expect(normalizeStars(1_000_000)).toBeCloseTo(1.0, 1);
+    expect(normalizeStars(165_000)).toBeGreaterThan(0.8);
+  });
+
+  it("produces values in 0-1 range", () => {
+    for (const stars of [1, 10, 100, 1000, 10000, 100000]) {
+      const result = normalizeStars(stars);
+      expect(result).toBeGreaterThanOrEqual(0);
+      expect(result).toBeLessThanOrEqual(1);
     }
-    expect(w).toBe(0.1);
+  });
+
+  it("is monotonically increasing", () => {
+    const a = normalizeStars(100);
+    const b = normalizeStars(1000);
+    const c = normalizeStars(10000);
+    expect(b).toBeGreaterThan(a);
+    expect(c).toBeGreaterThan(b);
   });
 });
 

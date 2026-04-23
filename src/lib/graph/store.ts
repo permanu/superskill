@@ -7,6 +7,7 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type {
   Graph,
   Node,
@@ -52,7 +53,7 @@ export async function writeGraph(projectDir: string, graph: Graph): Promise<void
   }
   const tmpPath = join(
     tmpdir(),
-    `graph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+    `graph-${randomUUID()}.json`,
   );
   try {
     await writeFile(tmpPath, JSON.stringify(graph, null, 2), "utf-8");
