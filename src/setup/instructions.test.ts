@@ -30,7 +30,7 @@ describe("writeMarkdownInstruction", () => {
     const written = mockWrite.mock.calls[0][1] as string;
     expect(written).toContain("<!-- superskill:start -->");
     expect(written).toContain("<!-- superskill:end -->");
-    expect(written).toContain("vault_project_context");
+    expect(written).toContain("project_context");
   });
 
   it("appends to existing file", () => {
@@ -82,7 +82,7 @@ describe("writeMdcInstruction", () => {
     const written = mockWrite.mock.calls[0][1] as string;
     expect(written).toContain("description: SuperSkill knowledge base integration");
     expect(written).toContain("alwaysApply: true");
-    expect(written).toContain("vault_project_context");
+    expect(written).toContain("project_context");
   });
 });
 

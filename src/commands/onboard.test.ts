@@ -19,22 +19,12 @@ vi.mock("../setup/configure.js", () => ({
   })),
 }));
 
-vi.mock("../lib/skill-scanner.js", () => ({
-  scanInstalledSkills: vi.fn(async () => ({
-    skills: [],
-    scan_paths: [],
-    errors: [],
-  })),
-}));
-
 import { onboard } from "./onboard.js";
 import { detectClients } from "../setup/detect.js";
 import { configureClient } from "../setup/configure.js";
-import { scanInstalledSkills } from "../lib/skill-scanner.js";
 
 const mockedDetectClients = vi.mocked(detectClients);
 const mockedConfigureClient = vi.mocked(configureClient);
-const mockedScanInstalledSkills = vi.mocked(scanInstalledSkills);
 
 describe("onboard", () => {
   let tmpDir: string;
@@ -156,21 +146,6 @@ describe("onboard", () => {
 
     expect(result.configuredClients).toEqual(["Partial Tool"]);
     expect(result.errors).toEqual(["Partial Tool: instruction write failed"]);
-  });
-
-  it("counts installed skills from scanner", async () => {
-    mockedScanInstalledSkills.mockResolvedValue({
-      skills: [
-        { name: "skill-a" } as any,
-        { name: "skill-b" } as any,
-      ],
-      scan_paths: [],
-      errors: [],
-    });
-
-    const result = await onboard({ vaultPath: tmpDir });
-
-    expect(result.installedSkills).toBe(2);
   });
 
   it("uses default vault path when none provided", async () => {

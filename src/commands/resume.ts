@@ -3,7 +3,6 @@ import type { CommandContext } from "../core/types.js";
 import { parseFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
 import type { Session } from "../lib/session-registry.js";
-import { getSkillAwarenessBlock } from "../commands/skill/marketplace.js";
 
 export interface ResumeContext {
   project: string;
@@ -171,8 +170,7 @@ export function formatResumeContext(ctx: ResumeContext): string {
     lines.push("");
   }
 
-  // Inject skill awareness so agents know SuperSkill is available
-  lines.push(getSkillAwarenessBlock());
+  lines.push("Use `superskill` tool for skill routing on specialized tasks.");
 
   return lines.join("\n");
 }

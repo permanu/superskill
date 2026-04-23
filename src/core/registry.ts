@@ -133,10 +133,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_project_context", {
+  r.register("project_context", {
     handler: contextCommand as CommandHandler,
     toolDef: {
-      name: "vault_project_context",
+      name: "project_context",
       description: "Get the context document for a project. Auto-detects project from CWD if not specified.",
       inputSchema: {
         type: "object" as const,
@@ -176,10 +176,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_decide", {
+  r.register("decide", {
     handler: decideCommand as CommandHandler,
     toolDef: {
-      name: "vault_decide",
+      name: "decide",
       description: "Log an architectural/design decision to the project's decisions directory.",
       inputSchema: {
         type: "object" as const,
@@ -240,10 +240,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_learn", {
+  r.register("learn", {
     handler: learnCommand as CommandHandler,
     toolDef: {
-      name: "vault_learn",
+      name: "learn",
       description: "Capture and query learnings. Learnings persist discoveries across sessions. Stored as individual files in projects/<slug>/learnings/.",
       inputSchema: {
         type: "object" as const,
@@ -275,29 +275,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_todo", {
-    handler: taskCommand as CommandHandler,
-    toolDef: {
-      name: "vault_todo",
-      description: "[Deprecated — use vault_task] Manage project todos. Delegates to vault_task internally.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          action: { type: "string", enum: ["list", "add", "complete", "remove"], description: "Action to perform" },
-          item: { type: "string", minLength: 1, description: "Todo item text (required for add/complete/remove)" },
-          priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority (for add)" },
-          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
-        },
-        required: ["action"],
-      },
-      annotations: { destructiveHint: true },
-    },
-  });
-
-  r.register("vault_brainstorm", {
+  r.register("brainstorm", {
     handler: brainstormCommand as CommandHandler,
     toolDef: {
-      name: "vault_brainstorm",
+      name: "brainstorm",
       description: "Start or continue a brainstorm document for a project.",
       inputSchema: {
         type: "object" as const,
@@ -350,10 +331,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_prune", {
+  r.register("prune", {
     handler: pruneCommand as CommandHandler,
     toolDef: {
-      name: "vault_prune",
+      name: "prune",
       description: "Archive or delete stale vault content based on retention policies. Use mode='dry-run' first to preview.",
       inputSchema: {
         type: "object" as const,
@@ -378,10 +359,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_stats", {
+  r.register("stats", {
     handler: statsCommand as CommandHandler,
     toolDef: {
-      name: "vault_stats",
+      name: "stats",
       description: "Show content statistics for a project — file counts, task breakdown, growth monitoring.",
       inputSchema: {
         type: "object" as const,
@@ -394,10 +375,10 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({ project: s(raw.project) }),
   });
 
-  r.register("vault_resume", {
+  r.register("resume", {
     handler: resumeCommand as CommandHandler,
     toolDef: {
-      name: "vault_resume",
+      name: "resume",
       description: "Get resume context for continuing work — recent sessions, interrupted work, in-progress tasks, suggested next steps. Call this at session start to understand what happened before.",
       inputSchema: {
         type: "object" as const,
@@ -415,10 +396,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_deprecate", {
+  r.register("deprecate", {
     handler: deprecateCommand as CommandHandler,
     toolDef: {
-      name: "vault_deprecate",
+      name: "deprecate",
       description: "Mark a vault item (ADR, learning, etc.) as deprecated with an optional reason.",
       inputSchema: {
         type: "object" as const,

@@ -47,10 +47,10 @@ describe("integration > command registry", () => {
       expect(JSON.stringify(taskList)).toContain("Test task");
     });
 
-    it("registry execute vault_decide creates an ADR via the registry", async () => {
+    it("registry execute decide creates an ADR via the registry", async () => {
       const registry = createRegistry();
       const result = await registry.execute(
-        "vault_decide",
+        "decide",
         { title: "Use TypeScript", context: "Need types", decision: "Use TS", project: "my-project" },
         ctx,
       );
@@ -81,17 +81,16 @@ describe("integration > command registry", () => {
       expect(names).toContain("write");
       expect(names).toContain("search");
       expect(names).toContain("task");
-      expect(names).toContain("vault_decide");
-      expect(names).toContain("vault_learn");
+      expect(names).toContain("decide");
+      expect(names).toContain("learn");
       expect(names).toContain("session");
-      expect(names).toContain("vault_brainstorm");
-      expect(names).toContain("vault_prune");
-      expect(names).toContain("vault_stats");
-      expect(names).toContain("vault_resume");
-      expect(names).toContain("vault_deprecate");
-      expect(names).toContain("vault_project_context");
+      expect(names).toContain("brainstorm");
+      expect(names).toContain("prune");
+      expect(names).toContain("stats");
+      expect(names).toContain("resume");
+      expect(names).toContain("deprecate");
+      expect(names).toContain("project_context");
       expect(names).toContain("vault_init");
-      expect(names).toContain("vault_todo");
       expect(names).toContain("init");
       expect(names).toContain("status");
       expect(names).toContain("superskill");

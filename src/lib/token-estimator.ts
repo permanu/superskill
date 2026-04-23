@@ -35,7 +35,7 @@ export function truncateToTokenBudget(text: string, maxTokens: number): { text: 
   const lastSection = truncated.lastIndexOf("\n## ");
   if (lastSection > charLimit * 0.5) {
     return {
-      text: truncated.slice(0, lastSection) + "\n\n[truncated — use vault_project_context for full details]",
+      text: truncated.slice(0, lastSection) + "\n\n[truncated — use project_context for full details]",
       truncated: true,
     };
   }
@@ -44,7 +44,7 @@ export function truncateToTokenBudget(text: string, maxTokens: number): { text: 
   const lastParagraph = truncated.lastIndexOf("\n\n");
   if (lastParagraph > charLimit * 0.3) {
     return {
-      text: truncated.slice(0, lastParagraph) + "\n\n[truncated — use vault_project_context for full details]",
+      text: truncated.slice(0, lastParagraph) + "\n\n[truncated — use project_context for full details]",
       truncated: true,
     };
   }
@@ -53,13 +53,13 @@ export function truncateToTokenBudget(text: string, maxTokens: number): { text: 
   const lastNewline = truncated.lastIndexOf("\n");
   if (lastNewline > 0) {
     return {
-      text: truncated.slice(0, lastNewline) + "\n\n[truncated — use vault_project_context for full details]",
+      text: truncated.slice(0, lastNewline) + "\n\n[truncated — use project_context for full details]",
       truncated: true,
     };
   }
 
   return {
-    text: truncated + "\n\n[truncated — use vault_project_context for full details]",
+    text: truncated + "\n\n[truncated — use project_context for full details]",
     truncated: true,
   };
 }

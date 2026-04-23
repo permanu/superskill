@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { readFile, appendFile, access, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import matter from "gray-matter";
 import type { CommandContext } from "../../core/types.js";
 import { detectStack } from "../../lib/stack-detector.js";
 import { detectTool } from "../../lib/tool-detector.js";
-import { getSkillDirectories } from "../../lib/skill-scanner.js";
 import { findSkills, type CliSearchResult } from "../../lib/skills-sh/cli.js";
 import { getAudit, isStale, refreshAudit } from "../../lib/skills-sh/audit-cache.js";
 import {
@@ -62,13 +62,33 @@ async function appendToInstructionFile(projectDir: string): Promise<void> {
   }
 }
 
+function getSkillDirectories(projectDir: string): string[] {
+  const home = homedir();
+  const dirs = [
+    resolve(home, ".claude", "skills"),
+    resolve(home, ".cursor", "skills"),
+    resolve(home, ".codex", "skills"),
+    resolve(home, ".gemini", "skills"),
+    resolve(home, ".config", "opencode", "skills"),
+    resolve(home, ".codeium", "windsurf", "skills"),
+    resolve(home, ".aider", "skills"),
+    resolve(home, ".continue", "skills"),
+    resolve(home, ".config", "crush", "skills"),
+    resolve(home, ".factory", "skills"),
+    resolve(projectDir, ".claude", "skills"),
+    resolve(projectDir, ".cursor", "skills"),
+    resolve(projectDir, ".agents", "skills"),
+  ];
+  return dirs;
+}
+
 async function scanNativeSkillDirs(projectDir: string): Promise<string[]> {
   const dirs = getSkillDirectories(projectDir);
   const skillFiles: string[] = [];
 
   for (const dir of dirs) {
     try {
-      await collectSkillFiles(dir.path, skillFiles);
+      await collectSkillFiles(dir, skillFiles);
     } catch {
     }
   }

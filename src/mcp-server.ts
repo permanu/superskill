@@ -108,97 +108,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
     }
 
-    if (name === "vault_todo" || name === "todo") {
-      const { action, item, priority, project } = raw;
-      if (!action || typeof action !== "string") {
-        throw new Error("Missing required field: action (string)");
-      }
-      const validTodoActions = ["list", "add", "complete", "remove"] as const;
-      if (!validTodoActions.includes(action as any)) {
-        throw new Error(`Invalid action: ${action}. Must be one of: ${validTodoActions.join(", ")}`);
-      }
-
-      const priorityMap: Record<string, "p0" | "p1" | "p2"> = { high: "p0", medium: "p1", low: "p2" };
-      const taskPriority = priority && typeof priority === "string" && priority in priorityMap
-        ? priorityMap[priority]
-        : "p1";
-
-      let result: Record<string, unknown>;
-      switch (action as "list" | "add" | "complete" | "remove") {
-        case "list": {
-          const tasks = await taskCommand({
-            action: "list",
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          const todos: Array<{ text: string; priority: string; completed: boolean; task_id: string }> = (tasks.tasks ?? []).map((t) => ({
-            text: t.title,
-            priority: t.priority,
-            completed: t.status === "done" || t.status === "cancelled",
-            task_id: t.id,
-          }));
-          result = { todos };
-          break;
-        }
-        case "add": {
-          if (!item || typeof item !== "string") {
-            throw new Error("Missing required field: item (string)");
-          }
-          const addResult = await taskCommand({
-            action: "add",
-            title: item,
-            priority: taskPriority,
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          result = { added: true, task_id: addResult.task_id, path: addResult.path };
-          break;
-        }
-        case "complete": {
-          if (!item || typeof item !== "string") {
-            throw new Error("Missing required field: item (string)");
-          }
-          const listResult = await taskCommand({
-            action: "list",
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          const match = (listResult.tasks ?? []).find((t) => t.title === item);
-          if (!match) {
-            throw new Error(`Todo not found: ${item}`);
-          }
-          await taskCommand({
-            action: "update",
-            taskId: match.id,
-            status: "done",
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          result = { completed: true, task_id: match.id };
-          break;
-        }
-        case "remove": {
-          if (!item || typeof item !== "string") {
-            throw new Error("Missing required field: item (string)");
-          }
-          const listRes = await taskCommand({
-            action: "list",
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          const removeMatch = (listRes.tasks ?? []).find((t) => t.title === item);
-          if (!removeMatch) {
-            throw new Error(`Todo not found: ${item}`);
-          }
-          await taskCommand({
-            action: "update",
-            taskId: removeMatch.id,
-            status: "cancelled",
-            project: typeof project === "string" ? project : undefined,
-          }, ctx);
-          result = { removed: true, task_id: removeMatch.id };
-          break;
-        }
-      }
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
-
-    if (name === "vault_resume" || name === "resume") {
+    if (name === "resume") {
       const result = await registry.execute(name, raw, ctx);
       if (raw.format === "json") {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -246,7 +156,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     if (projectMatch) {
       const slug = projectMatch[1];
       const ctx = createCtx();
-      const result = await registry.execute("vault_project_context", { project: slug, detail_level: "summary" }, ctx) as any;
+      const result = await registry.execute("project_context", { project: slug, detail_level: "summary" }, ctx) as any;
       return {
         contents: [{ uri, mimeType: "text/markdown", text: result.context_md }],
       };
@@ -293,7 +203,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     if (name === "inject-project-context") {
       const project = args?.project as string | undefined;
       const ctx = createCtx();
-      const result = await registry.execute("vault_project_context", {
+      const result = await registry.execute("project_context", {
         project,
         detail_level: "summary",
       }, ctx) as any;
@@ -314,7 +224,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
       let learningSection = "";
       if (result.learning_count > 0) {
-        learningSection = `\n\n## Learnings: ${result.learning_count} available (use vault_learn list)`;
+        learningSection = `\n\n## Learnings: ${result.learning_count} available (use learn list)`;
       }
 
       let sessionSection = "";

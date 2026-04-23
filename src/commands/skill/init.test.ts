@@ -8,7 +8,6 @@ import type { CommandContext } from "../../core/types.js";
 
 const mockFindSkills = vi.fn();
 const mockRefreshAudit = vi.fn();
-const mockGetSkillDirectories = vi.fn();
 
 vi.mock("../../lib/skills-sh/cli.js", () => ({
   findSkills: (...args: unknown[]) => mockFindSkills(...args),
@@ -18,10 +17,6 @@ vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
   getAudit: async () => null,
   isStale: () => true,
   refreshAudit: (...args: unknown[]) => mockRefreshAudit(...args),
-}));
-
-vi.mock("../../lib/skill-scanner.js", () => ({
-  getSkillDirectories: (...args: unknown[]) => mockGetSkillDirectories(...args),
 }));
 
 function createMockCtx(projectDir: string): CommandContext {
@@ -43,7 +38,6 @@ describe("initProject", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     mockFindSkills.mockResolvedValue([]);
     mockRefreshAudit.mockResolvedValue(null);
-    mockGetSkillDirectories.mockReturnValue([]);
   });
 
   afterEach(async () => {
@@ -111,21 +105,17 @@ describe("initProject", () => {
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), `---\nname: test-skill\ndescription: A test skill\n---\n# Test Skill\n`);
 
-    mockGetSkillDirectories.mockReturnValueOnce([
-      { path: join(projectDir, ".claude", "skills"), scope: "project" as const, source_tool: "claude" },
-    ]);
-
     const ctx = createMockCtx(projectDir);
     const result = await initProject({}, ctx);
 
     expect(result.success).toBe(true);
-    expect(result.native_skills_found).toBe(1);
+    expect(result.native_skills_found).toBeGreaterThanOrEqual(1);
 
     const graphContent = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
     const graph = JSON.parse(graphContent);
-    const nativeNode = graph.nodes.find((n: any) => n.type === "skill" && n.source === "native");
-    expect(nativeNode).toBeDefined();
-    expect(nativeNode.w).toBe(0.8);
+    const testSkillNode = graph.nodes.find((n: any) => n.type === "skill" && n.id === "native/test-skill");
+    expect(testSkillNode).toBeDefined();
+    expect(testSkillNode.w).toBe(0.8);
   });
 
   it("blocks routed skills with failed audits", async () => {

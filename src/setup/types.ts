@@ -61,9 +61,9 @@ export interface TeardownResult {
 
 export const INSTRUCTION_TEXT = `You have a SuperSkill knowledge base available via MCP (superskill).
 Always check it at the start of every session:
-1. Use vault_project_context to load context for the current project
-2. Use vault_search to find relevant decisions, learnings, and tasks
-3. Use vault_session to register your session for coordination
+1. Use project_context to load context for the current project
+2. Use search to find relevant decisions, learnings, and tasks
+3. Use session to register your session for coordination
 Treat the vault as your persistent memory across sessions.`;
 
 export const MARKER_START_HTML = "<!-- superskill:start -->";

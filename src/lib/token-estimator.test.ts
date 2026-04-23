@@ -54,7 +54,7 @@ describe("truncateToTokenBudget", () => {
     const text = "a".repeat(1000);
     const result = truncateToTokenBudget(text, 10);
     expect(result.text).toContain("[truncated");
-    expect(result.text).toContain("vault_project_context");
+    expect(result.text).toContain("project_context");
   });
 
   it("handles text shorter than budget", () => {

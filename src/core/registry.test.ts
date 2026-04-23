@@ -168,18 +168,17 @@ describe("createRegistry", () => {
       "read",
       "write",
       "search",
-      "vault_project_context",
+      "project_context",
       "vault_init",
-      "vault_decide",
+      "decide",
       "task",
-      "vault_learn",
-      "vault_todo",
-      "vault_brainstorm",
+      "learn",
+      "brainstorm",
       "session",
-      "vault_prune",
-      "vault_stats",
-      "vault_resume",
-      "vault_deprecate",
+      "prune",
+      "stats",
+      "resume",
+      "deprecate",
       "init",
       "status",
       "superskill",
@@ -228,15 +227,15 @@ describe("createRegistry", () => {
     const sessionArgs = sessionReg!.adaptArgs!({ action: "register", tool: "t", task_summary: "s", files_touched: ["a.ts"] });
     expect(sessionArgs).toEqual({ action: "register", tool: "t", taskSummary: "s", filesTouched: ["a.ts"] });
 
-    const learnReg = registry.get("vault_learn");
+    const learnReg = registry.get("learn");
     const learnArgs = learnReg!.adaptArgs!({ action: "add", title: "L", tags: ["b"], session_id: "s1" });
     expect(learnArgs).toEqual({ action: "add", title: "L", tags: ["b"], sessionId: "s1" });
 
-    const pruneReg = registry.get("vault_prune");
+    const pruneReg = registry.get("prune");
     const pruneArgs = pruneReg!.adaptArgs!({ mode: "dry-run", sessions_days: 30, done_tasks_days: 60 });
     expect(pruneArgs).toEqual({ mode: "dry-run", policy: { sessions: 30, doneTasks: 60 }, all: false });
 
-    const ctxReg = registry.get("vault_project_context");
+    const ctxReg = registry.get("project_context");
     const ctxArgs = ctxReg!.adaptArgs!({ project: "p", detail_level: "full" });
     expect(ctxArgs).toEqual({ project: "p", detailLevel: "full" });
 
@@ -244,7 +243,7 @@ describe("createRegistry", () => {
     const writeArgs = writeReg!.adaptArgs!({ path: "f.md", content: "c", mode: "append" });
     expect(writeArgs).toEqual({ path: "f.md", content: "c", mode: "append" });
 
-    const resumeReg = registry.get("vault_resume");
+    const resumeReg = registry.get("resume");
     const resumeArgs = resumeReg!.adaptArgs!({ project: "p", limit: 3, format: "json" });
     expect(resumeArgs).toEqual({ project: "p", limit: 3 });
 
