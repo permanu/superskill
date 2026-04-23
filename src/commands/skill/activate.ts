@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import type { CommandContext } from "../../core/types.js";
-import { loadGraph, writeGraph, findNode, findNodes } from "../../lib/graph/store.js";
+import { loadGraph, writeGraph } from "../../lib/graph/store.js";
 import { matchTask } from "../../lib/graph/router.js";
 import { loadNeighborhood, loadContent } from "../../lib/graph/loader.js";
 import { startSession, recordActivation } from "../../lib/graph/learner.js";
 import { getSkillBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
 import { findSkills } from "../../lib/skills-sh/cli.js";
 import { getAudit, isStale, refreshAudit } from "../../lib/skills-sh/audit-cache.js";
+import { scanForPromptInjection } from "../../lib/security-scanner.js";
 import type { SkillNode, AuditResult, AuditStatus } from "../../lib/graph/schema.js";
 
 export interface ActivateResult {
@@ -108,14 +109,29 @@ export async function activateSkills(
     const contentResult = await loadContent(projectDir, safeIds);
 
     const budget = getSkillBudget();
-    const contents = contentResult.skills.map((s) => s.content);
+    const contents: string[] = [];
+    const contentSkillIds: string[] = [];
+
+    for (const skill of contentResult.skills) {
+      const scanResult = scanForPromptInjection(skill.content);
+      if (scanResult.blocked) {
+        warnings.push(`BLOCKED: ${skill.id} — ${scanResult.reason}`);
+        continue;
+      }
+      for (const w of scanResult.warnings) {
+        warnings.push(`WARN: ${skill.id} — ${w}`);
+      }
+      contents.push(skill.content);
+      contentSkillIds.push(skill.id);
+    }
+
     const { included, usedTokens } = fitSkillsToBudget(contents, budget.totalBudget);
 
     const loadedSkills = included.map((i) => ({
-      id: contentResult.skills[i].id,
+      id: contentSkillIds[i],
       source: "graph",
     }));
-    const finalContent = included.map((i) => contentResult.skills[i].content).join("\n\n---\n\n");
+    const finalContent = included.map((i) => contents[i]).join("\n\n---\n\n");
 
     let updatedGraph = graph;
     const { graph: sessionGraph, sessionId } = startSession(graph, task);

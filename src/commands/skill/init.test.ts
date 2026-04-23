@@ -6,14 +6,22 @@ import { tmpdir } from "os";
 import { initProject } from "./init.js";
 import type { CommandContext } from "../../core/types.js";
 
+const mockFindSkills = vi.fn();
+const mockRefreshAudit = vi.fn();
+const mockGetSkillDirectories = vi.fn();
+
 vi.mock("../../lib/skills-sh/cli.js", () => ({
-  findSkills: async () => [],
+  findSkills: (...args: unknown[]) => mockFindSkills(...args),
 }));
 
 vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
   getAudit: async () => null,
   isStale: () => true,
-  refreshAudit: async () => null,
+  refreshAudit: (...args: unknown[]) => mockRefreshAudit(...args),
+}));
+
+vi.mock("../../lib/skill-scanner.js", () => ({
+  getSkillDirectories: (...args: unknown[]) => mockGetSkillDirectories(...args),
 }));
 
 function createMockCtx(projectDir: string): CommandContext {
@@ -32,8 +40,10 @@ describe("initProject", () => {
   beforeEach(async () => {
     projectDir = join(tmpdir(), `superskill-init-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(projectDir, { recursive: true });
-    const origCwd = process.cwd;
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    mockFindSkills.mockResolvedValue([]);
+    mockRefreshAudit.mockResolvedValue(null);
+    mockGetSkillDirectories.mockReturnValue([]);
   });
 
   afterEach(async () => {
@@ -94,5 +104,75 @@ describe("initProject", () => {
     const result = await initProject({}, ctx);
     expect(result.success).toBe(true);
     expect(result.graph_path).toContain("graph.json");
+  });
+
+  it("scans native skills from skill directories", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "test-skill");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), `---\nname: test-skill\ndescription: A test skill\n---\n# Test Skill\n`);
+
+    mockGetSkillDirectories.mockReturnValueOnce([
+      { path: join(projectDir, ".claude", "skills"), scope: "project" as const, source_tool: "claude" },
+    ]);
+
+    const ctx = createMockCtx(projectDir);
+    const result = await initProject({}, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.native_skills_found).toBe(1);
+
+    const graphContent = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
+    const graph = JSON.parse(graphContent);
+    const nativeNode = graph.nodes.find((n: any) => n.type === "skill" && n.source === "native");
+    expect(nativeNode).toBeDefined();
+    expect(nativeNode.w).toBe(0.8);
+  });
+
+  it("blocks routed skills with failed audits", async () => {
+    mockFindSkills.mockResolvedValueOnce([
+      { id: "evil/repo@malicious", name: "malicious", source: "evil/repo", description: "bad" },
+    ]);
+
+    mockRefreshAudit.mockResolvedValueOnce({
+      gen: "fail",
+      socket: "pass",
+      snyk: "pass",
+      fetched_at: Date.now(),
+      skill_id: "evil/repo@malicious",
+    });
+
+    const ctx = createMockCtx(projectDir);
+    const result = await initProject({}, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.skills_blocked).toBe(1);
+
+    const graphContent = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
+    const graph = JSON.parse(graphContent);
+    const blockedNode = graph.nodes.find((n: any) => n.id === "evil/repo@malicious");
+    expect(blockedNode).toBeUndefined();
+  });
+
+  it("appends superskill instructions to AGENTS.md", async () => {
+    const agentsMd = join(projectDir, "AGENTS.md");
+    await writeFile(agentsMd, "# Project\n\nSome content.\n");
+
+    const ctx = createMockCtx(projectDir);
+    await initProject({}, ctx);
+
+    const content = await readFile(agentsMd, "utf-8");
+    expect(content).toContain("## SuperSkill");
+  });
+
+  it("does not duplicate superskill instructions in AGENTS.md", async () => {
+    const agentsMd = join(projectDir, "AGENTS.md");
+    await writeFile(agentsMd, "# Project\n\n## SuperSkill\nThis project uses superskill");
+
+    const ctx = createMockCtx(projectDir);
+    await initProject({}, ctx);
+
+    const content = await readFile(agentsMd, "utf-8");
+    const count = (content.match(/## SuperSkill/g) || []).length;
+    expect(count).toBe(1);
   });
 });
