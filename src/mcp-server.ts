@@ -21,10 +21,6 @@ import { readCommand, listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
 import { searchText, searchStructured } from "./lib/search-engine.js";
 import { formatResumeContext } from "./commands/resume.js";
-import { getSkillAwarenessBlock } from "./commands/skill/marketplace.js";
-import { loadRegistry, mergeLocalSkills } from "./lib/registry-loader.js";
-import { setRegistryData } from "./commands/skill/catalog.js";
-import { scanInstalledSkills, scannedSkillsToRegistryFormat } from "./lib/skill-scanner.js";
 
 const registry = createRegistry();
 
@@ -76,7 +72,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const raw = args as Record<string, unknown>;
 
   try {
-    if (name === "vault_read") {
+    if (name === "read") {
       const { path, depth } = raw;
       if (!path || typeof path !== "string") throw new Error("Missing required field: path (string)");
       try {
@@ -93,7 +89,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
-    if (name === "vault_search" && raw.path_filter) {
+    if (name === "search" && raw.path_filter) {
       const { query, path_filter, mode, limit } = raw;
       if (!query || typeof query !== "string") throw new Error("Missing required field: query (string)");
       if (mode === "structured") {
@@ -112,7 +108,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
     }
 
-    if (name === "vault_todo") {
+    if (name === "vault_todo" || name === "todo") {
       const { action, item, priority, project } = raw;
       if (!action || typeof action !== "string") {
         throw new Error("Missing required field: action (string)");
@@ -202,7 +198,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
 
-    if (name === "vault_resume") {
+    if (name === "vault_resume" || name === "resume") {
       const result = await registry.execute(name, raw, ctx);
       if (raw.format === "json") {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -333,7 +329,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}${getSkillAwarenessBlock()}`,
+              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}`,
             },
           },
         ],
@@ -413,21 +409,6 @@ function getTimeAgo(isoDate: string): string {
 // ── Start ─────────────────────────────────────────────
 
 async function main() {
-  // Load the skill registry and scan installed skills
-  try {
-    let registry = await loadRegistry();
-
-    // Scan locally installed skills (from skills.sh / npx skills add)
-    const scanned = await scanInstalledSkills();
-    if (scanned.skills.length > 0) {
-      const localSkills = scannedSkillsToRegistryFormat(scanned.skills);
-      registry = mergeLocalSkills(registry, localSkills);
-    }
-
-    setRegistryData(registry);
-  } catch {
-    // Non-fatal: catalog.ts fallbacks will be used
-  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

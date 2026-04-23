@@ -23,12 +23,9 @@ import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } fr
 import { resumeCommand, formatResumeContext } from "./commands/resume.js";
 import type { CommandContext, Logger } from "./core/types.js";
 import { registerSetupCommands } from "./setup/index.js";
-import { skillCommand } from "./commands/skill/index.js";
-import { generateManifest, loadSkillContent, activateSkills } from "./commands/skill/marketplace.js";
-import { autoDetect, getRelevantDomains } from "./lib/auto-profile.js";
-import { loadRegistry, mergeLocalSkills } from "./lib/registry-loader.js";
-import { setRegistryData } from "./commands/skill/catalog.js";
-import { scanInstalledSkills, scannedSkillsToRegistryFormat } from "./lib/skill-scanner.js";
+import { initProject } from "./commands/skill/init.js";
+import { activateSkills } from "./commands/skill/activate.js";
+import { statusCommand } from "./commands/skill/status.js";
 
 let _config: Config | null = null;
 let _vaultFs: VaultFS | null = null;
@@ -846,420 +843,51 @@ program
 // ── skill ────────────────────────────────────────────
 const skillCmd = program
   .command("skill")
-  .description("Install and manage AI skills from git repos, local files, or URLs");
+  .description("Initialize and activate skills via knowledge graph");
 
 skillCmd
-  .command("install <source>")
-  .description("Install a skill from a file path or URL")
-  .option("-f, --force", "Overwrite if already installed")
-  .action(async (source: string, opts: { force?: boolean }) => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "install",
-        source,
-        force: opts.force,
-      });
-      if (result.action === "install" && result.result.success) {
-        console.log(`Installed: ${result.result.skill!.name} (v${result.result.skill!.version})`);
-      } else if (result.action === "install") {
-        console.error(`Error: ${result.result.error}`);
-        process.exit(1);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("list")
-  .description("List installed skills")
+  .command("init")
+  .description("Initialize superskill for the current project")
   .action(async () => {
     try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "list",
-      });
-      if (result.action === "list") {
-        if (result.result.skills.length === 0) {
-          console.log("No skills installed.");
-          return;
-        }
-        for (const sk of result.result.skills) {
-          const status = sk.status === "deprecated" ? " [DEPRECATED]" : "";
-          const autoUpdate = sk.auto_update ? " [auto-update]" : "";
-          console.log(`  ${sk.name} v${sk.version}${status}${autoUpdate} — installed ${sk.installed_at.slice(0, 10)}`);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("validate <path>")
-  .description("Validate a skill file")
-  .action(async (skillPath: string) => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "validate",
-        skillPath,
-      });
-      if (result.action === "validate") {
-        if (result.result.valid) {
-          console.log(`Valid skill: ${result.result.frontmatter!.name}`);
-        } else {
-          console.error("Invalid skill:");
-          for (const err of result.result.errors) {
-            console.error(`  - ${err}`);
-          }
-          process.exit(1);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("delete <name>")
-  .description("Remove an installed skill")
-  .action(async (skillName: string) => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "delete",
-        skillName,
-      });
-      if (result.action === "delete" && result.result.success) {
-        console.log(`Deleted: ${skillName}`);
-      } else if (result.action === "delete") {
-        console.error(`Error: ${result.result.error}`);
-        process.exit(1);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-// ── skills.sh integration ────────────────────────────
-skillCmd
-  .command("add <source>")
-  .description("Install skills from a GitHub repo (owner/repo)")
-  .option("-s, --select <names>", "Install specific skills (comma-separated)")
-  .action(async (source: string, opts: { select?: string }) => {
-    const { installSkills: doInstall } = await import("./lib/skill-installer.js");
-    const selectSkills = opts.select?.split(",").map((s) => s.trim());
-    console.log(`Installing skills from ${source}...`);
-    const result = await doInstall(source, { selectSkills });
-    if (result.success) {
-      console.log(`Installed ${result.installed.length} skill(s):`);
-      for (const name of result.installed) console.log(`  + ${name}`);
-    } else {
-      console.error("Installation failed:");
-      for (const err of result.errors) console.error(`  ${err}`);
-      process.exit(1);
-    }
-    if (result.errors.length > 0 && result.installed.length > 0) {
-      console.warn("Warnings:");
-      for (const err of result.errors) console.warn(`  ${err}`);
-    }
-  });
-
-skillCmd
-  .command("remove <name>")
-  .description("Remove an installed skill")
-  .action(async (name: string) => {
-    const { removeSkill: doRemove } = await import("./lib/skill-installer.js");
-    const result = await doRemove(name);
-    if (result.success) {
-      console.log(`Removed: ${name}`);
-    } else {
-      console.error(result.error);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("installed")
-  .description("List skills installed from GitHub repos")
-  .action(async () => {
-    const { listInstalledSkills: doList } = await import("./lib/skill-installer.js");
-    const skills = await doList();
-    if (skills.length === 0) {
-      console.log("No skills installed. Try: superskill-cli skill add anthropics/skills");
-      return;
-    }
-    console.log(`\n  ${skills.length} installed skill(s):\n`);
-    for (const s of skills) {
-      console.log(`  ${s.name} — ${s.description.slice(0, 80)}`);
-    }
-  });
-
-skillCmd
-  .command("find <query>")
-  .description("Search skills.sh for skills to install")
-  .action(async (query: string) => {
-    const { searchGitHubCode } = await import("./lib/github-client.js");
-    const { buildSearchQuery, extractKeywords } = await import("./lib/text-utils.js");
-    const keywords = extractKeywords(query);
-    if (keywords.length === 0) {
-      console.error("Could not extract search keywords from query");
-      process.exit(1);
-    }
-    console.log(`Searching for "${query}"...\n`);
-    const results = await searchGitHubCode(buildSearchQuery(keywords));
-    if (results.length === 0) {
-      console.log("No skills found. Try different keywords.");
-      return;
-    }
-    for (const r of results) {
-      console.log(`  ${r.name} — ${r.description}`);
-      console.log(`    ${r.repo} · ${r.stars} stars`);
-      console.log(`    Install: superskill-cli skill add ${r.repo}\n`);
-    }
-  });
-
-// ── skill marketplace ────────────────────────────────
-skillCmd
-  .command("catalog")
-  .description("Browse the skill catalog across all repos")
-  .option("-d, --domain <id>", "Filter by domain (e.g. tdd, security, planning)")
-  .option("-r, --repo <name>", "Filter by repo (ecc, superpowers, gstack, etc.)")
-  .option("-s, --search <text>", "Text search")
-  .action(async (opts: { domain?: string; repo?: string; search?: string }) => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "catalog",
-        domain: opts.domain,
-        repo: opts.repo,
-        search: opts.search,
-      });
-      if (result.action === "catalog") {
-        const { total, repos, domains, skills } = result.result;
-        console.log(`\n  Catalog: ${total} skills across ${repos.length} repos\n`);
-        console.log("  Repos:");
-        for (const r of repos) console.log(`    ${r.repo}: ${r.count} skills`);
-        console.log("\n  Domains:");
-        for (const d of domains) console.log(`    ${d.id} (${d.name}): ${d.skill_count} skills`);
-        console.log("\n  Skills:");
-        for (const s of skills) {
-          console.log(`    [${s.repo}] ${s.id} — ${s.description}`);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("collisions")
-  .description("Show collision matrix — domains where multiple repos compete")
-  .action(async () => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "collisions",
-      });
-      if (result.action === "collisions") {
-        const { collisions, total_collision_domains, total_affected_skills } = result.result;
-        console.log(`\n  Collisions: ${total_collision_domains} domains, ${total_affected_skills} skills affected\n`);
-        for (const c of collisions) {
-          console.log(`  ${c.domain_name} (${c.domain_id}):`);
-          for (const s of c.skills) {
-            console.log(`    [${s.repo}] ${s.id} — ${s.description}`);
-          }
-          console.log();
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("resolve")
-  .description("Resolve collisions using a profile — shows what gets picked")
-  .option("-p, --profile <name>", "Profile: ecc-first, superpowers-first, minimal", "ecc-first")
-  .action(async (opts: { profile: string }) => {
-    try {
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "resolve",
-        profile: opts.profile,
-      });
-      if (result.action === "resolve") {
-        const r = result.result;
-        if (!r.success) {
-          console.error(`Error: ${r.error}`);
-          process.exit(1);
-        }
-        console.log(`\n  Profile: ${r.profile_name}`);
-        console.log(`  Active skills: ${r.active_skills.length}\n`);
-        console.log("  Collision resolutions:");
-        for (const res of r.resolutions) {
-          console.log(`    ${res.domain}: ${res.chosen} (over: ${res.alternatives.join(", ") || "none"})`);
-        }
-        console.log(`\n  Total active: ${r.active_skills.length} skills`);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`Error: ${msg}`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("generate")
-  .description("Generate layered super-skill files (core / extended / reference)")
-  .option("-p, --profile <name>", "Profile: ecc-first, superpowers-first, minimal (default: auto-detected)")
-  .option("--auto", "Auto-detect profile and size based on project stack and AI tool (default when --profile is omitted)")
-  .option("--all-domains", "Load all skill domains regardless of detected project stack")
-  .option("--collisions-only", "Only include collision winners, skip non-colliding skills")
-  .option("--pipe", "Output content to stdout instead of writing files")
-  .option("--layer <layer>", "Layer to pipe: core|extended|reference|all (default: core)", "core")
-  .action(async (opts: { profile?: string; auto?: boolean; allDomains?: boolean; collisionsOnly?: boolean; pipe?: boolean; layer: string }) => {
-    const validLayers = ["core", "extended", "reference", "all"] as const;
-    type PipeLayer = typeof validLayers[number];
-    if (!validLayers.includes(opts.layer as PipeLayer)) {
-      process.stderr.write(`Error: --layer must be one of: ${validLayers.join(", ")}\n`);
-      process.exit(1);
-    }
-    try {
-      let resolvedProfile: string;
-      let relevantDomains: string[] | undefined;
-
-      // Auto-detect when no explicit profile is given
-      if (!opts.profile) {
-        const autoConfig = await autoDetect(process.cwd());
-        resolvedProfile = autoConfig.profile;
-        // Apply domain filtering unless --all-domains is set
-        if (!opts.allDomains) {
-          relevantDomains = getRelevantDomains(autoConfig.detectedStack);
-        }
-        if (!opts.pipe) {
-          process.stderr.write(
-            `Auto-detected: ${autoConfig.detectedStack.primary}${autoConfig.detectedStack.frameworks.length ? " + " + autoConfig.detectedStack.frameworks.join(", ") : ""} project on ${autoConfig.detectedTool.tool}\n` +
-            `Profile: ${autoConfig.profile} | Size: ${autoConfig.size}\n`
-          );
-        }
+      const result = await initProject({}, createCtx());
+      if (result.success) {
+        console.log(`Initialized superskill graph:`);
+        console.log(`  Stack: ${result.project_stack.join(", ") || "(none detected)"}`);
+        console.log(`  Tools: ${result.project_tools.join(", ") || "(none detected)"}`);
+        console.log(`  Native skills: ${result.native_skills_found}`);
+        console.log(`  Discovered: ${result.skills_discovered}`);
+        console.log(`  Blocked: ${result.skills_blocked}`);
+        console.log(`  Graph: ${result.graph_path}`);
       } else {
-        resolvedProfile = opts.profile;
-      }
-
-      const result = await skillCommand(getVaultFs(), getConfig().vaultPath, {
-        action: "generate",
-        profile: resolvedProfile,
-        includeNonColliding: !opts.collisionsOnly,
-        pipe: opts.pipe,
-        pipeLayer: opts.layer as PipeLayer,
-        relevantDomains,
-      });
-      if (result.action === "generate") {
-        const r = result.result;
-        if (!r.success) {
-          process.stderr.write(`Error: ${r.error}\n`);
-          process.exit(1);
-        }
-
-        if (opts.pipe) {
-          // Raw content to stdout; any status/errors to stderr
-          if (r.pipe_content !== undefined) {
-            process.stdout.write(r.pipe_content);
-          }
-          if (r.fetch_errors && r.fetch_errors.length > 0) {
-            process.stderr.write(`\nFetch errors (${r.fetch_errors.length}):\n`);
-            for (const err of r.fetch_errors) process.stderr.write(`  - ${err}\n`);
-          }
-          return;
-        }
-
-        // Normal mode — 3-layer summary
-        const layers = r.layers!;
-        const pad = (s: string, n: number) => s.padEnd(n);
-        console.log(`\n  Super-skill generated!\n`);
-        console.log(
-          `  ${pad("Core:", 11)} ${pad(layers.core.path, 45)} (${layers.core.skill_count} skills, ~${layers.core.estimated_tokens} tokens)`,
-        );
-        console.log(
-          `  ${pad("Extended:", 11)} ${pad(layers.extended.path, 45)} (${layers.extended.skill_count} skills, ~${layers.extended.estimated_tokens} tokens)`,
-        );
-        console.log(
-          `  ${pad("Reference:", 11)} ${pad(layers.reference.path, 45)} (${layers.reference.skill_count} skills, ~${layers.reference.estimated_tokens} tokens)`,
-        );
-        console.log(`\n  Total: ${r.total_skills ?? 0} skills`);
-        if (r.fetch_errors && r.fetch_errors.length > 0) {
-          console.log(`\n  Fetch errors (${r.fetch_errors.length}):`);
-          for (const err of r.fetch_errors) console.log(`    - ${err}`);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`Error: ${msg}\n`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("manifest")
-  .description("Print lightweight skill index (no content fetching)")
-  .option("-p, --profile <name>", "Profile: ecc-first, superpowers-first, minimal", "ecc-first")
-  .action(async (opts: { profile: string }) => {
-    try {
-      const result = await generateManifest({ profile: opts.profile });
-      console.log(JSON.stringify(result, null, 2));
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`Error: ${msg}\n`);
-      process.exit(1);
-    }
-  });
-
-skillCmd
-  .command("load <skill-id>")
-  .description("Load the full content of a specific skill by ID")
-  .action(async (skillId: string) => {
-    try {
-      const result = await loadSkillContent(skillId);
-      if (!result.success) {
-        process.stderr.write(`Error: ${result.error}\n`);
+        console.error(`Init failed: ${result.error}`);
         process.exit(1);
       }
-      process.stdout.write(result.content ?? "");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`Error: ${msg}\n`);
+      console.error(`Error: ${msg}`);
       process.exit(1);
     }
   });
 
 skillCmd
-  .command("activate <task>")
-  .description("Smart skill loader — describe your task and get the best-matched skill")
-  .option("-p, --profile <name>", "Profile: ecc-first, superpowers-first, minimal")
-  .option("-d, --domain <domain>", "Domain(s) to load directly, e.g. 'brainstorming' or 'planning,security'")
-  .action(async (task: string, opts: { profile?: string; domain?: string }) => {
+  .command("activate [task]")
+  .description("Activate the best skill for a task")
+  .option("--skill-id <id>", "Load a specific skill by ID")
+  .action(async (task: string | undefined, opts: { skillId?: string }) => {
     try {
-      const result = await activateSkills({ task, profile: opts.profile, domain: opts.domain });
-      if (!result.success) {
+      const result = await activateSkills({ task, skill_id: opts.skillId }, createCtx());
+      if (!result.success && result.error) {
         process.stderr.write(`Error: ${result.error}\n`);
         process.exit(1);
       }
       if (result.skills_loaded.length === 0) {
-        process.stderr.write(`No skills matched for: "${task}"\n`);
-        process.stderr.write(`Matched domains: ${result.matched_domains.join(", ") || "none"}\n`);
-        process.exit(1);
+        process.stderr.write(result.content ? result.content + "\n" : `No skills matched for: "${task}"\n`);
+        return;
       }
-      process.stderr.write(`Loaded ${result.skills_loaded.length} skill(s) for: ${result.matched_domains.join(", ")}\n`);
+      process.stderr.write(`Loaded ${result.skills_loaded.length} skill(s)\n`);
       for (const s of result.skills_loaded) {
-        process.stderr.write(`  → ${s.id} (${s.name})\n`);
+        process.stderr.write(`  -> ${s.id} (${s.source})\n`);
       }
       process.stderr.write(`  ~${result.total_tokens} tokens\n`);
       process.stdout.write(result.content);
@@ -1270,24 +898,51 @@ skillCmd
     }
   });
 
+skillCmd
+  .command("status")
+  .description("Show knowledge graph status")
+  .action(async () => {
+    try {
+      const result = await statusCommand({}, createCtx());
+      if (!result.initialized) {
+        console.log("Superskill not initialized. Run: superskill skill init");
+        return;
+      }
+      console.log(`Project: stack=[${result.project?.stack.join(", ") ?? ""}] tools=[${result.project?.tools.join(", ") ?? ""}] phase=${result.project?.phase}`);
+      console.log(`\nSkills (${result.skills.length}):`);
+      for (const s of result.skills) {
+        console.log(`  ${s.id} w=${s.w} source=${s.source} audit=${s.audit_summary}`);
+      }
+      if (result.sessions.length > 0) {
+        console.log(`\nRecent sessions (${result.sessions.length}):`);
+        for (const s of result.sessions) {
+          const ago = getTimeAgo(new Date(s.ts).toISOString());
+          console.log(`  ${s.id} [${s.outcome ?? "active"}] ${ago} — ${s.intent.slice(0, 60)}`);
+        }
+      }
+      console.log(`\nTotal activations: ${result.total_activations}`);
+      console.log(`Graph: ${result.graph_path}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+function getTimeAgo(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  if (hours < 1) return "just now";
+  if (hours === 1) return "1h ago";
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "1d ago";
+  return `${days}d ago`;
+}
+
 // ── setup / teardown ─────────────────────────────────
 registerSetupCommands(program);
 
-// Load registry and scan installed skills, then parse CLI
-(async () => {
-  try {
-    let registry = await loadRegistry();
-    const scanned = await scanInstalledSkills();
-    if (scanned.skills.length > 0) {
-      const localSkills = scannedSkillsToRegistryFormat(scanned.skills);
-      registry = mergeLocalSkills(registry, localSkills);
-    }
-    setRegistryData(registry);
-  } catch {
-    // Non-fatal: fallback catalog used
-  }
-  program.parse();
-})();
+program.parse();
 
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled rejection:", reason);

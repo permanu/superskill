@@ -2,7 +2,7 @@
 //
 // Barrel re-export — this file preserves backward compatibility.
 // All logic has been split into focused modules:
-//   activate.ts  — activateSkills, matchTaskToDomains, TASK_DOMAIN_MAP, ActivateResult
+//   activate.ts  — activateSkills, ActivateResult
 //   resolve.ts   — resolveCommand, collisionsCommand, catalogCommand + result types
 //   generate.ts  — generateCommand, LayerInfo, GenerateResult
 //   manifest.ts  — generateManifest, loadSkillContent, getSkillAwarenessBlock + types
@@ -17,5 +17,5 @@ export type { LayerInfo, GenerateResult } from "./generate.js";
 export { generateManifest, loadSkillContent, getSkillAwarenessBlock } from "./manifest.js";
 export type { ManifestEntry, ManifestResult } from "./manifest.js";
 
-export { activateSkills, matchTaskToDomains, TASK_DOMAIN_MAP } from "./activate.js";
+export { activateSkills } from "./activate.js";
 export type { ActivateResult } from "./activate.js";

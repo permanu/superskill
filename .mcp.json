@@ -1,9 +1,0 @@
-{
-  "superskill": {
-    "command": "npx",
-    "args": ["-y", "superskill@latest"],
-    "env": {
-      "VAULT_PATH": "${VAULT_PATH:-~/Vaults/ai}"
-    }
-  }
-}

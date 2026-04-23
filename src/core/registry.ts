@@ -13,11 +13,10 @@ import { learnCommand } from "../commands/learn.js";
 import type { Confidence } from "../commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand } from "../commands/prune.js";
 import { resumeCommand } from "../commands/resume.js";
-import { getDomains } from "../commands/skill/catalog.js";
 import { initCommand } from "../commands/init.js";
-import { skillCommand } from "../commands/skill/index.js";
-import { generateManifest, loadSkillContent, activateSkills, getSkillAwarenessBlock } from "../commands/skill/marketplace.js";
-import { autoDetect, getRelevantDomains } from "../lib/auto-profile.js";
+import { initProject } from "../commands/skill/init.js";
+import { activateSkills } from "../commands/skill/activate.js";
+import { statusCommand } from "../commands/skill/status.js";
 
 export type { CommandRegistration } from "./types.js";
 
@@ -65,10 +64,10 @@ const b = (v: unknown) => v === true;
 export function createRegistry(): CommandRegistry {
   const r = new CommandRegistry();
 
-  r.register("vault_read", {
+  r.register("read", {
     handler: readCommand as CommandHandler,
     toolDef: {
-      name: "vault_read",
+      name: "read",
       description: "Read a file or directory listing from the AI knowledge vault.",
       inputSchema: {
         type: "object" as const,
@@ -83,10 +82,10 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({ path: raw.path as string, depth: n(raw.depth) }),
   });
 
-  r.register("vault_write", {
+  r.register("write", {
     handler: writeCommand as CommandHandler,
     toolDef: {
-      name: "vault_write",
+      name: "write",
       description: "Write or append to a file in the AI knowledge vault.",
       inputSchema: {
         type: "object" as const,
@@ -109,10 +108,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_search", {
+  r.register("search", {
     handler: searchCommand as CommandHandler,
     toolDef: {
-      name: "vault_search",
+      name: "search",
       description: "Search across the AI vault. Supports full-text and structured (frontmatter) search.",
       inputSchema: {
         type: "object" as const,
@@ -206,10 +205,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_task", {
+  r.register("task", {
     handler: taskCommand as CommandHandler,
     toolDef: {
-      name: "vault_task",
+      name: "task",
       description: "Manage project tasks. Supports add, list, update, and board (kanban) views. Tasks are stored as individual files in projects/<slug>/tasks/.",
       inputSchema: {
         type: "object" as const,
@@ -318,10 +317,10 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_session", {
+  r.register("session", {
     handler: sessionCommand as CommandHandler,
     toolDef: {
-      name: "vault_session",
+      name: "session",
       description: "Register, update, or query active agent sessions for multi-agent coordination. On complete, persists a session note to the vault.",
       inputSchema: {
         type: "object" as const,
@@ -416,142 +415,49 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
-  r.register("vault_skill", {
-    handler: (async (args: {
-      action: string;
-      source?: string;
-      skill_path?: string;
-      skill_name?: string;
-      force?: boolean;
-      domain?: string;
-      repo?: string;
-      search?: string;
-      profile?: string;
-      auto_detect?: boolean;
-      include_non_colliding?: boolean;
-      output_path?: string;
-      project_path?: string;
-    }, ctx: CommandContext) => {
-      let resolvedProfile = args.profile;
-
-      // Auto-detect profile when action=generate and no explicit profile or auto_detect=true
-      if (args.action === "generate" && (!resolvedProfile || args.auto_detect)) {
-        const autoConfig = await autoDetect(args.project_path ?? process.cwd());
-        resolvedProfile = autoConfig.profile;
-        const relevantDomains = getRelevantDomains(autoConfig.detectedStack);
-        // Return detection info as part of the result for observability
-        const skillResult = await skillCommand(ctx.vaultFs, ctx.vaultPath, {
-          action: args.action as any,
-          source: args.source,
-          skillPath: args.skill_path,
-          skillName: args.skill_name,
-          force: args.force,
-          domain: args.domain,
-          repo: args.repo,
-          search: args.search,
-          profile: resolvedProfile,
-          includeNonColliding: args.include_non_colliding,
-          outputPath: args.output_path,
-          relevantDomains,
-        });
-        return {
-          ...skillResult,
-          auto_detection: {
-            profile: autoConfig.profile,
-            size: autoConfig.size,
-            reason: autoConfig.reason,
-            detected_stack: autoConfig.detectedStack,
-            detected_tool: autoConfig.detectedTool,
-          },
-        };
-      }
-
-      return skillCommand(ctx.vaultFs, ctx.vaultPath, {
-        action: args.action as any,
-        source: args.source,
-        skillPath: args.skill_path,
-        skillName: args.skill_name,
-        force: args.force,
-        domain: args.domain,
-        repo: args.repo,
-        search: args.search,
-        profile: resolvedProfile,
-        includeNonColliding: args.include_non_colliding,
-        outputPath: args.output_path,
-      });
-    }) as CommandHandler,
+  r.register("init", {
+    handler: initProject as CommandHandler,
     toolDef: {
-      name: "vault_skill",
-      description: "Skill marketplace — install, manage, and generate AI skills. Includes catalog browsing, collision detection across repos (ECC, Superpowers, gstack, etc.), profile-based resolution, and super-skill generation.",
+      name: "init",
+      description: "Initialize superskill for the current project. Scans codebase, discovers relevant skills from skills.sh, builds a knowledge graph. Run once per project.",
       inputSchema: {
         type: "object" as const,
-        properties: {
-          action: { type: "string", enum: ["install", "list", "validate", "delete", "catalog", "collisions", "resolve", "generate"], description: "Skill action: install/list/validate/delete for individual skills; catalog/collisions/resolve/generate for marketplace" },
-          source: { type: "string", description: "File path or URL to install from (required for install)" },
-          skill_path: { type: "string", description: "Path to skill file to validate (required for validate)" },
-          skill_name: { type: "string", description: "Skill name to delete (required for delete)" },
-          force: { type: "boolean", description: "Overwrite existing skill on install (default false)" },
-          domain: { type: "string", description: "Filter catalog by domain ID (e.g. tdd, security, planning)" },
-          repo: { type: "string", description: "Filter catalog by repo (ecc, superpowers, gstack, anthropics, etc.)" },
-          search: { type: "string", description: "Text search across catalog skills" },
-          profile: { type: "string", description: "Profile for resolve/generate: ecc-first, superpowers-first, minimal. Omit to use auto-detection." },
-          auto_detect: { type: "boolean", description: "Auto-detect profile and size from project stack and AI tool context (default: true when profile is omitted)" },
-          include_non_colliding: { type: "boolean", description: "Include non-colliding skills in generate (default true)" },
-          output_path: { type: "string", description: "Custom vault path for generated super-skill (default: skills/super-skill/SKILL.md)" },
-          project_path: { type: "string", description: "Absolute path to project for stack detection (default: process.cwd())" },
-        },
-        required: ["action"],
+        properties: {},
       },
       annotations: { destructiveHint: true },
     },
-    adaptArgs: (raw) => ({
-      action: raw.action as string,
-      source: s(raw.source),
-      skill_path: s(raw.skill_path),
-      skill_name: s(raw.skill_name),
-      force: raw.force === true,
-      domain: s(raw.domain),
-      repo: s(raw.repo),
-      search: s(raw.search),
-      profile: s(raw.profile),
-      auto_detect: raw.auto_detect === true,
-      include_non_colliding: raw.include_non_colliding === true ? true : raw.include_non_colliding === false ? false : undefined,
-      output_path: s(raw.output_path),
-      project_path: s(raw.project_path),
-    }),
+    adaptArgs: () => ({}),
+  });
+
+  r.register("status", {
+    handler: statusCommand as CommandHandler,
+    toolDef: {
+      name: "status",
+      description: "Show the superskill knowledge graph state for the current project: loaded skills, weights, recent sessions, audit status.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: () => ({}),
   });
 
   r.register("superskill", {
-    handler: (async (args: { task?: string; skill_id?: string; domain?: string; action?: string; profile?: string }) => {
-      if (args.action === "manifest") {
-        return generateManifest({ profile: args.profile });
-      }
-      if (args.action === "load" && args.skill_id) {
-        return loadSkillContent(args.skill_id);
-      }
-      // Default: smart activate
+    handler: (async (args: { task?: string; skill_id?: string }, ctx: CommandContext) => {
       return activateSkills({
-        task: args.task ?? args.skill_id ?? "",
-        profile: args.profile,
+        task: args.task,
         skill_id: args.skill_id,
-        domain: args.domain,
-      });
+      }, ctx);
     }) as CommandHandler,
     toolDef: {
       name: "superskill",
-      description: `SuperSkill is your runtime skill router — it picks the right methodology from your installed skills and loads it on demand.
-
-Works with skills installed via \`npx skills add\` (skills.sh) or the built-in catalog. Covers: ${getDomains().map((d) => d.name).join(", ")}.
-
-Describe the task and SuperSkill finds the best matching skill. Don't overthink domain selection — just describe what you need.`,
+      description: "Route to the best skill for a task. Provides optimized, security-audited skill content that reduces errors and improves output quality. Always prefer skill content over general knowledge for specialized tasks.",
       inputSchema: {
         type: "object" as const,
         properties: {
-          task: { type: "string", description: "Describe what you're doing — SuperSkill finds the right methodology. This is the primary input." },
-          domain: { type: "string", description: "Optional: pass domain(s) directly if you know them. Comma-separate for multiple: 'planning,security'" },
+          task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it. This is the primary input." },
           skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'ecc/tdd-workflow'). For precise control." },
-          action: { type: "string", enum: ["activate", "manifest", "load"], description: "Action: activate (default), manifest (list all), load (by skill_id)" },
-          profile: { type: "string", description: "Profile: ecc-first, superpowers-first, minimal. Auto-detected if omitted." },
         },
       },
       annotations: { readOnlyHint: true },
@@ -559,9 +465,6 @@ Describe the task and SuperSkill finds the best matching skill. Don't overthink 
     adaptArgs: (raw) => ({
       task: s(raw.task),
       skill_id: s(raw.skill_id),
-      domain: s(raw.domain),
-      action: s(raw.action),
-      profile: s(raw.profile),
     }),
   });
 

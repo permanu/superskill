@@ -1,204 +1,202 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, it, expect, vi, afterEach, beforeEach, beforeAll, afterAll } from "vitest";
-import { activateSkills, generateManifest } from "./marketplace.js";
-import { getCatalog, setRegistryData, _clearRegistryData } from "./catalog.js";
-import { loadRegistry, _clearRegistry } from "../../lib/registry-loader.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdir, rm, writeFile, readFile } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+import { activateSkills } from "./activate.js";
+import type { CommandContext } from "../../core/types.js";
+import type { Graph } from "../../lib/graph/schema.js";
 
-/**
- * Integration tests for the skill activation flow (activateSkills).
- * All HTTP fetches are mocked — no real GitHub requests.
- */
+vi.mock("../../lib/skills-sh/cli.js", () => ({
+  findSkills: async () => [],
+}));
 
-const FAKE_SKILL_CONTENT = "# Fake Skill\n\nThis is mock skill content for testing purposes.";
-const originalFetch = globalThis.fetch;
+vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
+  getAudit: async () => null,
+  isStale: () => true,
+  refreshAudit: async () => null,
+}));
 
-function mockFetchOk(content: string = FAKE_SKILL_CONTENT) {
-  globalThis.fetch = vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    text: () => Promise.resolve(content),
-    json: () => Promise.resolve({ items: [] }),
-  } as unknown as Response);
+function createMockCtx(projectDir: string): CommandContext {
+  return {
+    vaultFs: {} as any,
+    vaultPath: projectDir,
+    sessionRegistry: {} as any,
+    config: {} as any,
+    log: { debug() {}, info() {}, warn() {}, error() {} },
+  };
 }
 
-describe("activateSkills integration", () => {
-  beforeAll(async () => {
-    // Load the registry so getCatalog() returns all 87 skills
-    const registry = await loadRegistry();
-    setRegistryData(registry);
+function createTestGraph(skills: Array<{ id: string; w: number }>): Graph {
+  return {
+    nodes: [
+      {
+        type: "project",
+        id: "project",
+        stack: ["typescript", "react"],
+        tools: ["claude-code"],
+        phase: "explore",
+        ts: Date.now(),
+      },
+      ...skills.map((s) => ({
+        type: "skill" as const,
+        id: s.id,
+        source: "routed" as const,
+        audits: { gen: "pass" as const, socket: "pass" as const, snyk: "pass" as const },
+        installs: 1000,
+        stars: 100,
+        w: s.w,
+        ts: Date.now(),
+      })),
+    ],
+    edges: [
+      ...skills.map((s) => ({
+        type: "project_skill" as const,
+        from: "project",
+        to: s.id,
+        w: s.w,
+        activations: 0,
+      })),
+    ],
+  };
+}
+
+describe("activateSkills (graph-driven)", () => {
+  let projectDir: string;
+
+  beforeEach(async () => {
+    projectDir = join(tmpdir(), `superskill-activate-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(join(projectDir, ".superskill"), { recursive: true });
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
   });
 
-  afterAll(() => {
-    _clearRegistryData();
-    _clearRegistry();
-  });
-
-  beforeEach(() => {
-    mockFetchOk();
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+  afterEach(async () => {
     vi.restoreAllMocks();
+    await rm(projectDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  // 1. Direct skill_id load
-  it("loads a skill directly by skill_id", async () => {
-    const result = await activateSkills({ task: "", skill_id: "ecc/tdd-workflow" });
+  it("returns error when graph is empty", async () => {
+    const emptyGraph: Graph = { nodes: [], edges: [] };
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(emptyGraph),
+    );
 
-    expect(result.success).toBe(true);
-    expect(result.skills_loaded).toHaveLength(1);
-    expect(result.skills_loaded[0].id).toBe("ecc/tdd-workflow");
-    expect(result.skills_loaded[0].name).toBe("TDD Workflow");
-    expect(result.content).toContain("Fake Skill");
-    expect(result.total_tokens).toBeGreaterThan(0);
-  });
-
-  // 2. Domain-based activation
-  it("activates skills by domain", async () => {
-    const result = await activateSkills({ task: "", domain: "brainstorming" });
-
-    expect(result.success).toBe(true);
-    expect(result.matched_domains).toContain("brainstorming");
-    expect(result.skills_loaded.length).toBeGreaterThan(0);
-    expect(result.skills_loaded.every(s => s.domains.includes("brainstorming"))).toBe(true);
-    expect(result.content.length).toBeGreaterThan(0);
-  });
-
-  // 3. Task-based trigger matching
-  it("matches tdd domain from task description", async () => {
-    const result = await activateSkills({ task: "write tests for my code" });
-
-    expect(result.success).toBe(true);
-    expect(result.matched_domains).toContain("tdd");
-    expect(result.skills_loaded.length).toBeGreaterThan(0);
-    expect(result.content).toContain("Fake Skill");
-  });
-
-  // 4. Multi-domain match
-  it("matches multiple domains from a single task", async () => {
-    const result = await activateSkills({ task: "write tests for my golang API" });
-
-    expect(result.success).toBe(true);
-    expect(result.matched_domains).toContain("tdd");
-    expect(result.matched_domains).toContain("go");
-    // Should have skills from both domains
-    const domainSet = new Set(result.skills_loaded.flatMap(s => s.domains));
-    expect(domainSet.has("tdd") || domainSet.has("go")).toBe(true);
-  });
-
-  // 5. Content-business match
-  it("matches content-business for marketing/LinkedIn tasks", async () => {
-    const result = await activateSkills({ task: "write a LinkedIn post about marketing" });
-
-    expect(result.success).toBe(true);
-    expect(result.matched_domains).toContain("content-business");
-    expect(result.skills_loaded.length).toBeGreaterThan(0);
-    expect(result.skills_loaded.some(s => s.domains.includes("content-business"))).toBe(true);
-  });
-
-  // 6. Zero matches triggers web discovery
-  it("falls back to web discovery when no domains match", async () => {
-    // Mock fetch for web discovery: first two calls are GitHub search API (code + repos)
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ items: [] }),
-      } as unknown as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ items: [] }),
-      } as unknown as Response);
-
-    const result = await activateSkills({ task: "quantum computing optimization" });
-
-    expect(result.success).toBe(true);
-    expect(result.matched_domains).toEqual([]);
-    expect(result.skills_loaded).toEqual([]);
-    // Web discovery was attempted — content should mention no skills found
-    expect(result.content).toContain("No skills found");
-  });
-
-  // 7. Invalid skill_id returns error
-  it("returns success:false for a nonexistent skill_id", async () => {
-    const result = await activateSkills({ task: "", skill_id: "nonexistent/skill" });
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ task: "add auth" }, ctx);
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("not found in catalog");
+    expect(result.error).toContain("not initialized");
+  });
+
+  it("returns no matches when graph has no matching skills", async () => {
+    const graph = createTestGraph([{ id: "foo/bar@unrelated", w: 0.5 }]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ task: "quantum computing optimization" }, ctx);
+
+    expect(result.success).toBe(true);
     expect(result.skills_loaded).toEqual([]);
-    expect(result.content).toBe("");
+    expect(result.matched_skill_ids).toEqual([]);
   });
 
-  // 8. GitHub URL as skill_id
-  it("fetches skill content from a GitHub URL as skill_id", async () => {
-    const communityContent = "# Community Skill\n\nThis is a community-contributed skill with enough content to pass validation.";
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      text: () => Promise.resolve(communityContent),
-    } as unknown as Response);
+  it("matches skills by keyword against graph", async () => {
+    const graph = createTestGraph([
+      { id: "vercel-labs/agent-skills@react-best-practices", w: 0.9 },
+      { id: "foo/bar@typescript-patterns", w: 0.7 },
+    ]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
 
-    const result = await activateSkills({
-      task: "",
-      skill_id: "https://github.com/test/repo/blob/main/SKILL.md",
-    });
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ task: "react component" }, ctx);
 
     expect(result.success).toBe(true);
-    expect(result.skills_loaded).toHaveLength(1);
-    expect(result.content).toContain("Community Skill");
-    // Should be marked as unverified
-    expect(result.content).toContain("Unverified community skill");
-    expect(result.total_tokens).toBeGreaterThan(0);
+    expect(result.matched_skill_ids.length).toBeGreaterThan(0);
   });
 
-  // 9. Max 3 skills per domain cap
-  it("caps skills at 3 per domain", async () => {
-    // The tdd domain has 9 skills in the catalog
-    const tddSkillCount = getCatalog().filter(s => s.domains.includes("tdd")).length;
-    expect(tddSkillCount).toBeGreaterThan(3); // precondition
+  it("loads skill by skill_id directly", async () => {
+    const graph = createTestGraph([
+      { id: "vercel-labs/agent-skills@react-best-practices", w: 0.9 },
+    ]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
 
-    const result = await activateSkills({ task: "", domain: "tdd" });
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: "vercel-labs/agent-skills@react-best-practices" }, ctx);
 
     expect(result.success).toBe(true);
-    // Filter to only tdd-domain skills that were loaded
-    const tddLoaded = result.skills_loaded.filter(s => s.domains.includes("tdd"));
-    expect(tddLoaded.length).toBeLessThanOrEqual(3);
+    expect(result.matched_skill_ids).toContain("vercel-labs/agent-skills@react-best-practices");
   });
 
-  // 10. generateManifest returns correct structure
-  describe("generateManifest", () => {
-    it("returns all skills with correct structure", async () => {
-      const result = await generateManifest({});
+  it("records activation in graph", async () => {
+    const graph = createTestGraph([
+      { id: "vercel-labs/agent-skills@react-best-practices", w: 0.9 },
+    ]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
 
-      expect(result.success).toBe(true);
-      expect(result.manifest).toBeDefined();
-      expect(result.total_skills).toBeGreaterThan(0);
-      expect(result.total_estimated_tokens).toBeGreaterThan(0);
+    const ctx = createMockCtx(projectDir);
+    await activateSkills({ task: "react component" }, ctx);
 
-      // Check structure of each entry
-      for (const entry of result.manifest!) {
-        expect(entry).toHaveProperty("id");
-        expect(entry).toHaveProperty("name");
-        expect(entry).toHaveProperty("domains");
-        expect(entry).toHaveProperty("layer");
-        expect(entry).toHaveProperty("description");
-        expect(entry).toHaveProperty("estimated_tokens");
-        expect(["core", "extended", "reference"]).toContain(entry.layer);
-        expect(Array.isArray(entry.domains)).toBe(true);
-        expect(entry.domains.length).toBeGreaterThan(0);
-      }
+    const updatedRaw = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
+    const updated = JSON.parse(updatedRaw);
+    const sessionNodes = updated.nodes.filter((n: any) => n.type === "session");
+    expect(sessionNodes.length).toBeGreaterThan(0);
+  });
 
-      // Every manifest entry should correspond to a catalog skill
-      const catalogIds = new Set(getCatalog().map(s => s.id));
-      for (const entry of result.manifest!) {
-        expect(catalogIds.has(entry.id)).toBe(true);
-      }
-    });
+  it("blocks skills with failed audits", async () => {
+    const graph: Graph = {
+      nodes: [
+        {
+          type: "project",
+          id: "project",
+          stack: ["typescript"],
+          tools: ["claude-code"],
+          phase: "explore",
+          ts: Date.now(),
+        },
+        {
+          type: "skill",
+          id: "evil/repo@malicious-skill",
+          source: "routed",
+          audits: { gen: "fail", socket: "pass", snyk: "pass" },
+          installs: 100,
+          stars: 10,
+          w: 0.9,
+          ts: Date.now(),
+        },
+      ],
+      edges: [
+        {
+          type: "project_skill",
+          from: "project",
+          to: "evil/repo@malicious-skill",
+          w: 0.9,
+          activations: 0,
+        },
+      ],
+    };
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
 
-    it("returns error for invalid profile", async () => {
-      const result = await generateManifest({ profile: "does-not-exist" });
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Unknown profile");
-    });
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: "evil/repo@malicious-skill" }, ctx);
+
+    expect(result.success).toBe(false);
+    expect(result.warnings).toContainEqual(expect.stringContaining("BLOCKED"));
   });
 });

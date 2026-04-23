@@ -24,26 +24,26 @@ describe("integration > command registry", () => {
   });
 
   describe("registry dispatch", () => {
-    it("registry execute vault_read calls readCommand and returns content", async () => {
+    it("registry execute read calls readCommand and returns content", async () => {
       await ctx.vaultFs.write("test.md", "# Hello\n\nSome content");
       const registry = createRegistry();
-      const result = await registry.execute("vault_read", { path: "test.md" }, ctx);
+      const result = await registry.execute("read", { path: "test.md" }, ctx);
       expect(typeof result).toBe("string");
       expect(result).toContain("Hello");
     });
 
-    it("registry execute vault_write calls writeCommand and writes file", async () => {
+    it("registry execute write calls writeCommand and writes file", async () => {
       const registry = createRegistry();
-      await registry.execute("vault_write", { path: "new-file.md", content: "# Written", mode: "overwrite" }, ctx);
+      await registry.execute("write", { path: "new-file.md", content: "# Written", mode: "overwrite" }, ctx);
       const content = await ctx.vaultFs.read("new-file.md");
       expect(content).toContain("Written");
     });
 
-    it("registry execute vault_task add creates a task via the registry", async () => {
+    it("registry execute task add creates a task via the registry", async () => {
       const registry = createRegistry();
-      const result = await registry.execute("vault_task", { action: "add", title: "Test task", project: "my-project" }, ctx);
+      const result = await registry.execute("task", { action: "add", title: "Test task", project: "my-project" }, ctx);
       expect(result).toBeDefined();
-      const taskList = await registry.execute("vault_task", { action: "list", project: "my-project" }, ctx);
+      const taskList = await registry.execute("task", { action: "list", project: "my-project" }, ctx);
       expect(JSON.stringify(taskList)).toContain("Test task");
     });
 
@@ -63,12 +63,12 @@ describe("integration > command registry", () => {
 
     it("registry execute with adaptArgs converts snake_case to camelCase", async () => {
       const registry = createRegistry();
-      const addResult = await registry.execute("vault_task", { action: "add", title: "Snake test", project: "my-project" }, ctx);
+      const addResult = await registry.execute("task", { action: "add", title: "Snake test", project: "my-project" }, ctx);
       const taskId = (addResult as { task_id: string }).task_id;
       expect(taskId).toMatch(/^task-\d+$/);
 
-      await registry.execute("vault_task", { action: "update", task_id: taskId, status: "done", project: "my-project" }, ctx);
-      const listResult = await registry.execute("vault_task", { action: "list", project: "my-project" }, ctx);
+      await registry.execute("task", { action: "update", task_id: taskId, status: "done", project: "my-project" }, ctx);
+      const listResult = await registry.execute("task", { action: "list", project: "my-project" }, ctx);
       expect(JSON.stringify(listResult)).toContain("done");
     });
 
@@ -77,13 +77,13 @@ describe("integration > command registry", () => {
       const defs = registry.getToolDefinitions();
       expect(defs.length).toBeGreaterThanOrEqual(15);
       const names = defs.map((d) => d.name);
-      expect(names).toContain("vault_read");
-      expect(names).toContain("vault_write");
-      expect(names).toContain("vault_search");
-      expect(names).toContain("vault_task");
+      expect(names).toContain("read");
+      expect(names).toContain("write");
+      expect(names).toContain("search");
+      expect(names).toContain("task");
       expect(names).toContain("vault_decide");
       expect(names).toContain("vault_learn");
-      expect(names).toContain("vault_session");
+      expect(names).toContain("session");
       expect(names).toContain("vault_brainstorm");
       expect(names).toContain("vault_prune");
       expect(names).toContain("vault_stats");
@@ -92,6 +92,9 @@ describe("integration > command registry", () => {
       expect(names).toContain("vault_project_context");
       expect(names).toContain("vault_init");
       expect(names).toContain("vault_todo");
+      expect(names).toContain("init");
+      expect(names).toContain("status");
+      expect(names).toContain("superskill");
     });
   });
 });

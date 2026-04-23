@@ -165,21 +165,24 @@ describe("createRegistry", () => {
     const names = registry.getToolNames();
 
     const expectedTools = [
-      "vault_read",
-      "vault_write",
-      "vault_search",
+      "read",
+      "write",
+      "search",
       "vault_project_context",
       "vault_init",
       "vault_decide",
-      "vault_task",
+      "task",
       "vault_learn",
       "vault_todo",
       "vault_brainstorm",
-      "vault_session",
+      "session",
       "vault_prune",
       "vault_stats",
       "vault_resume",
       "vault_deprecate",
+      "init",
+      "status",
+      "superskill",
     ];
 
     for (const name of expectedTools) {
@@ -198,13 +201,13 @@ describe("createRegistry", () => {
     }
   });
 
-  it("adaptArgs for vault_read passes path and coerces depth", async () => {
+  it("adaptArgs for read passes path and coerces depth", async () => {
     const { createRegistry } = await import("./registry.js");
     const registry = createRegistry();
     const vaultFs = createMockVaultFs("# Hello");
     const ctx: CommandContext = { ...createMockContext(), vaultFs };
 
-    const result = await registry.execute("vault_read", { path: "test.md", depth: "2" }, ctx);
+    const result = await registry.execute("read", { path: "test.md", depth: "2" }, ctx);
     expect(result).toBe("# Hello");
     expect(vaultFs.read).toHaveBeenCalledWith("test.md");
   });
@@ -213,15 +216,15 @@ describe("createRegistry", () => {
     const { createRegistry } = await import("./registry.js");
     const registry = createRegistry();
 
-    const readReg = registry.get("vault_read");
+    const readReg = registry.get("read");
     const readArgs = readReg!.adaptArgs!({ path: "f.md", depth: 3 });
     expect(readArgs).toEqual({ path: "f.md", depth: 3 });
 
-    const taskReg = registry.get("vault_task");
+    const taskReg = registry.get("task");
     const taskArgs = taskReg!.adaptArgs!({ action: "add", title: "T", blocked_by: ["x"], assigned_to: "a" });
     expect(taskArgs).toEqual({ action: "add", title: "T", blockedBy: ["x"], assignedTo: "a" });
 
-    const sessionReg = registry.get("vault_session");
+    const sessionReg = registry.get("session");
     const sessionArgs = sessionReg!.adaptArgs!({ action: "register", tool: "t", task_summary: "s", files_touched: ["a.ts"] });
     expect(sessionArgs).toEqual({ action: "register", tool: "t", taskSummary: "s", filesTouched: ["a.ts"] });
 
@@ -237,7 +240,7 @@ describe("createRegistry", () => {
     const ctxArgs = ctxReg!.adaptArgs!({ project: "p", detail_level: "full" });
     expect(ctxArgs).toEqual({ project: "p", detailLevel: "full" });
 
-    const writeReg = registry.get("vault_write");
+    const writeReg = registry.get("write");
     const writeArgs = writeReg!.adaptArgs!({ path: "f.md", content: "c", mode: "append" });
     expect(writeArgs).toEqual({ path: "f.md", content: "c", mode: "append" });
 
@@ -245,7 +248,7 @@ describe("createRegistry", () => {
     const resumeArgs = resumeReg!.adaptArgs!({ project: "p", limit: 3, format: "json" });
     expect(resumeArgs).toEqual({ project: "p", limit: 3 });
 
-    const searchReg = registry.get("vault_search");
+    const searchReg = registry.get("search");
     const searchArgs = searchReg!.adaptArgs!({ query: "q", limit: 5, project: "p", path_filter: "dir" });
     expect(searchArgs).toEqual({ query: "q", project: "p", limit: 5, structured: false });
   });
