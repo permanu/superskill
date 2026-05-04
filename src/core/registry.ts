@@ -20,6 +20,9 @@ import { statusCommand } from "../commands/skill/status.js";
 import { graphRelatedCommand, graphCrossProjectCommand } from "../commands/graph.js";
 import { linkCommand } from "../commands/link.js";
 import { extractCommand } from "../commands/extract.js";
+import { snapshotRepoState, envFactsCommand, credRefsCommand, rollbackCommand } from "../commands/snapshot.js";
+import { captureCommand } from "../commands/capture.js";
+import { listTemplates, applyTemplate } from "../lib/templates.js";
 import { installSkills, listInstalledSkills, removeSkill } from "../lib/skill-installer.js";
 
 export type { CommandRegistration } from "./types.js";
@@ -319,6 +322,11 @@ export function createRegistry(): CommandRegistry {
           session_id: { type: "string", description: "Session ID (for heartbeat/complete)" },
           outcome: { type: "string", description: "Session outcome (for complete)" },
           tasks_completed: { type: "array", items: { type: "string" }, description: "Task IDs completed (for complete)" },
+          completed: { type: "array", items: { type: "string" }, description: "Completed work items (for complete)" },
+          partially_completed: { type: "array", items: { type: "string" }, description: "Partially completed work items (for complete)" },
+          blocked: { type: "array", items: { type: "string" }, description: "Blocking issues (for complete)" },
+          verification_run: { type: "string", description: "Verification steps run and results (for complete)" },
+          commands_to_resume: { type: "array", items: { type: "string" }, description: "Commands to resume work (for complete)" },
         },
         required: ["action"],
       },
@@ -333,6 +341,11 @@ export function createRegistry(): CommandRegistry {
       sessionId: s(raw.session_id),
       outcome: s(raw.outcome),
       tasksCompleted: a(raw.tasks_completed) as string[] | undefined,
+      completed: a(raw.completed) as string[] | undefined,
+      partiallyCompleted: a(raw.partially_completed) as string[] | undefined,
+      blocked: a(raw.blocked) as string[] | undefined,
+      verificationRun: s(raw.verification_run),
+      commandsToResume: a(raw.commands_to_resume) as string[] | undefined,
     }),
   });
 
@@ -628,6 +641,181 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       query: raw.query as string,
       limit: n(raw.limit),
+    }),
+  });
+
+  r.register("snapshot_repo_state", {
+    handler: snapshotRepoState as CommandHandler,
+    toolDef: {
+      name: "snapshot_repo_state",
+      description: "Snapshot current git state (branch, dirty files, last commit) into the vault. Helps avoid repeating repo discovery across sessions.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+          branch: { type: "string", description: "Current git branch" },
+          dirty_files: { type: "array", items: { type: "string" }, description: "List of dirty/uncommitted files" },
+          last_commit: { type: "string", description: "Last commit hash or message" },
+        },
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      project: s(raw.project),
+      branch: s(raw.branch),
+      dirty_files: a(raw.dirty_files) as string[] | undefined,
+      last_commit: s(raw.last_commit),
+    }),
+  });
+
+  r.register("env_facts", {
+    handler: envFactsCommand as CommandHandler,
+    toolDef: {
+      name: "env_facts",
+      description: "Store and query stable environment facts for a project (e.g., auth backend, env file locations, local URLs, required env vars). Not for secrets — use cred_refs for that.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["add", "list"], description: "Action" },
+          key: { type: "string", description: "Fact key (required for add)" },
+          value: { type: "string", description: "Fact value (required for add)" },
+          context: { type: "string", description: "Additional context for the fact" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as "add" | "list",
+      key: s(raw.key),
+      value: s(raw.value),
+      context: s(raw.context),
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("cred_refs", {
+    handler: credRefsCommand as CommandHandler,
+    toolDef: {
+      name: "cred_refs",
+      description: "Store pointers to where credentials are documented (not the credentials themselves). E.g., 'Django admin creds are in tests/live/test_all_endpoints.py'.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["add", "list"], description: "Action" },
+          name: { type: "string", description: "Credential name (required for add)" },
+          location: { type: "string", description: "Where the credential is documented (required for add)" },
+          notes: { type: "string", description: "Additional notes" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as "add" | "list",
+      name: s(raw.name),
+      location: s(raw.location),
+      notes: s(raw.notes),
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("rollback", {
+    handler: rollbackCommand as CommandHandler,
+    toolDef: {
+      name: "rollback",
+      description: "Manage rollback checkpoints. Store commit hashes with purpose/scope so rollback is safer. Mark when follow-up work starts after a checkpoint.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["add", "list", "mark-follow-up"], description: "Action" },
+          commit_hash: { type: "string", description: "Commit hash (required for add)" },
+          purpose: { type: "string", description: "Purpose of the checkpoint (required for add)" },
+          scope: { type: "string", description: "Scope of changes in the checkpoint" },
+          checkpoint_id: { type: "string", description: "Checkpoint ID to mark follow-up for" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as "add" | "list" | "mark-follow-up",
+      commit_hash: s(raw.commit_hash),
+      purpose: s(raw.purpose),
+      scope: s(raw.scope),
+      checkpoint_id: s(raw.checkpoint_id),
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("capture", {
+    handler: captureCommand as CommandHandler,
+    toolDef: {
+      name: "capture",
+      description: "Batch-capture multiple insights from a conversation into individual vault items. Each item gets its own file with auto-numbering. Supports any content type (learning, decision, adr, prd, research, etc.).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", description: "Content type (learning, decision, adr, prd, research, etc.)" },
+                title: { type: "string", description: "Title for the item" },
+                content: { type: "string", description: "Body content" },
+                tags: { type: "array", items: { type: "string" }, description: "Tags" },
+                confidence: { type: "string", enum: ["high", "medium", "low"], description: "Confidence level (for learnings/research)" },
+              },
+              required: ["type", "title", "content"],
+            },
+            description: "Items to capture from the conversation",
+          },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["items"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      items: a(raw.items) as Array<{ type: string; title: string; content: string; tags?: string[]; confidence?: string }> | undefined,
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("template", {
+    handler: ((async (args: { action?: string; type?: string; variables?: Record<string, string> }) => {
+      if (args.action === "list") {
+        return { templates: listTemplates() };
+      }
+      if (args.type) {
+        const result = applyTemplate(args.type, args.variables ?? {});
+        if (!result) return { error: `No template found for type: ${args.type}` };
+        return result;
+      }
+      return { templates: listTemplates() };
+    }) as unknown) as CommandHandler,
+    toolDef: {
+      name: "template",
+      description: "Get pre-filled templates for common vault item types (adr, prd, decision, learning, spec, rfc, roadmap, competitive-analysis, incident, research, vision, strategy). Use to scaffold new documents.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["list", "get"], description: "Action (default: list)" },
+          type: { type: "string", description: "Template type to retrieve" },
+          variables: { type: "object", description: "Variables to substitute in the template (e.g. { title: 'My ADR' })" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: s(raw.action) as "list" | "get" | undefined,
+      type: s(raw.type),
+      variables: typeof raw.variables === "object" && raw.variables !== null
+        ? raw.variables as Record<string, string> : undefined,
     }),
   });
 

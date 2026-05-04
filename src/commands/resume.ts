@@ -12,6 +12,11 @@ export interface ResumeContext {
     completed_at: string;
     files_touched: string[];
     tasks_completed: string[];
+    completed: string[];
+    partially_completed: string[];
+    blocked: string[];
+    verification_run: string | null;
+    commands_to_resume: string[];
   }>;
   active_sessions: Session[];
   interrupted_sessions: Session[];
@@ -46,6 +51,11 @@ export async function resumeCommand(
           completed_at: (data.completed_at as string) ?? (data.created as string) ?? "",
           files_touched: Array.isArray(data.files_touched) ? data.files_touched as string[] : [],
           tasks_completed: Array.isArray(data.tasks_completed) ? data.tasks_completed as string[] : [],
+          completed: Array.isArray(data.completed) ? data.completed as string[] : [],
+          partially_completed: Array.isArray(data.partially_completed) ? data.partially_completed as string[] : [],
+          blocked: Array.isArray(data.blocked) ? data.blocked as string[] : [],
+          verification_run: typeof data.verification_run === "string" ? data.verification_run : null,
+          commands_to_resume: Array.isArray(data.commands_to_resume) ? data.commands_to_resume as string[] : [],
         });
       } catch (e: unknown) {
         if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
@@ -150,6 +160,12 @@ export function formatResumeContext(ctx: ResumeContext): string {
     lines.push("### Recent Sessions");
     for (const s of ctx.last_sessions) {
       lines.push(`- **${s.tool}** (${s.completed_at}): ${s.outcome || "no outcome recorded"}`);
+      if (s.blocked.length > 0) {
+        lines.push(`  Blocked: ${s.blocked.join("; ")}`);
+      }
+      if (s.commands_to_resume.length > 0) {
+        lines.push(`  Resume: ${s.commands_to_resume.slice(0, 3).join(", ")}`);
+      }
     }
     lines.push("");
   }

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-04
+
+### Added
+- **Structured session notes** — Session `complete` action now accepts `completed`, `partially_completed`, `blocked`, `verification_run`, and `commands_to_resume` fields. Session notes render as machine-actionable sections instead of prose blobs.
+- **`snapshot_repo_state` tool** — Snapshot current git state (branch, dirty files, last commit) into the vault for cross-session continuity.
+- **`env_facts` tool** — Store and query stable environment facts (auth backend, env file locations, local URLs, required env vars). Not for secrets.
+- **`cred_refs` tool** — Store pointers to where credentials are documented, not the credentials themselves. E.g., "Django admin creds are in tests/live/test_all_endpoints.py".
+- **`rollback` tool** — Manage rollback checkpoints with commit hash, purpose, scope, and follow-up tracking. Mark when follow-up work starts after a checkpoint.
+- **`capture` tool** — Batch-capture multiple insights from a conversation into individual vault items in one call. Supports any content type.
+- **`template` tool** — Pre-filled templates for 12 vault item types (adr, prd, decision, learning, spec, rfc, roadmap, competitive-analysis, incident, research, vision, strategy).
+- **Vault item versioning** — Overwriting a vault file via `write --mode overwrite` automatically snapshots the previous version to `_versions/`.
+- **Secret detection guardrails** — `write` command now scans content for potential secrets (API keys, tokens, private keys, webhook secrets, etc.) and logs warnings. Does not block writes.
+- **Improved search** — Search now returns up to 3 matches per file (was 1) and deduplicates by path, surfacing better snippets.
+
+### Changed
+- **Session resume** — Now surfaces `blocked` items and `commands_to_resume` from recent sessions in the markdown output.
+- **ResumeContext interface** — Extended with `completed`, `partially_completed`, `blocked`, `verification_run`, `commands_to_resume` fields.
+
 ## [0.5.1] - 2026-05-04
 
 ### Added

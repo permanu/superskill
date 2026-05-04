@@ -50,7 +50,7 @@ export async function searchText(
 
   const args = [
     "--json",
-    "--max-count", "1", // one match per file
+    "--max-count", "3",
     "--type", "md",
     "--ignore-case",
     "--fixed-strings",
@@ -69,6 +69,7 @@ export async function searchText(
     });
 
     const results: SearchResult[] = [];
+    const seenPaths = new Map<string, SearchResult>();
 
     for (const line of stdout.split("\n").filter(Boolean)) {
       try {
@@ -82,7 +83,13 @@ export async function searchText(
           // Skip hidden dirs and paths escaping vault
           if (relPath.startsWith(".") || relPath.startsWith("..")) continue;
 
-          results.push({ path: relPath, snippet, line: lineNum });
+          // Keep the best snippet per file (prefer earlier matches with more content)
+          if (!seenPaths.has(relPath)) {
+            const result = { path: relPath, snippet, line: lineNum };
+            seenPaths.set(relPath, result);
+            results.push(result);
+          }
+
           if (results.length >= limit) break;
         }
       } catch (e: any) {

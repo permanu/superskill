@@ -13,6 +13,11 @@ export async function sessionCommand(
     sessionId?: string;
     outcome?: string;
     tasksCompleted?: string[];
+    completed?: string[];
+    partiallyCompleted?: string[];
+    blocked?: string[];
+    verificationRun?: string;
+    commandsToResume?: string[];
   },
   ctx: CommandContext,
 ): Promise<{
@@ -64,6 +69,11 @@ export async function sessionCommand(
           outcome: args.outcome ?? args.taskSummary ?? "",
           filesTouched: args.filesTouched ?? [],
           tasksCompleted: args.tasksCompleted ?? [],
+          completed: args.completed ?? [],
+          partiallyCompleted: args.partiallyCompleted ?? [],
+          blocked: args.blocked ?? [],
+          verificationRun: args.verificationRun,
+          commandsToResume: args.commandsToResume ?? [],
           startedAt: new Date().toISOString(),
         });
       }
@@ -98,6 +108,11 @@ async function persistSessionNote(
     outcome: string;
     filesTouched: string[];
     tasksCompleted: string[];
+    completed: string[];
+    partiallyCompleted: string[];
+    blocked: string[];
+    verificationRun?: string;
+    commandsToResume: string[];
     startedAt: string;
   }
 ): Promise<string> {
@@ -121,11 +136,45 @@ async function persistSessionNote(
     outcome: opts.outcome,
     files_touched: opts.filesTouched,
     tasks_completed: opts.tasksCompleted,
+    completed: opts.completed,
+    partially_completed: opts.partiallyCompleted,
+    blocked: opts.blocked,
+    verification_run: opts.verificationRun ?? null,
+    commands_to_resume: opts.commandsToResume,
     learnings_captured: 0,
   });
 
-  const body = `\n# Session: ${opts.outcome || "No outcome recorded"}\n\n**Tool**: ${opts.tool}\n**Session ID**: ${opts.sessionId}\n**Completed**: ${completedAt}\n`;
+  const sections: string[] = [];
+  sections.push(`# Session: ${opts.outcome || "No outcome recorded"}`);
+  sections.push(`
+**Tool**: ${opts.tool}  
+**Session ID**: ${opts.sessionId}  
+**Completed**: ${completedAt}`);
 
-  await vaultFs.write(filePath, serializeFrontmatter(fm, body));
+  if (opts.completed.length > 0) {
+    sections.push(`\n## Completed\n${opts.completed.map((c) => `- ${c}`).join("\n")}`);
+  }
+
+  if (opts.partiallyCompleted.length > 0) {
+    sections.push(`\n## Partially Completed\n${opts.partiallyCompleted.map((c) => `- ${c}`).join("\n")}`);
+  }
+
+  if (opts.blocked.length > 0) {
+    sections.push(`\n## Blocked\n${opts.blocked.map((b) => `- ${b}`).join("\n")}`);
+  }
+
+  if (opts.verificationRun) {
+    sections.push(`\n## Verification\n${opts.verificationRun}`);
+  }
+
+  if (opts.commandsToResume.length > 0) {
+    sections.push(`\n## Commands to Resume\n${opts.commandsToResume.map((c) => `- \`${c}\``).join("\n")}`);
+  }
+
+  if (opts.filesTouched.length > 0) {
+    sections.push(`\n## Files Changed\n${opts.filesTouched.map((f) => `- ${f}`).join("\n")}`);
+  }
+
+  await vaultFs.write(filePath, serializeFrontmatter(fm, sections.join("\n")));
   return filePath;
 }

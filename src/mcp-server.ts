@@ -33,7 +33,9 @@ const writeTimestamps: number[] = [];
 
 const WRITE_TOOLS = new Set([
   "write", "decide", "task", "learn", "brainstorm", "session",
-  "prune", "deprecate", "init", "skill_install", "skill_remove", "link", "extract",
+  "prune", "deprecate", "init", "skill_install", "skill_remove",
+  "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
+  "rollback", "capture",
 ]);
 
 function checkRateLimit(toolName: string): void {

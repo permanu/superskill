@@ -8,6 +8,8 @@ import {
   validateFrontmatter,
   type Frontmatter,
 } from "../lib/frontmatter.js";
+import { scanForSecrets, formatSecretWarnings } from "../lib/secret-scanner.js";
+import { snapshotVersion } from "../lib/versioning.js";
 
 export async function writeCommand(
   args: {
@@ -17,9 +19,15 @@ export async function writeCommand(
     frontmatter?: Partial<Frontmatter>;
   },
   ctx: CommandContext,
-): Promise<{ written: boolean; path: string; bytes: number }> {
+): Promise<{ written: boolean; path: string; bytes: number; secret_warnings?: string[] }> {
   const { path, content, mode = "append", frontmatter: fmOverrides } = args;
   const vaultFs = ctx.vaultFs;
+
+  const secretMatches = scanForSecrets(content);
+  if (secretMatches.length > 0) {
+    const warning = formatSecretWarnings(secretMatches);
+    console.error(warning);
+  }
 
   if (mode === "append" || mode === "prepend") {
     const fileExists = await vaultFs.exists(path);
@@ -46,8 +54,15 @@ export async function writeCommand(
   }
 
   const fullContent = serializeFrontmatter(fm, content);
+
+  const fileExists = await vaultFs.exists(path);
+  if (fileExists) {
+    const existing = await vaultFs.read(path);
+    await snapshotVersion(vaultFs, ctx.vaultPath, path, existing);
+  }
+
   const result = await vaultFs.write(path, fullContent);
-  return { written: true, ...result };
+  return { written: true, ...result, ...(secretMatches.length > 0 ? { secret_warnings: secretMatches.map((m) => `${m.type}:line ${m.line}`) } : {}) };
 }
 
 async function createNewFile(

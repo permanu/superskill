@@ -231,7 +231,7 @@ status: in-progress
       const ctx = {
         project: "test-project",
         last_sessions: [
-          { tool: "claude", outcome: "Done", completed_at: "2024-01-15", files_touched: [], tasks_completed: [] },
+          { tool: "claude", outcome: "Done", completed_at: "2024-01-15", files_touched: [], tasks_completed: [], completed: [], partially_completed: [], blocked: [], verification_run: null, commands_to_resume: [] },
         ],
         active_sessions: [],
         interrupted_sessions: [],
