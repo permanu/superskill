@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-04
+
+### Added
+- **Freeform content types** — Vault `type` field now accepts any lowercase slug (e.g. `prd`, `vision`, `roadmap`, `rfc`, `competitive-analysis`) instead of a rigid enum of 12 types.
+- **`link` tool** — Create forward links between vault notes via `[[wikilinks]]`. Integrates with existing `graph_related` for bidirectional graph traversal.
+- **`extract` tool** — Extract decisions, learnings, or other items from a monolithic document into individual vault files with auto-numbering and backlinks.
+- **`published` status** — New frontmatter status for draft-to-published workflow.
+- **Workflow skill discovery** — `superskill init` now also discovers brainstorming, planning, design, code-review, and testing skills beyond stack-specific skills.
+- **Explore phase keywords** — Router recognizes brainstorm, research, investigate, discover, plan, design, prototype, spike as explore-phase tasks.
+
+### Changed
+- **Type validation relaxed** — Types validated as lowercase slugs (`/^[a-z][a-z0-9-]*$/`) instead of allowlist. Known types expanded to 21 for documentation.
+
 ## [0.5.0] - 2026-03-25
 
 ### Added

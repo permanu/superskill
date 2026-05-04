@@ -1,0 +1,853 @@
+{
+  "nodes": [
+    {
+      "type": "project",
+      "id": "project",
+      "stack": [
+        "typescript"
+      ],
+      "tools": [],
+      "phase": "explore",
+      "ts": 1776972011644
+    },
+    {
+      "type": "skill",
+      "id": "native/bencium-controlled-ux-designer",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/design-taste-frontend",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/full-output-enforcement",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/high-end-visual-design",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/minimalist-ui",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/redesign-existing-projects",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/security-review",
+      "source": "routed",
+      "audits": {
+        "gen": "pass",
+        "socket": "pass",
+        "snyk": "warn"
+      },
+      "installs": 3,
+      "stars": 2,
+      "w": 0.10034333188799373,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/stitch-design-taste",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/brainstorming",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/dispatching-parallel-agents",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/doc",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/executing-plans",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/finishing-a-development-branch",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/pdf",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/receiving-code-review",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/requesting-code-review",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/security-best-practices",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/security-ownership-map",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/security-threat-model",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/slides",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/subagent-driven-development",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/systematic-debugging",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/test-driven-development",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/using-git-worktrees",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/using-superpowers",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/vault-brainstorm",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/vault-context",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/vault-decide",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/vault-search",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/vault-todo",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/verification-before-completion",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/writing-plans",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "native/writing-skills",
+      "source": "native",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0.8,
+      "ts": 1776972011218
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145mwshobson/agents@typescript-advanced",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011344
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145mgithub/awesome-copilot@javascript-typescript",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011399
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145mgithub/awesome-copilot@typescript-mcp-server",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011502
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145msickn33/antigravity-awesome-skills@typescript",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011548
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145mdotneet/claude-code-marketplace@typescript-react",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011596
+    },
+    {
+      "type": "skill",
+      "id": "\u001b[38;5;145msoftaworks/agent-toolkit@openapi-to",
+      "source": "routed",
+      "audits": {
+        "gen": "unknown",
+        "socket": "unknown",
+        "snyk": "unknown"
+      },
+      "installs": 0,
+      "stars": 0,
+      "w": 0,
+      "ts": 1776972011644
+    },
+    {
+      "type": "session",
+      "id": "s_1776972108401_4d59",
+      "intent": "",
+      "skills": [
+        "native/security-review"
+      ],
+      "files": [],
+      "outcome": null,
+      "insights": [],
+      "ts": 1776972108401
+    }
+  ],
+  "edges": [
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/bencium-controlled-ux-designer",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/design-taste-frontend",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/full-output-enforcement",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/high-end-visual-design",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/minimalist-ui",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/redesign-existing-projects",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/security-review",
+      "w": 0.2713,
+      "activations": 2
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/stitch-design-taste",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/brainstorming",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/dispatching-parallel-agents",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/doc",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/executing-plans",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/finishing-a-development-branch",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/pdf",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/receiving-code-review",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/requesting-code-review",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/security-best-practices",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/security-ownership-map",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/security-threat-model",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/slides",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/subagent-driven-development",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/systematic-debugging",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/test-driven-development",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/using-git-worktrees",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/using-superpowers",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/vault-brainstorm",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/vault-context",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/vault-decide",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/vault-search",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/vault-todo",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/verification-before-completion",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/writing-plans",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "native/writing-skills",
+      "w": 0.8,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145mwshobson/agents@typescript-advanced",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145mgithub/awesome-copilot@javascript-typescript",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145mgithub/awesome-copilot@typescript-mcp-server",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145msickn33/antigravity-awesome-skills@typescript",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145mdotneet/claude-code-marketplace@typescript-react",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "project_skill",
+      "from": "project",
+      "to": "\u001b[38;5;145msoftaworks/agent-toolkit@openapi-to",
+      "w": 0,
+      "activations": 0
+    },
+    {
+      "type": "session_skill",
+      "from": "s_1776972108401_4d59",
+      "to": "native/security-review",
+      "role": "secondary"
+    }
+  ]
+}

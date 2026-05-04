@@ -89,8 +89,6 @@ export async function learnCommand(
 }
 
 async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, learningsDir: string): Promise<LearningItem[]> {
-  const learnings: LearningItem[] = [];
-
   let files: string[];
   try {
     files = await vaultFs.list(learningsDir, 1);
@@ -98,34 +96,46 @@ async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, lear
     return [];
   }
 
-  for (const file of files) {
-    if (!file.endsWith(".md")) continue;
-    const filePath = file;
+  const mdFiles = files.filter((f) => f.endsWith(".md"));
 
-    try {
-      const content = await vaultFs.read(filePath);
-      const { data, content: body } = parseFrontmatter(content);
+  const learnings: LearningItem[] = [];
+  const BATCH_SIZE = 10;
 
-      if (data.type !== "learning") continue;
+  for (let i = 0; i < mdFiles.length; i += BATCH_SIZE) {
+    const batch = mdFiles.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (file) => {
+        const content = await vaultFs.read(file);
+        const { data, content: body } = parseFrontmatter(content);
 
-      const basename = file.split("/").pop() ?? file;
-      const idMatch = basename.match(/^(\d+)-/);
-      if (!idMatch) continue;
+        if (data.type !== "learning") return null;
 
-      const titleMatch = body.match(/^# (.+)$/m);
-      const title = titleMatch ? titleMatch[1].trim() : file;
+        const basename = file.split("/").pop() ?? file;
+        const idMatch = basename.match(/^(\d+)-/);
+        if (!idMatch) return null;
 
-      learnings.push({
-        id: idMatch[1],
-        title,
-        confidence: (data.confidence as Confidence) ?? "medium",
-        tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-        created: (data.created as string) ?? "",
-        path: filePath,
-      });
-    } catch (e: unknown) {
-      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-        console.error("[learn] Skipping unreadable learning file:", e instanceof Error ? e.message : e);
+        const titleMatch = body.match(/^# (.+)$/m);
+        const title = titleMatch ? titleMatch[1].trim() : file;
+
+        return {
+          id: idMatch[1],
+          title,
+          confidence: (data.confidence as Confidence) ?? "medium",
+          tags: Array.isArray(data.tags) ? data.tags as string[] : [],
+          created: (data.created as string) ?? "",
+          path: file,
+        } satisfies LearningItem;
+      }),
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value !== null) {
+        learnings.push(result.value);
+      } else if (result.status === "rejected") {
+        const e = result.reason;
+        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+          console.error("[learn] Skipping unreadable learning file:", e instanceof Error ? e.message : e);
+        }
       }
     }
   }

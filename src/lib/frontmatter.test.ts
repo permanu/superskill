@@ -165,8 +165,8 @@ describe("validateFrontmatter", () => {
     expect(validateFrontmatter(data)).toEqual([]);
   });
 
-  it("returns error for invalid type", () => {
-    const data: Frontmatter = { type: "invalid" };
+  it("returns error for invalid type format", () => {
+    const data: Frontmatter = { type: "INVALID" };
     const errors = validateFrontmatter(data);
     expect(errors.length).toBe(1);
     expect(errors[0]).toContain("Invalid type");
@@ -194,21 +194,29 @@ describe("validateFrontmatter", () => {
   });
 
   it("returns multiple errors", () => {
-    const data: Frontmatter = { type: "bad", status: "worse", tags: "nope" as any };
+    const data: Frontmatter = { type: "BAD TYPE", status: "worse", tags: "nope" as any };
     const errors = validateFrontmatter(data);
     expect(errors.length).toBe(3);
   });
 
-  it("accepts all valid types", () => {
-    const validTypes = ["context", "adr", "brainstorm", "decision", "todo", "incident", "pattern", "evaluation", "index", "task", "learning", "session"];
+  it("accepts all known types", () => {
+    const validTypes = ["context", "adr", "brainstorm", "decision", "todo", "incident", "pattern", "evaluation", "index", "task", "learning", "session", "prd", "vision", "strategy", "roadmap", "rfc", "research", "spec", "competitive-analysis"];
     for (const type of validTypes) {
       const errors = validateFrontmatter({ type });
       expect(errors).toEqual([]);
     }
   });
 
+  it("accepts custom type slugs", () => {
+    const customTypes = ["my-custom-type", "prd-v2", "x"];
+    for (const type of customTypes) {
+      const errors = validateFrontmatter({ type });
+      expect(errors).toEqual([]);
+    }
+  });
+
   it("accepts all valid statuses", () => {
-    const validStatuses = ["active", "resolved", "deprecated", "draft", "backlog", "in-progress", "blocked", "done", "cancelled", "completed"];
+    const validStatuses = ["active", "resolved", "deprecated", "draft", "published", "backlog", "in-progress", "blocked", "done", "cancelled", "completed"];
     for (const status of validStatuses) {
       const errors = validateFrontmatter({ status });
       expect(errors).toEqual([]);

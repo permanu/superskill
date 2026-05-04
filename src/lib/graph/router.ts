@@ -109,10 +109,12 @@ export function getPhaseForTask(task: string): ProjectPhase {
   const reviewKeywords = ["review", "refactor", "clean", "fix", "bug", "test", "audit", "lint", "check"];
   const shipKeywords = ["deploy", "release", "ship", "publish", "bump", "tag", "version"];
   const implementKeywords = ["add", "build", "create", "implement", "write", "develop", "feature", "integrate"];
+  const exploreKeywords = ["brainstorm", "explore", "research", "investigate", "discover", "plan", "design", "prototype", "spike"];
 
   if (shipKeywords.some((k) => lower.includes(k))) return "ship";
   if (reviewKeywords.some((k) => lower.includes(k))) return "review";
   if (implementKeywords.some((k) => lower.includes(k))) return "implement";
+  if (exploreKeywords.some((k) => lower.includes(k))) return "explore";
   return "explore";
 }
 

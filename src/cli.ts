@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { Command } from "commander";
-import { loadConfig } from "./config.js";
-import type { Config } from "./config.js";
-import { VaultFS } from "./lib/vault-fs.js";
-import { SessionRegistryManager } from "./lib/session-registry.js";
 import { readCommand, listCommand } from "./commands/read.js";
 import { writeCommand } from "./commands/write.js";
 import { searchCommand } from "./commands/search.js";
@@ -21,46 +17,13 @@ import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
 import { resumeCommand, formatResumeContext } from "./commands/resume.js";
-import type { CommandContext, Logger } from "./core/types.js";
+import { createCtx } from "./app-context.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills } from "./commands/skill/activate.js";
 import { statusCommand } from "./commands/skill/status.js";
+import { installSkills, listInstalledSkills, removeSkill, parseSource } from "./lib/skill-installer.js";
 import { getTimeAgo } from "./lib/time-utils.js";
-
-let _config: Config | null = null;
-let _vaultFs: VaultFS | null = null;
-let _sessionRegistry: SessionRegistryManager | null = null;
-
-function getConfig(): Config {
-  if (!_config) _config = loadConfig();
-  return _config;
-}
-function getVaultFs(): VaultFS {
-  if (!_vaultFs) _vaultFs = new VaultFS(getConfig().vaultPath);
-  return _vaultFs;
-}
-function getSessionRegistry(): SessionRegistryManager {
-  if (!_sessionRegistry) _sessionRegistry = new SessionRegistryManager(getConfig().vaultPath, getConfig().sessionTtlHours);
-  return _sessionRegistry;
-}
-
-const noopLog: Logger = {
-  debug() {},
-  info() {},
-  warn() {},
-  error() {},
-};
-
-function createCtx(): CommandContext {
-  return {
-    vaultFs: getVaultFs(),
-    vaultPath: getConfig().vaultPath,
-    sessionRegistry: getSessionRegistry(),
-    config: getConfig(),
-    log: noopLog,
-  };
-}
 
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -896,6 +859,91 @@ skillCmd
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       process.stderr.write(`Error: ${msg}\n`);
+      process.exit(1);
+    }
+  });
+
+skillCmd
+  .command("install <source>")
+  .description("Install skills from a GitHub repo (e.g. owner/repo or full URL)")
+  .option("--select <skills>", "Comma-separated list of skill names to install")
+  .action(async (source: string, opts: { select?: string }) => {
+    try {
+      const parsed = parseSource(source);
+      if (!parsed) {
+        console.error(`Invalid source: "${source}". Use owner/repo or a GitHub URL.`);
+        process.exit(1);
+      }
+      console.log(`Cloning ${parsed.owner}/${parsed.repo}...`);
+      const selectSkills = opts.select ? opts.select.split(",").map((s) => s.trim()) : undefined;
+      const result = await installSkills(source, { selectSkills });
+      if (result.blocked.length > 0) {
+        console.error(`\nBlocked skills (failed security audit):`);
+        for (const b of result.blocked) {
+          console.error(`  ✗ ${b}`);
+        }
+      }
+      if (result.warnings.length > 0) {
+        console.error(`\nWarnings:`);
+        for (const w of result.warnings) {
+          console.error(`  ⚠ ${w}`);
+        }
+      }
+      if (result.success) {
+        console.log(`\nInstalled ${result.installed.length} skill(s):`);
+        for (const name of result.installed) {
+          console.log(`  + ${name}`);
+        }
+      } else {
+        console.error(`\nInstall failed:`);
+        for (const err of result.errors) {
+          console.error(`  - ${err}`);
+        }
+        process.exit(1);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+skillCmd
+  .command("list")
+  .description("List installed skills")
+  .action(async () => {
+    try {
+      const skills = await listInstalledSkills();
+      if (skills.length === 0) {
+        console.log("No skills installed. Use: superskill skill install <owner/repo>");
+        return;
+      }
+      console.log(`Installed skills (${skills.length}):`);
+      for (const s of skills) {
+        console.log(`  ${s.name}: ${s.description || "(no description)"}`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+skillCmd
+  .command("remove <name>")
+  .description("Remove an installed skill by name")
+  .action(async (name: string) => {
+    try {
+      const result = await removeSkill(name);
+      if (result.success) {
+        console.log(`Removed skill: ${name}`);
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
       process.exit(1);
     }
   });

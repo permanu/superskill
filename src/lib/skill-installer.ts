@@ -1,22 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * Skill Installer — install skills from GitHub repos into local skill directories.
+ * Skill Installer — install skills from GitHub repos via skills.sh or direct clone.
  *
- * Replicates core skills.sh install logic:
+ * Secure install flow (preferred):
  * 1. Parse source (owner/repo, full URL, local path)
- * 2. Shallow clone with --depth 1
- * 3. Discover SKILL.md files in the cloned repo
- * 4. Copy skill directories to ~/.claude/skills/ (or other tool dirs)
- * 5. Clean up temp directory
+ * 2. Fetch skill list from skills.sh publisher/repo page
+ * 3. For each skill: fetch skills.sh page → check audit results (gen, socket, snyk)
+ * 4. Block skills with "fail" audit status
+ * 5. Scan skill content for prompt injection patterns
+ * 6. Write verified content to ~/.claude/skills/
+ *
+ * Fallback (raw GitHub clone):
+ * 1. Shallow clone with --depth 1
+ * 2. Discover SKILL.md files
+ * 3. Scan each for prompt injection
+ * 4. Copy verified skills to install dir
  */
 
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { tmpdir, homedir } from "os";
-import { join, resolve, basename, dirname } from "path";
-import { readdir, readFile, mkdir, cp, rm, stat } from "fs/promises";
+import { join, resolve, basename } from "path";
+import { readdir, readFile, writeFile, mkdir, cp, rm, stat } from "fs/promises";
 import matter from "gray-matter";
+import { fetchPublisherSkills, fetchSkillPage, type PublisherSkill } from "./skills-sh/client.js";
+import { auditIsBlocked, auditIsWarn } from "./security-gate.js";
+import { scanForPromptInjection } from "./security-scanner.js";
 
 const exec = promisify(execFile);
 
@@ -41,6 +51,8 @@ export interface InstallResult {
   success: boolean;
   installed: string[];
   errors: string[];
+  warnings: string[];
+  blocked: string[];
 }
 
 // ── Source Parsing ──────────────────────────────────
@@ -201,28 +213,134 @@ export function _setInstallDir(dir: string): void { _installDir = dir; }
 export function _resetInstallDir(): void { _installDir = null; }
 
 /**
- * Install skills from a source (owner/repo, URL, etc.).
+ * Install skills from skills.sh — the secure, preferred path.
  *
  * Flow:
- * 1. Parse source
- * 2. Shallow clone
- * 3. Discover SKILL.md files
- * 4. Copy skill directories to install dir
- * 5. Clean up
+ * 1. Fetch publisher/repo page from skills.sh to discover all available skills
+ * 2. For each skill: fetch skill page → extract audit results + content
+ * 3. Block skills with "fail" audit status
+ * 4. Warn on "warn" audit status
+ * 5. Scan content for prompt injection
+ * 6. Write verified content to install dir
  */
-export async function installSkills(
-  source: string,
+async function installFromSkillsSh(
+  owner: string,
+  repo: string,
   options?: { selectSkills?: string[] },
 ): Promise<InstallResult> {
-  const parsed = parseSource(source);
-  if (!parsed) {
-    return { success: false, installed: [], errors: [`Invalid source: "${source}". Use owner/repo or a GitHub URL.`] };
+  const installDir = _installDir ?? getInstallDir();
+  await mkdir(installDir, { recursive: true });
+
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const blocked: string[] = [];
+  const installed: string[] = [];
+
+  // Step 1: Discover skills from skills.sh publisher page
+  const publisherSkills = await fetchPublisherSkills(owner, repo);
+  if (publisherSkills.length === 0) {
+    return {
+      success: false,
+      installed: [],
+      errors: [`No skills found on skills.sh for ${owner}/${repo}. Trying GitHub fallback...`],
+      warnings: [],
+      blocked: [],
+    };
   }
 
+  // Filter if selective install requested
+  const toInstall = options?.selectSkills
+    ? publisherSkills.filter((s) => options.selectSkills!.includes(s.skill))
+    : publisherSkills;
+
+  if (toInstall.length === 0) {
+    const available = publisherSkills.map((s) => s.skill).join(", ");
+    return {
+      success: false,
+      installed: [],
+      errors: [`None of the requested skills found on skills.sh. Available: ${available}`],
+      warnings: [],
+      blocked: [],
+    };
+  }
+
+  // Step 2-6: Process each skill with audit + security scanning
+  for (const skillRef of toInstall) {
+    try {
+      const pageData = await fetchSkillPage(skillRef.owner, skillRef.repo, skillRef.skill);
+      if (!pageData) {
+        errors.push(`${skillRef.skill}: Could not fetch skill page from skills.sh`);
+        continue;
+      }
+
+      // Step 3: Check audit results — block on "fail"
+      if (auditIsBlocked(pageData.audits)) {
+        blocked.push(`${skillRef.skill}: BLOCKED — audit failed (gen=${pageData.audits.gen}, socket=${pageData.audits.socket}, snyk=${pageData.audits.snyk})`);
+        continue;
+      }
+
+      // Step 4: Warn on "warn" audit status
+      if (auditIsWarn(pageData.audits)) {
+        warnings.push(`${skillRef.skill}: audit warning (gen=${pageData.audits.gen}, socket=${pageData.audits.socket}, snyk=${pageData.audits.snyk})`);
+      }
+
+      // Step 5: Scan for prompt injection
+      const content = pageData.skillMd;
+      if (!content) {
+        errors.push(`${skillRef.skill}: No SKILL.md content found on skills.sh page`);
+        continue;
+      }
+
+      const scanResult = scanForPromptInjection(content);
+      if (scanResult.blocked) {
+        blocked.push(`${skillRef.skill}: BLOCKED — ${scanResult.reason}`);
+        continue;
+      }
+      for (const w of scanResult.warnings) {
+        warnings.push(`${skillRef.skill}: ${w}`);
+      }
+
+      // Step 6: Write verified content
+      const destDir = join(installDir, skillRef.skill);
+      await mkdir(destDir, { recursive: true });
+
+      const skillMd = `---\nname: ${skillRef.skill}\ndescription: Skill from ${owner}/${repo}\nsource: skills.sh\ninstalls: ${pageData.installs}\nstars: ${pageData.stars}\naudits:\n  gen: ${pageData.audits.gen}\n  socket: ${pageData.audits.socket}\n  snyk: ${pageData.audits.snyk}\n---\n\n${content}`;
+
+      await writeFile(join(destDir, "SKILL.md"), skillMd, "utf-8");
+      installed.push(skillRef.skill);
+    } catch (err) {
+      errors.push(`${skillRef.skill}: ${(err as Error).message}`);
+    }
+  }
+
+  return {
+    success: installed.length > 0,
+    installed,
+    errors,
+    warnings,
+    blocked,
+  };
+}
+
+/**
+ * Install skills via raw GitHub clone — the fallback path.
+ *
+ * Flow:
+ * 1. Shallow clone
+ * 2. Discover SKILL.md files
+ * 3. Scan each for prompt injection
+ * 4. Copy verified skills to install dir
+ */
+async function installFromGitHub(
+  parsed: ParsedSource,
+  options?: { selectSkills?: string[] },
+): Promise<InstallResult> {
   const installDir = _installDir ?? getInstallDir();
   await mkdir(installDir, { recursive: true });
 
   let tmpDir: string | null = null;
+  const warnings: string[] = [];
+  const blocked: string[] = [];
 
   try {
     // Clone
@@ -231,7 +349,7 @@ export async function installSkills(
     // Discover
     const skills = await discoverSkills(tmpDir, parsed.subpath);
     if (skills.length === 0) {
-      return { success: false, installed: [], errors: [`No SKILL.md files found in ${parsed.owner}/${parsed.repo}`] };
+      return { success: false, installed: [], errors: [`No SKILL.md files found in ${parsed.owner}/${parsed.repo}`], warnings: [], blocked: [] };
     }
 
     // Filter if selective install requested
@@ -241,15 +359,26 @@ export async function installSkills(
 
     if (toInstall.length === 0) {
       const available = skills.map((s) => s.name).join(", ");
-      return { success: false, installed: [], errors: [`None of the requested skills found. Available: ${available}`] };
+      return { success: false, installed: [], errors: [`None of the requested skills found. Available: ${available}`], warnings: [], blocked: [] };
     }
 
-    // Copy each skill to install dir
+    // Security scan + copy each skill
     const installed: string[] = [];
     const errors: string[] = [];
 
     for (const skill of toInstall) {
       try {
+        // Read and scan the SKILL.md content
+        const content = await readFile(skill.skillFile, "utf-8");
+        const scanResult = scanForPromptInjection(content);
+        if (scanResult.blocked) {
+          blocked.push(`${skill.name}: BLOCKED — ${scanResult.reason}`);
+          continue;
+        }
+        for (const w of scanResult.warnings) {
+          warnings.push(`${skill.name}: ${w}`);
+        }
+
         const destDir = join(installDir, skill.name);
         await mkdir(destDir, { recursive: true });
         await cp(skill.skillDir, destDir, {
@@ -265,13 +394,47 @@ export async function installSkills(
       }
     }
 
-    return { success: installed.length > 0, installed, errors };
+    return { success: installed.length > 0, installed, errors, warnings, blocked };
   } finally {
     // Clean up temp directory
     if (tmpDir) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
   }
+}
+
+/**
+ * Install skills from a source (owner/repo, URL, etc.).
+ *
+ * Primary path: skills.sh (with audit + security scanning)
+ * Fallback: raw GitHub clone (with security scanning)
+ */
+export async function installSkills(
+  source: string,
+  options?: { selectSkills?: string[] },
+): Promise<InstallResult> {
+  const parsed = parseSource(source);
+  if (!parsed) {
+    return {
+      success: false,
+      installed: [],
+      errors: [`Invalid source: "${source}". Use owner/repo or a GitHub URL.`],
+      warnings: [],
+      blocked: [],
+    };
+  }
+
+  // Try skills.sh first (secure path with audit results)
+  const shResult = await installFromSkillsSh(parsed.owner, parsed.repo, options);
+
+  // If skills.sh found and installed skills, return those results
+  if (shResult.installed.length > 0 || shResult.blocked.length > 0) {
+    return shResult;
+  }
+
+  // Fallback to GitHub clone
+  console.error(`[skill-installer] skills.sh returned no results, falling back to GitHub clone for ${parsed.owner}/${parsed.repo}`);
+  return installFromGitHub(parsed, options);
 }
 
 /**

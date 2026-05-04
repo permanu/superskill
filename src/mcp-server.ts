@@ -11,53 +11,46 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadConfig } from "./config.js";
-import type { Config } from "./config.js";
-import { VaultFS, VaultError } from "./lib/vault-fs.js";
-import { SessionRegistryManager } from "./lib/session-registry.js";
 import { createRegistry } from "./core/registry.js";
-import type { CommandContext, Logger } from "./core/types.js";
+import { VaultError } from "./lib/vault-fs.js";
+import { createCtx, getSessionRegistry } from "./app-context.js";
 import { readCommand, listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
 import { searchText, searchStructured } from "./lib/search-engine.js";
-import { formatResumeContext } from "./commands/resume.js";
+import { formatResumeContext, type ResumeContext } from "./commands/resume.js";
 import { getTimeAgo } from "./lib/time-utils.js";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
 
 const registry = createRegistry();
 
-let _config: Config | null = null;
-let _vaultFs: VaultFS | null = null;
-let _sessionRegistry: SessionRegistryManager | null = null;
+// ── Rate Limiting ────────────────────────────────────
 
-function getConfig() {
-  if (!_config) _config = loadConfig();
-  return _config;
-}
-function getVaultFs() {
-  if (!_vaultFs) _vaultFs = new VaultFS(getConfig().vaultPath);
-  return _vaultFs;
-}
-function getSessionRegistry() {
-  if (!_sessionRegistry) _sessionRegistry = new SessionRegistryManager(getConfig().vaultPath, getConfig().sessionTtlHours);
-  return _sessionRegistry;
-}
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_WRITES = 30;
+const writeTimestamps: number[] = [];
 
-const noopLog: Logger = {
-  debug() {}, info() {}, warn() {}, error() {},
-};
+const WRITE_TOOLS = new Set([
+  "write", "decide", "task", "learn", "brainstorm", "session",
+  "prune", "deprecate", "init", "skill_install", "skill_remove", "link", "extract",
+]);
 
-function createCtx(): CommandContext {
-  return {
-    vaultFs: getVaultFs(),
-    vaultPath: getConfig().vaultPath,
-    sessionRegistry: getSessionRegistry(),
-    config: getConfig(),
-    log: noopLog,
-  };
+function checkRateLimit(toolName: string): void {
+  if (!WRITE_TOOLS.has(toolName)) return;
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  while (writeTimestamps.length > 0 && writeTimestamps[0] < windowStart) {
+    writeTimestamps.shift();
+  }
+  if (writeTimestamps.length >= RATE_LIMIT_MAX_WRITES) {
+    throw new Error(`Rate limit exceeded: ${RATE_LIMIT_MAX_WRITES} write operations per minute. Slow down and retry.`);
+  }
+  writeTimestamps.push(now);
 }
 
 const server = new Server(
-  { name: "superskill", version: "0.5.0" },
+  { name: "superskill", version },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
@@ -73,6 +66,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const raw = args as Record<string, unknown>;
 
   try {
+    checkRateLimit(name);
+
     if (name === "read") {
       const { path, depth } = raw;
       if (!path || typeof path !== "string") throw new Error("Missing required field: path (string)");
@@ -114,7 +109,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (raw.format === "json") {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
-      return { content: [{ type: "text", text: formatResumeContext(result as any) }] };
+      return { content: [{ type: "text", text: formatResumeContext(result as ResumeContext) }] };
     }
 
     const result = await registry.execute(name, raw, ctx);
@@ -166,13 +161,13 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     return {
       contents: [{ uri, mimeType: "text/plain", text: `Unknown resource: ${uri}` }],
       isError: true,
-    } as any;
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
       contents: [{ uri, mimeType: "text/plain", text: JSON.stringify({ error: "INTERNAL_ERROR", message: msg }) }],
       isError: true,
-    } as any;
+    };
   }
 });
 

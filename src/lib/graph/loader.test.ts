@@ -214,8 +214,10 @@ describe("loadContent", () => {
     const result = await loadContent(testDir, ["owner/repo@my-skill"]);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].id).toBe("owner/repo@my-skill");
-    expect(result.skills[0].content).not.toContain("```");
     expect(result.skills[0].content).toContain("Some rules here.");
+    expect(result.skills[0].content).toContain("// ... (8 lines truncated)");
+    expect(result.skills[0].content).toContain("line 1");
+    expect(result.skills[0].content).not.toContain("line 10");
   });
 
   it("reads SKILL.md from local skill-cache first", async () => {

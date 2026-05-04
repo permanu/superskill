@@ -164,8 +164,6 @@ export async function taskCommand(
 }
 
 async function listTasks(vaultFs: import("../lib/vault-fs.js").VaultFS, tasksDir: string): Promise<TaskItem[]> {
-  const tasks: TaskItem[] = [];
-
   let files: string[];
   try {
     files = await vaultFs.list(tasksDir, 1);
@@ -173,39 +171,51 @@ async function listTasks(vaultFs: import("../lib/vault-fs.js").VaultFS, tasksDir
     return [];
   }
 
-  for (const file of files) {
-    if (!file.endsWith(".md")) continue;
-    const filePath = file;
+  const mdFiles = files.filter((f) => f.endsWith(".md"));
 
-    try {
-      const content = await vaultFs.read(filePath);
-      const { data, content: body } = parseFrontmatter(content);
+  const tasks: TaskItem[] = [];
+  const BATCH_SIZE = 10;
 
-      if (data.type !== "task") continue;
+  for (let i = 0; i < mdFiles.length; i += BATCH_SIZE) {
+    const batch = mdFiles.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (file) => {
+        const content = await vaultFs.read(file);
+        const { data, content: body } = parseFrontmatter(content);
 
-      const basename = file.split("/").pop() ?? file;
-      const idMatch = basename.match(/^(task-\d+)/);
-      if (!idMatch) continue;
+        if (data.type !== "task") return null;
 
-      const titleMatch = body.match(/^# (.+)$/m);
-      const title = titleMatch ? titleMatch[1].trim() : file;
+        const basename = file.split("/").pop() ?? file;
+        const idMatch = basename.match(/^(task-\d+)/);
+        if (!idMatch) return null;
 
-      tasks.push({
-        id: idMatch[1],
-        title,
-        status: (data.status as TaskStatus) ?? "backlog",
-        priority: (data.priority as TaskPriority) ?? "p1",
-        blocked_by: Array.isArray(data.blocked_by) ? data.blocked_by as string[] : [],
-        assigned_to: (data.assigned_to as string) ?? "",
-        sprint: (data.sprint as string) ?? "",
-        tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-        created: (data.created as string) ?? "",
-        updated: (data.updated as string) ?? "",
-        path: filePath,
-      });
-    } catch (e: unknown) {
-      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-        console.error("[task] Skipping unreadable task file:", e instanceof Error ? e.message : e);
+        const titleMatch = body.match(/^# (.+)$/m);
+        const title = titleMatch ? titleMatch[1].trim() : file;
+
+        return {
+          id: idMatch[1],
+          title,
+          status: (data.status as TaskStatus) ?? "backlog",
+          priority: (data.priority as TaskPriority) ?? "p1",
+          blocked_by: Array.isArray(data.blocked_by) ? data.blocked_by as string[] : [],
+          assigned_to: (data.assigned_to as string) ?? "",
+          sprint: (data.sprint as string) ?? "",
+          tags: Array.isArray(data.tags) ? data.tags as string[] : [],
+          created: (data.created as string) ?? "",
+          updated: (data.updated as string) ?? "",
+          path: file,
+        } satisfies TaskItem;
+      }),
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value !== null) {
+        tasks.push(result.value);
+      } else if (result.status === "rejected") {
+        const e = result.reason;
+        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+          console.error("[task] Skipping unreadable task file:", e instanceof Error ? e.message : e);
+        }
       }
     }
   }

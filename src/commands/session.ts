@@ -46,7 +46,8 @@ export async function sessionCommand(
 
     case "heartbeat": {
       if (!args.sessionId) throw new Error("Session ID required for heartbeat");
-      await registry.heartbeat(args.sessionId);
+      const found = await registry.heartbeat(args.sessionId);
+      if (!found) throw new Error(`Session not found: ${args.sessionId}`);
       return {};
     }
 

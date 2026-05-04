@@ -17,6 +17,10 @@ import { initCommand } from "../commands/init.js";
 import { initProject } from "../commands/skill/init.js";
 import { activateSkills } from "../commands/skill/activate.js";
 import { statusCommand } from "../commands/skill/status.js";
+import { graphRelatedCommand, graphCrossProjectCommand } from "../commands/graph.js";
+import { linkCommand } from "../commands/link.js";
+import { extractCommand } from "../commands/extract.js";
+import { installSkills, listInstalledSkills, removeSkill } from "../lib/skill-installer.js";
 
 export type { CommandRegistration } from "./types.js";
 
@@ -120,6 +124,7 @@ export function createRegistry(): CommandRegistry {
           path_filter: { type: "string", description: "Glob to restrict search scope" },
           mode: { type: "string", enum: ["text", "structured"], description: "Search mode (default text)" },
           limit: { type: "number", description: "Max results (default 10)" },
+          project: { type: "string", description: "Project slug to scope results" },
         },
         required: ["query"],
       },
@@ -469,6 +474,160 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       task: s(raw.task),
       skill_id: s(raw.skill_id),
+    }),
+  });
+
+  r.register("skill_install", {
+    handler: (async (args: { source: string; select_skills?: string[] }) => {
+      return installSkills(args.source, { selectSkills: args.select_skills });
+    }) as CommandHandler,
+    toolDef: {
+      name: "skill_install",
+      description: "Install skills from a GitHub repo (e.g. owner/repo or full URL). Clones the repo, discovers SKILL.md files, and copies them to the local skill directory.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          source: { type: "string", description: "GitHub source: owner/repo, github:owner/repo, or full URL" },
+          select_skills: { type: "array", items: { type: "string" }, description: "Optional list of skill names to install (installs all if omitted)" },
+        },
+        required: ["source"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      source: raw.source as string,
+      select_skills: a(raw.select_skills) as string[] | undefined,
+    }),
+  });
+
+  r.register("skill_list_installed", {
+    handler: (async () => listInstalledSkills()) as CommandHandler,
+    toolDef: {
+      name: "skill_list_installed",
+      description: "List skills installed locally from GitHub repos.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: () => ({}),
+  });
+
+  r.register("skill_remove", {
+    handler: (async (args: { name: string }) => removeSkill(args.name)) as CommandHandler,
+    toolDef: {
+      name: "skill_remove",
+      description: "Remove an installed skill by name.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          name: { type: "string", description: "Skill name to remove" },
+        },
+        required: ["name"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({ name: raw.name as string }),
+  });
+
+  r.register("link", {
+    handler: linkCommand as CommandHandler,
+    toolDef: {
+      name: "link",
+      description: "Create a forward link between two vault notes. Appends a [[wikilink]] to the source note, enabling graph_related to discover the connection.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          source: { type: "string", description: "Relative path to the source vault note" },
+          target: { type: "string", description: "Relative path (or note name) to link to" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["source", "target"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      source: raw.source as string,
+      target: raw.target as string,
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("extract", {
+    handler: extractCommand as CommandHandler,
+    toolDef: {
+      name: "extract",
+      description: "Extract decisions, learnings, or other items from a source document into individual vault files. Each extracted item gets its own file with a backlink to the source.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          source: { type: "string", description: "Relative path to the source vault note" },
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", description: "Content type (adr, learning, decision, etc.)" },
+                title: { type: "string", description: "Title for the extracted item" },
+                content: { type: "string", description: "Body content for the extracted item" },
+              },
+              required: ["type", "title", "content"],
+            },
+            description: "Items to extract from the source document",
+          },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["source", "items"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      source: raw.source as string,
+      items: a(raw.items) as Array<{ type: string; title: string; content: string }> | undefined,
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("graph_related", {
+    handler: graphRelatedCommand as CommandHandler,
+    toolDef: {
+      name: "graph_related",
+      description: "Find notes related to a vault note via wikilinks (outgoing and backlinks).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "Relative path to the vault note" },
+          hops: { type: "number", description: "Number of hops (default 1)" },
+        },
+        required: ["path"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      path: raw.path as string,
+      hops: n(raw.hops),
+    }),
+  });
+
+  r.register("graph_cross_project", {
+    handler: graphCrossProjectCommand as CommandHandler,
+    toolDef: {
+      name: "graph_cross_project",
+      description: "Search across all projects and group results by project.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          query: { type: "string", description: "Search query" },
+          limit: { type: "number", description: "Max results (default 20)" },
+        },
+        required: ["query"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      query: raw.query as string,
+      limit: n(raw.limit),
     }),
   });
 

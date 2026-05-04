@@ -23,6 +23,7 @@ import type {
   ProjectNode,
   SkillNode,
   AuditResult,
+  AuditStatus,
 } from "../../lib/graph/schema.js";
 
 export interface InitResult {
@@ -113,13 +114,35 @@ async function collectSkillFiles(
   }
 }
 
-async function parseNativeSkillFile(filePath: string): Promise<{ name: string } | null> {
+async function parseNativeSkillFile(filePath: string): Promise<{
+  name: string;
+  audits?: AuditResult;
+  installs?: number;
+  stars?: number;
+  source?: string;
+} | null> {
   try {
     const content = await readFile(filePath, "utf-8");
     const { data } = matter(content);
     const name = typeof data.name === "string" ? data.name : "";
     if (!name) return null;
-    return { name };
+
+    const result: { name: string; audits?: AuditResult; installs?: number; stars?: number; source?: string } = { name };
+
+    if (data.audits && typeof data.audits === "object") {
+      const a = data.audits as Record<string, unknown>;
+      result.audits = {
+        gen: (typeof a.gen === "string" ? a.gen : "unknown") as AuditStatus,
+        socket: (typeof a.socket === "string" ? a.socket : "unknown") as AuditStatus,
+        snyk: (typeof a.snyk === "string" ? a.snyk : "unknown") as AuditStatus,
+      };
+    }
+
+    if (typeof data.installs === "number") result.installs = data.installs;
+    if (typeof data.stars === "number") result.stars = data.stars;
+    if (typeof data.source === "string") result.source = data.source;
+
+    return result;
   } catch {
     return null;
   }
@@ -179,36 +202,55 @@ export async function initProject(
     const projectTools = tool.tool !== "unknown" ? [tool.tool] : [];
 
     const nativeFiles = await scanNativeSkillDirs(projectDir);
-    const nativeSkills: Array<{ id: string; name: string }> = [];
+    const nativeSkills: Array<{ id: string; name: string; audits?: AuditResult; installs?: number; stars?: number; source?: string }> = [];
     const seenNames = new Set<string>();
 
     for (const filePath of nativeFiles) {
       const parsed = await parseNativeSkillFile(filePath);
       if (!parsed || seenNames.has(parsed.name)) continue;
       seenNames.add(parsed.name);
-      nativeSkills.push({ id: `native/${parsed.name}`, name: parsed.name });
+      nativeSkills.push({ id: `native/${parsed.name}`, name: parsed.name, audits: parsed.audits, installs: parsed.installs, stars: parsed.stars, source: parsed.source });
     }
 
     const stackKeywords = projectStack.join(" ") || "typescript";
     const discovered = await findSkills(stackKeywords);
 
+    const workflowQueries = ["brainstorm", "planning", "design", "code-review", "testing"];
+    const workflowResults = await Promise.all(
+      workflowQueries.map((q) => findSkills(q).catch(() => [])),
+    );
+    const discoveredIds = new Set(discovered.map((d) => d.id));
+    const workflowDiscovered = workflowResults.flat().filter((d) => !discoveredIds.has(d.id));
+
     let skillsBlocked = 0;
     const skillNodes: SkillNode[] = [];
 
     for (const native of nativeSkills) {
+      const audits = native.audits ?? { gen: "unknown", socket: "unknown", snyk: "unknown" };
+
+      if (auditIsBlocked(audits)) {
+        skillsBlocked++;
+        continue;
+      }
+
+      const installs = native.installs ?? 0;
+      const stars = native.stars ?? 0;
+
       skillNodes.push({
         type: "skill",
         id: native.id,
-        source: "native",
-        audits: { gen: "unknown", socket: "unknown", snyk: "unknown" },
-        installs: 0,
-        stars: 0,
-        w: 0.8,
+        source: native.source === "skills.sh" ? "routed" as const : "native" as const,
+        audits,
+        installs,
+        stars,
+        w: installs > 0 || stars > 0
+          ? Math.max(normalizeInstalls(installs), normalizeStars(stars))
+          : 0.8,
         ts: Date.now(),
       });
     }
 
-    for (const candidate of discovered) {
+    for (const candidate of [...discovered, ...workflowDiscovered]) {
       const { node, blocked } = await buildRoutedSkillNode(candidate);
       if (blocked) {
         skillsBlocked++;

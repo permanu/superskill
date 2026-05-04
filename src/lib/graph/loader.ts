@@ -98,38 +98,54 @@ export async function loadContent(
   const home = homedir();
 
   for (const skillId of skillIds) {
-    const parts = skillId.split("@");
-    if (parts.length < 2) continue;
-    const ownerRepo = parts[0];
-    const skillName = parts.slice(1).join("@");
-    const ownerRepoParts = ownerRepo.split("/");
-    if (ownerRepoParts.length < 2) continue;
-    const owner = ownerRepoParts[0];
-    const repo = ownerRepoParts.slice(1).join("/");
-
-    const cachePath = join(home, ".superskill", "skills", owner, repo, skillName, "SKILL.md");
-    const localPath = join(projectDir, ".superskill", "skill-cache", owner, repo, skillName, "SKILL.md");
-
     let content: string | null = null;
-    for (const path of [localPath, cachePath]) {
+
+    // Native skill: native/<skillName> — look in ~/.claude/skills/<skillName>/SKILL.md
+    if (skillId.startsWith("native/")) {
+      const skillName = skillId.slice("native/".length);
+      const nativePath = join(home, ".claude", "skills", skillName, "SKILL.md");
       try {
-        const fileStat = await stat(path);
-        if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
-          console.error(`[graph-loader] stale cache for skill: ${skillId} (${path})`);
+        const raw = await readFile(nativePath, "utf-8");
+        content = compressContent(raw);
+      } catch {
+        console.error(`[graph-loader] native skill content not found: ${skillId} (${nativePath})`);
+      }
+    } else {
+      // Routed skill: owner/repo@skillName
+      const parts = skillId.split("@");
+      if (parts.length < 2) continue;
+      const ownerRepo = parts[0];
+      const skillName = parts.slice(1).join("@");
+      const ownerRepoParts = ownerRepo.split("/");
+      if (ownerRepoParts.length < 2) continue;
+      const owner = ownerRepoParts[0];
+      const repo = ownerRepoParts.slice(1).join("/");
+
+      const cachePath = join(home, ".superskill", "skills", owner, repo, skillName, "SKILL.md");
+      const localPath = join(projectDir, ".superskill", "skill-cache", owner, repo, skillName, "SKILL.md");
+
+      for (const path of [localPath, cachePath]) {
+        try {
+          const fileStat = await stat(path);
+          if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
+            console.error(`[graph-loader] stale cache for skill: ${skillId} (${path})`);
+            continue;
+          }
+          const raw = await readFile(path, "utf-8");
+          content = compressContent(raw);
+          break;
+        } catch {
           continue;
         }
-        const raw = await readFile(path, "utf-8");
-        content = compressContent(raw);
-        break;
-      } catch {
-        continue;
+      }
+
+      if (content === null) {
+        console.error(`[graph-loader] content not found for skill: ${skillId}`);
       }
     }
 
     if (content !== null) {
       skills.push({ id: skillId, content });
-    } else {
-      console.error(`[graph-loader] content not found for skill: ${skillId}`);
     }
   }
 
@@ -139,8 +155,12 @@ export async function loadContent(
 function compressContent(content: string): string {
   let result = content;
   result = result.replace(/```[\s\S]*?```/g, (match) => {
-    if (match.split("\n").length <= 5) return match;
-    return "";
+    const lines = match.split("\n");
+    if (lines.length <= 5) return match;
+    const header = lines[0];
+    const footer = lines[lines.length - 1];
+    const kept = lines.slice(1, 4).join("\n");
+    return `${header}\n${kept}\n// ... (${lines.length - 4} lines truncated)\n${footer}`;
   });
   result = result.replace(/\n{3,}/g, "\n\n");
   return result.trim();

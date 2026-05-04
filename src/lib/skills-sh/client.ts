@@ -74,6 +74,15 @@ function extractGithubStars(html: string): number {
 }
 
 function extractAuditFromHtml(html: string, provider: string): AuditStatus {
+  // Match: ProviderName</span>...bg-green/amber/red...>Pass/Warn/Fail<
+  const colorPattern = new RegExp(
+    `${provider}.*?bg-(?:green|amber|red)-500[^>]*>(Pass|Fail|Warn)<`,
+    "is",
+  );
+  const colorMatch = html.match(colorPattern);
+  if (colorMatch?.[1]) return parseAuditStatus(colorMatch[1].trim());
+
+  // Fallback: match provider name followed by badge text
   const pattern = new RegExp(
     `${provider}[^>]*(?:badge|label|status|class)[^>]*>([^<]+)`,
     "i",
@@ -92,6 +101,43 @@ function extractAudits(html: string): AuditResult {
 }
 
 function extractSkillMd(html: string): string {
+  // Pattern 1: skills.sh renders SKILL.md content in a prose div after the label
+  const proseMatch = html.match(
+    /<span>SKILL\.md<\/span><\/div><div[^>]*class="[^"]*prose[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i,
+  );
+  if (proseMatch?.[1]) {
+    return proseMatch[1]
+      .replace(/<\/?(?:span|div|pre|code)[^>]*>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .trim();
+  }
+
+  // Pattern 2: Look for h1 after SKILL.md label — content follows
+  const skillLabelIdx = html.indexOf('>SKILL.md<');
+  if (skillLabelIdx > -1) {
+    const afterLabel = html.slice(skillLabelIdx);
+    const h1Match = afterLabel.match(/<h1>([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/i);
+    if (h1Match?.[1]) {
+      return h1Match[1]
+        .replace(/<[^>]+>/g, "")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, " ")
+        .trim();
+    }
+  }
+
+  // Pattern 3: Generic skill-content section
   const patterns = [
     /<section[^>]*class="[^"]*skill-content[^"]*"[^>]*>([\s\S]*?)<\/section>/i,
     /<div[^>]*id="skill-md"[^>]*>([\s\S]*?)<\/div>/i,
@@ -112,6 +158,60 @@ function extractSkillMd(html: string): string {
     }
   }
   return "";
+}
+
+export interface PublisherSkill {
+  owner: string;
+  repo: string;
+  skill: string;
+  url: string;
+}
+
+export async function fetchPublisherSkills(
+  owner: string,
+  repo?: string,
+): Promise<PublisherSkill[]> {
+  const path = repo ? `/${owner}/${repo}` : `/${owner}`;
+  const url = `https://skills.sh${path}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) return [];
+    const html = await response.text();
+    return extractPublisherSkills(html, owner, repo);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[skills-sh] fetchPublisherSkills failed for ${url}: ${msg}`);
+    return [];
+  }
+}
+
+function extractPublisherSkills(
+  html: string,
+  owner: string,
+  repoFilter?: string,
+): PublisherSkill[] {
+  const skills: PublisherSkill[] = [];
+  const seen = new Set<string>();
+
+  // Match skill links: /owner/repo/skill-name
+  const pattern = /href="\/([^/]+)\/([^/]+)\/([^"/]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html)) !== null) {
+    const [, o, r, skill] = match;
+    if (["docs", "official", "audits", "search", "trending", "hot", "picks", "internal", "debug-security", "site", "api", "package", "s", ".well-known"].includes(o)) continue;
+    if (o !== owner) continue;
+    if (repoFilter && r !== repoFilter) continue;
+    if (skill === "security" || skill.startsWith("security/")) continue;
+    const key = `${o}/${r}/${skill}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    skills.push({ owner: o, repo: r, skill, url: `https://skills.sh/${key}` });
+  }
+
+  return skills;
 }
 
 export async function fetchSkillPage(

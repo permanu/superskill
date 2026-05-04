@@ -21,8 +21,6 @@ export async function writeCommand(
   const { path, content, mode = "append", frontmatter: fmOverrides } = args;
   const vaultFs = ctx.vaultFs;
 
-  await vaultFs.verifyNoSymlinkEscape(path);
-
   if (mode === "append" || mode === "prepend") {
     const fileExists = await vaultFs.exists(path);
     if (!fileExists) {

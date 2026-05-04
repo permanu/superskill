@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Runtime intelligence layer for AI agent skills — smart routing, collision resolution, and knowledge vault",
   "type": "module",
   "main": "dist/mcp-server.js",

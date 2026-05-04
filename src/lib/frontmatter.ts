@@ -12,14 +12,16 @@ export interface Frontmatter {
   [key: string]: unknown;
 }
 
-const VALID_TYPES = [
+const KNOWN_TYPES = [
   "context", "adr", "brainstorm", "decision", "todo",
   "incident", "pattern", "evaluation", "index",
   "task", "learning", "session",
+  "prd", "vision", "strategy", "roadmap", "rfc",
+  "research", "spec", "competitive-analysis",
 ];
 
 const VALID_STATUSES = [
-  "active", "resolved", "deprecated", "draft",
+  "active", "resolved", "deprecated", "draft", "published",
   "backlog", "in-progress", "blocked", "done", "cancelled", "completed",
 ];
 
@@ -76,8 +78,8 @@ export function mergeFrontmatter(existing: Frontmatter, updates: Partial<Frontma
 export function validateFrontmatter(data: Frontmatter): string[] {
   const errors: string[] = [];
 
-  if (data.type && !VALID_TYPES.includes(data.type)) {
-    errors.push(`Invalid type "${data.type}". Must be one of: ${VALID_TYPES.join(", ")}`);
+  if (data.type && !/^[a-z][a-z0-9-]*$/.test(data.type)) {
+    errors.push(`Invalid type "${data.type}". Must be a lowercase slug (e.g. prd, vision, competitive-analysis)`);
   }
 
   if (data.status && !VALID_STATUSES.includes(data.status)) {

@@ -101,5 +101,6 @@ export async function cacheSkill(
     console.error(
       `[global-cache] cacheSkill failed for ${owner}/${repo}/${skill}: ${msg}`,
     );
+    throw new Error(`Failed to cache skill ${owner}/${repo}/${skill}: ${msg}`);
   }
 }

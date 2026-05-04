@@ -76,3 +76,9 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
       graph.json              # project knowledge graph
       skill-cache/            # symlinks to global cache
 ```
+
+
+## SuperSkill
+This project uses superskill for skill routing. Before creative work,
+new features, debugging, or code review — call the `superskill` tool
+with your task description.
