@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { CommandContext } from "../core/types.js";
+import type { CommandContext, Logger } from "../core/types.js";
 import { VaultFS, VaultError } from "../lib/vault-fs.js";
 import { resolveProject } from "../config.js";
 import { estimateTokens, truncateToTokenBudget } from "../lib/token-estimator.js";
@@ -13,6 +13,7 @@ export interface ContextResult {
   truncated: boolean;
   learning_count: number;
   last_session: { outcome: string; completed_at: string } | null;
+  stale_context: boolean;
 }
 
 export async function contextCommand(
@@ -42,39 +43,94 @@ export async function contextCommand(
       truncated: false,
       learning_count: learningCount,
       last_session: lastSession,
+      stale_context: false,
     };
   }
 
   const content = await vaultFs.read(contextPath);
+  const { data: contextFrontmatter } = parseFrontmatter(content);
 
   const sections = content
     .split("\n")
     .filter((line) => line.startsWith("## "))
     .map((line) => line.replace("## ", "").trim());
 
+  // Enhancement B: freshness warning
+  const staleContext = isStaleContext(contextFrontmatter.updated as string | undefined);
+  const staleWarning = staleContext
+    ? `> ⚠ Context stale (last updated: ${contextFrontmatter.updated}). Run \`/context update\` to refresh.\n\n`
+    : "";
+
   if (detailLevel === "full") {
+    // Enhancement C: inject:always in full mode too
+    const injectPrefix = await collectInjectAlways(vaultFs, ctx.log);
+    const fullContent = injectPrefix ? `${injectPrefix}\n\n---\n\n${content}` : content;
     return {
       project_slug: projectSlug,
-      context_md: content,
-      token_estimate: estimateTokens(content),
+      context_md: staleWarning + fullContent,
+      token_estimate: estimateTokens(staleWarning + fullContent),
       sections,
       truncated: false,
       learning_count: learningCount,
       last_session: lastSession,
+      stale_context: staleContext,
     };
   }
 
-  const { text, truncated } = truncateToTokenBudget(content, effectiveMaxTokens);
+  // Enhancement A: inject:always support — prepend before truncation
+  const injectPrefix = await collectInjectAlways(vaultFs, ctx.log);
+  const combinedContent = injectPrefix ? `${injectPrefix}\n\n---\n\n${content}` : content;
+
+  const { text, truncated } = truncateToTokenBudget(combinedContent, effectiveMaxTokens);
 
   return {
     project_slug: projectSlug,
-    context_md: text,
-    token_estimate: estimateTokens(text),
+    context_md: staleWarning + text,
+    token_estimate: estimateTokens(staleWarning + text),
     sections,
     truncated,
     learning_count: learningCount,
     last_session: lastSession,
+    stale_context: staleContext,
   };
+}
+
+async function collectInjectAlways(
+  vaultFs: import("../lib/vault-fs.js").VaultFS,
+  log: Logger,
+): Promise<string> {
+  try {
+    const allFiles = await vaultFs.list("shared", 10);
+    const mdFiles = allFiles.filter((f) => f.endsWith(".md"));
+    const bodies: string[] = [];
+    for (const filePath of mdFiles) {
+      try {
+        const raw = await vaultFs.read(filePath);
+        const { data, content: body } = parseFrontmatter(raw);
+        if (data.inject === "always") {
+          bodies.push(body.trim());
+        }
+      } catch (e) {
+        log.error(`[context] Failed to read shared file ${filePath}:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return bodies.join("\n\n---\n\n");
+  } catch (e: unknown) {
+    // shared/ may not exist — that's fine
+    if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") return "";
+    if (e instanceof Error && "code" in e && (e as any).code === "ENOENT") return "";
+    log.debug("[context] collectInjectAlways error:", e instanceof Error ? e.message : e);
+    return "";
+  }
+}
+
+function isStaleContext(updated: string | undefined): boolean {
+  if (!updated) return false;
+  const date = new Date(updated);
+  if (isNaN(date.getTime())) return false;
+  const diffMs = Date.now() - date.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays > 30;
 }
 
 async function countLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, projectSlug: string): Promise<number> {

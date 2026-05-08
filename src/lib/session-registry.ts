@@ -12,7 +12,7 @@ export interface Session {
   started_at: string;
   last_heartbeat: string;
   completed_at: string | null;
-  status: "active" | "stale" | "completed";
+  status: "active" | "completed";
 }
 
 export interface SessionRegistry {
@@ -125,7 +125,7 @@ export class SessionRegistryManager {
   }
 
   /**
-   * List active sessions. Persists stale status changes.
+   * List active sessions. Deletes stale sessions and persists the change.
    */
   async listActive(): Promise<Session[]> {
     return await this.withLock(async () => {
@@ -150,18 +150,16 @@ export class SessionRegistryManager {
   }
 
   private cleanStale(registry: SessionRegistry): boolean {
-    let changed = false;
     const cutoff = Date.now() - this.ttlHours * 60 * 60 * 1000;
-    for (const session of registry.sessions) {
-      if (
-        session.status === "active" &&
-        new Date(session.last_heartbeat).getTime() < cutoff
-      ) {
-        session.status = "stale";
-        changed = true;
-      }
-    }
-    return changed;
+    const before = registry.sessions.length;
+    registry.sessions = registry.sessions.filter(
+      (session) =>
+        !(
+          session.status === "active" &&
+          new Date(session.last_heartbeat).getTime() < cutoff
+        )
+    );
+    return registry.sessions.length < before;
   }
 
   private async readRegistry(): Promise<SessionRegistry> {

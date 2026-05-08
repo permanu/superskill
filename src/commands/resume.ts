@@ -72,32 +72,10 @@ export async function resumeCommand(
   const allSessions = await registry.listActive();
   const activeSessions = allSessions.filter((s) => s.project === projectSlug && s.status === "active");
 
+  // Stale sessions are now deleted by the registry cleanup — no interrupted sessions to surface
   const interruptedSessions: Session[] = [];
-  try {
-    const regContent = await vaultFs.read("coordination/session-registry.json");
-    const parsed = JSON.parse(regContent);
-    if (Array.isArray(parsed.sessions)) {
-      for (const s of parsed.sessions) {
-        if (s.project === projectSlug && s.status === "stale") {
-          interruptedSessions.push(s as Session);
-        }
-      }
-    }
-  } catch (e: unknown) {
-    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-      console.error("[resume] Error reading session registry:", e instanceof Error ? e.message : e);
-    }
-  }
 
   const suggestedNextSteps: string[] = [];
-
-  if (interruptedSessions.length > 0) {
-    for (const s of interruptedSessions) {
-      suggestedNextSteps.push(
-        `Resume interrupted ${s.tool} session: "${s.task_summary ?? "unknown task"}" (started ${s.started_at})`
-      );
-    }
-  }
 
   if (lastSessions.length > 0) {
     const latest = lastSessions[0];

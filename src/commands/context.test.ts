@@ -214,6 +214,168 @@ type: context
     });
   });
 
+  describe("inject:always", () => {
+    it("prepends shared files with inject: always to context", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+
+      await vaultFs.write(
+        "projects/test-project/context.md",
+        `---
+type: context
+project: test-project
+updated: "2026-05-08"
+---
+
+# Project Context
+
+Some project details.
+`
+      );
+
+      await vaultFs.write(
+        "shared/patterns/test-pattern.md",
+        `---
+inject: always
+---
+
+# Security Pattern
+
+Always validate inputs.
+`
+      );
+
+      const result = await contextCommand({ project: "test-project", maxTokens: 10000 }, ctx);
+
+      expect(result.context_md).toContain("Always validate inputs.");
+      const injectIdx = result.context_md.indexOf("Always validate inputs.");
+      const contextIdx = result.context_md.indexOf("Some project details.");
+      expect(injectIdx).toBeLessThan(contextIdx);
+    });
+
+    it("skips shared files without inject: always", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+
+      await vaultFs.write(
+        "projects/test-project/context.md",
+        `---
+type: context
+project: test-project
+updated: "2026-05-08"
+---
+
+# Project Context
+`
+      );
+
+      await vaultFs.write(
+        "shared/patterns/no-inject.md",
+        `---
+type: pattern
+---
+
+# Not Injected
+
+This should not appear.
+`
+      );
+
+      const result = await contextCommand({ project: "test-project" }, ctx);
+
+      expect(result.context_md).not.toContain("This should not appear.");
+    });
+
+    it("inject:always content appears before truncation", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+
+      const longContent = "x".repeat(5000);
+      await vaultFs.write(
+        "projects/test-project/context.md",
+        `---
+type: context
+project: test-project
+updated: "2026-05-08"
+---
+
+# Project Context
+
+${longContent}
+`
+      );
+
+      await vaultFs.write(
+        "shared/patterns/critical-pattern.md",
+        `---
+inject: always
+---
+
+# Critical Pattern
+
+INJECT_MARKER_UNIQUE_STRING
+`
+      );
+
+      const result = await contextCommand({ project: "test-project", maxTokens: 50 }, ctx);
+
+      expect(result.context_md).toContain("INJECT_MARKER_UNIQUE_STRING");
+    });
+  });
+
+  describe("freshness warning", () => {
+    it("adds stale warning when context is old", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+
+      await vaultFs.write(
+        "projects/test-project/context.md",
+        `---
+type: context
+project: test-project
+updated: "2020-01-01"
+---
+
+# Project Context
+
+Some content.
+`
+      );
+
+      const result = await contextCommand({ project: "test-project" }, ctx);
+
+      expect(result.context_md).toContain("Context stale");
+      expect(result.stale_context).toBe(true);
+    });
+
+    it("no warning when context is recent", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+
+      await vaultFs.write(
+        "projects/test-project/context.md",
+        `---
+type: context
+project: test-project
+updated: "2026-05-08"
+---
+
+# Project Context
+
+Some content.
+`
+      );
+
+      const result = await contextCommand({ project: "test-project" }, ctx);
+
+      expect(result.stale_context).toBe(false);
+      expect(result.context_md).not.toContain("Context stale");
+    });
+  });
+
   describe("last session", () => {
     it("extracts last session info", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));

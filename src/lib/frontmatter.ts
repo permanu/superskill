@@ -9,6 +9,7 @@ export interface Frontmatter {
   updated?: string;
   tags?: string[];
   related?: string[];
+  inject?: "always";
   [key: string]: unknown;
 }
 

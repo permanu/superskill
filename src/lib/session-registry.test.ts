@@ -167,20 +167,20 @@ describe("SessionRegistryManager", () => {
       expect(active).toEqual([]);
     });
 
-    it("persists stale status changes", async () => {
+    it("deletes stale sessions and persists the change", async () => {
       const staleManager = new SessionRegistryManager(vaultRoot, 0.000001);
       await staleManager.register("claude-code", "proj");
-      
+
       await new Promise(r => setTimeout(r, 20));
-      
+
       const active = await staleManager.listActive();
       expect(active).toEqual([]);
-      
+
       const registryPath = join(vaultRoot, "coordination/session-registry.json");
       const raw = await fspReadFile(registryPath, "utf-8");
       const parsed = JSON.parse(raw);
-      
-      expect(parsed.sessions[0].status).toBe("stale");
+
+      expect(parsed.sessions).toEqual([]);
     });
   });
 

@@ -131,66 +131,14 @@ created: "2024-01-${String(i).padStart(2, "0")}"
       expect(result.active_sessions.some(s => s.project === "test-project")).toBe(true);
     });
 
-    it("includes interrupted sessions", async () => {
+    it("returns empty interrupted_sessions (stale sessions are now deleted, not marked)", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
-
-      // Register and let it become stale (by not heartbeating)
-      const { session_id } = await registry.register("claude", "test-project", "Interrupted task", []);
-
-      // Manually mark as stale in registry
-      await vaultFs.write(
-        "coordination/session-registry.json",
-        JSON.stringify({
-          sessions: [
-            {
-              session_id,
-              tool: "claude",
-              project: "test-project",
-              status: "stale",
-              task_summary: "Interrupted task",
-              files_touched: [],
-              started_at: new Date().toISOString(),
-              last_heartbeat: new Date(Date.now() - 3600000).toISOString(),
-            },
-          ],
-        })
-      );
 
       const result = await resumeCommand({
         project: "test-project",
       }, ctx);
 
-      expect(result.interrupted_sessions.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it("suggests next steps from interrupted sessions", async () => {
-      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
-
-      // Create stale session
-      await vaultFs.write(
-        "coordination/session-registry.json",
-        JSON.stringify({
-          sessions: [
-            {
-              session_id: "test-stale-123",
-              tool: "claude",
-              project: "test-project",
-              status: "stale",
-              task_summary: "Interrupted task",
-              files_touched: [],
-              started_at: new Date().toISOString(),
-              last_heartbeat: new Date(Date.now() - 3600000).toISOString(),
-            },
-          ],
-        })
-      );
-
-      const result = await resumeCommand({
-        project: "test-project",
-      }, ctx);
-
-      expect(result.suggested_next_steps.length).toBeGreaterThan(0);
-      expect(result.suggested_next_steps.some(s => s.includes("Interrupted"))).toBe(true);
+      expect(result.interrupted_sessions).toEqual([]);
     });
 
     it("suggests next steps from in-progress tasks", async () => {
@@ -257,7 +205,7 @@ status: in-progress
             id: "stale-1",
             tool: "cursor",
             project: "test-project",
-            status: "stale" as const,
+            status: "active" as const,
             task_summary: "Interrupted work",
             files_touched: ["src/file.ts"],
             started_at: "2024-01-15T10:00:00Z",
