@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-21
+
+### Added
+- Always-on **systems thinking** (`pipeline/systems`): boundary, stock, flow, feedback, delay.
+- **Grill / HITL** (`pipeline/grill`): stop and ask when a review axis or design branch is open. Loaded on review/plan.
+
 ## [0.7.0] - 2026-09-21
 
 ### Added

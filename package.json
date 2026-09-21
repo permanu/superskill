@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",

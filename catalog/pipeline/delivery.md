@@ -14,7 +14,8 @@ There is no required 10-step ritual. One step, ten steps, or a loop — whatever
 ```mermaid
 flowchart LR
   User --> SuperSkill
-  SuperSkill --> Diagnose
+  SuperSkill --> Systems[Systems thinking]
+  Systems --> Diagnose
   Diagnose --> Specs["Specialists (only those named)"]
   Specs --> Go
   Specs --> QA
@@ -36,7 +37,8 @@ Enterprise factory (learned from Superpowers, Matt Pocock, Google/Cloudflare —
 | New behavior | `pipeline/tdd` + `code/<lang>` |
 | Mystery failure | `pipeline/investigate` |
 | Security bug | review + security + investigate (not a typo path) |
-| Code review | `review/architect` — **all 18 axes**; `n/a: reason` required, silence is a miss |
+| Code review | `review/architect` — **all 18 axes**; `n/a: reason` required; grill if a branch is open |
+| Unclear / HITL | `pipeline/grill` — one question at a time, then wait |
 | Claim done | `pipeline/verify` |
 | Prod/SLO | `devops/sre` + `devops/cloud` |
 

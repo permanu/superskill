@@ -71,4 +71,6 @@ Keyboard, labels, contrast, XSS in the new surface. Canvas/HTML: nodes must be c
 Name the owner: vault, index, router, catalog, CLI. New pattern with one implementation is a finding. No second orchestrator.
 
 ## After
+If any axis cannot be honestly `n/a` and the human has not closed the branch: **stop and grill** (`pipeline/grill`). Do not invent the missing invariant.
+
 If the system model changed: `learn add`. Hand off to `security/compliance` when axes 6–8 moved, to `devops/sre` when 14–16 moved. Do not rubber-stamp.

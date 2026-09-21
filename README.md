@@ -5,7 +5,7 @@ One-entry orchestrator for coding agents. Curated packs, project-jailed vault, F
 [![npm](https://img.shields.io/npm/v/superskill)](https://www.npmjs.com/package/superskill)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://www.gnu.org/licenses/agpl-3.0)
 
-Prompt normally. Call **`superskill`** with the task. It diagnoses, then delegates (Go → Go pack, QA → QA, security bug → review + security). Defaults: ADHD-shaped output, careful-minimal code, algorithm-correct. Review walks **18 axes** (`n/a: reason` required). Factory packs (plan, TDD, verify, SRE) are **ours**, learned from Superpowers / Matt Pocock / Google+Cloudflare — not their repos vendored in.
+Prompt normally. Call **`superskill`** with the task. It diagnoses, then delegates (Go → Go pack, QA → QA, security bug → review + security). Defaults: ADHD-shaped output, careful-minimal, algorithm-correct, **systems thinking**. Review walks **18 axes**; open branches **grill the human** (HITL). Factory packs (plan, TDD, verify, SRE, grill) are **ours**.
 
 Requires **Node 22+** (`node:sqlite`).
 

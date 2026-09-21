@@ -5,7 +5,13 @@ describe("planDelegation", () => {
   it("is a single entry and keeps adhd + careful-minimal defaults", () => {
     const p = planDelegation("fix a typo", ["typescript"]);
     expect(p.entry).toBe("superskill");
-    expect(p.defaults).toEqual(["adhd-output", "careful-minimal", "algorithm-correct"]);
+    expect(p.defaults).toEqual([
+      "adhd-output",
+      "careful-minimal",
+      "algorithm-correct",
+      "systems-thinking",
+      "human-in-the-loop",
+    ]);
     expect(p.specialists.map((s) => s.agent)).toContain("typescript");
     expect(p.specialists.map((s) => s.agent)).not.toContain("platform");
     expect(p.specialists.map((s) => s.agent)).not.toContain("qa");
@@ -15,6 +21,12 @@ describe("planDelegation", () => {
     const p = planDelegation("add a timeout to the grpc handler", ["go"]);
     expect(p.specialists.some((s) => s.agent === "go" && s.pack === "code/go")).toBe(true);
     expect(p.specialists.some((s) => s.agent === "typescript")).toBe(false);
+  });
+
+  it("adds grill on review so humans close open branches", () => {
+    const p = planDelegation("review this diff", ["typescript"]);
+    expect(p.specialists.some((s) => s.agent === "review")).toBe(true);
+    expect(p.specialists.some((s) => s.agent === "grill")).toBe(true);
   });
 
   it("delegates qa to the qa specialist, not implement", () => {

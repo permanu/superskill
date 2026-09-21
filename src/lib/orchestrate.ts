@@ -15,7 +15,7 @@ export interface Orchestration {
   loop: boolean;
 }
 
-const DEFAULTS = ["adhd-output", "careful-minimal", "algorithm-correct"];
+const DEFAULTS = ["adhd-output", "careful-minimal", "algorithm-correct", "systems-thinking", "human-in-the-loop"];
 
 type Rule = {
   agent: string;
@@ -32,6 +32,7 @@ const RULES: Rule[] = [
   { agent: "security", pack: "security/compliance", reason: "auth/tenancy/audit", re: /\b(owasp|pentest|soc2|authz?|secret|compliance|cve|xss|csrf|idor|vulnerabilit|security)\b/i },
   { agent: "tdd", pack: "pipeline/tdd", reason: "test-first slice", re: /\b(tdd|test-driven|red-green)\b/i },
   { agent: "plan", pack: "pipeline/plan", reason: "spec/grill before build", re: /\b(prd|spec|grill|brainstorm|write a plan)\b/i },
+  { agent: "grill", pack: "pipeline/grill", reason: "human-in-the-loop on open branches", re: /\b(grill|hitl|human in the loop|tradeoff|unclear)\b/i },
   { agent: "verify", pack: "pipeline/verify", reason: "evidence before done", re: /\b(verify|claim done|before (?:commit|merge|pr))\b/i },
   { agent: "sre", pack: "devops/sre", reason: "SLO/incident/error budget", re: /\b(slo|sre|error.?budget|on-call|toil|golden signal)\b/i },
   { agent: "platform", pack: "devops/cloud", reason: "ship/deploy/infra", re: /\b(deploy|terraform|kubernetes|rollback|aws|gcp|azure|vps)\b/i },
@@ -70,6 +71,9 @@ export function planDelegation(task: string, stack: string[] = []): Orchestratio
     add({ agent: "review", pack: "review/architect", reason: "security fix needs review" });
     add({ agent: "investigate", pack: "pipeline/investigate", reason: "security incident" });
   }
+  if (specialists.some((s) => s.agent === "review" || s.agent === "plan")) {
+    add({ agent: "grill", pack: "pipeline/grill", reason: "HITL on unresolved review/design branches" });
+  }
 
   const implementish = !/\b(review|deploy|owasp|pentest|qa|e2e|viz|security|cve)\b/i.test(task);
   const hasLang = specialists.some((s) => ["go", "rust", "python", "swift", "typescript"].includes(s.agent));
@@ -85,7 +89,7 @@ export function planDelegation(task: string, stack: string[] = []): Orchestratio
   return {
     entry: "superskill",
     defaults: DEFAULTS,
-    specialists: specialists.slice(0, 4),
+    specialists: specialists.slice(0, 5),
     loop,
   };
 }

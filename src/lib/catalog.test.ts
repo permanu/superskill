@@ -17,6 +17,9 @@ describe("loadCatalog", () => {
     expect(ids).toContain("pipeline/norms");
     expect(ids).toContain("optimizer/algorithm");
     expect(ids).toContain("pipeline/tdd");
+    expect(ids).toContain("pipeline/grill");
+    expect(ids).toContain("pipeline/systems");
+    expect(skills.find((s) => s.id === "pipeline/systems")?.always).toBe(true);
     expect(ids).toContain("pipeline/verify");
     expect(ids).toContain("devops/sre");
     expect(skills.find((s) => s.id === "optimizer/algorithm")?.always).toBe(true);
