@@ -6,11 +6,24 @@ import { join, resolve, relative, dirname } from "path";
  * Safe filesystem operations on the vault.
  * Every path is resolved against the vault root and validated.
  */
+export interface VaultFsOptions {
+  /** Jail all IO under projects/<slug>/. null denies every projects/ path. */
+  projectSlug?: string | null;
+}
+
 export class VaultFS {
-  constructor(private readonly _root: string) {}
+  private readonly _projectSlug: string | null | undefined;
+
+  constructor(private readonly _root: string, options: VaultFsOptions = {}) {
+    this._projectSlug = options.projectSlug;
+  }
 
   get root(): string {
     return this._root;
+  }
+
+  get projectSlug(): string | null | undefined {
+    return this._projectSlug;
   }
 
   /**
@@ -18,28 +31,30 @@ export class VaultFS {
    * Rejects traversal attacks, absolute paths, and personal vault access.
    */
   private resolve(relativePath: string): string {
+    const jailed = this.jailPath(relativePath);
+
     // Reject non-ASCII characters (prevents Unicode homoglyph attacks on APFS)
-    if (/[^\x20-\x7E]/.test(relativePath)) {
+    if (/[^\x20-\x7E]/.test(jailed)) {
       throw new VaultError("PERMISSION_DENIED", `Non-ASCII characters not allowed in paths: ${relativePath}`);
     }
 
     // Reject absolute paths
-    if (relativePath.startsWith("/") || relativePath.startsWith("~")) {
+    if (jailed.startsWith("/") || jailed.startsWith("~")) {
       throw new VaultError("PERMISSION_DENIED", `Absolute paths not allowed: ${relativePath}`);
     }
 
     // Reject traversal
-    if (relativePath.includes("..")) {
+    if (jailed.includes("..")) {
       throw new VaultError("PERMISSION_DENIED", `Path traversal not allowed: ${relativePath}`);
     }
 
     // Reject personal vault references (case-insensitive, segment-level match)
-    const segments = relativePath.toLowerCase().split("/");
+    const segments = jailed.toLowerCase().split("/");
     if (segments.some((seg) => seg === "personal")) {
       throw new VaultError("PERMISSION_DENIED", `Cannot access personal vault: ${relativePath}`);
     }
 
-    const resolved = resolve(this._root, relativePath);
+    const resolved = resolve(this._root, jailed);
 
     // Double-check the resolved path is within vault
     const rel = relative(this._root, resolved);
@@ -48,6 +63,33 @@ export class VaultFS {
     }
 
     return resolved;
+  }
+
+  /**
+   * When project-scoped, rewrite paths into projects/<slug>/ and deny siblings.
+   */
+  jailPath(relativePath: string): string {
+    const n = relativePath.replace(/\\/g, "/").replace(/^\.\/+/, "");
+    const slug = this._projectSlug;
+
+    if (slug === undefined) return n;
+
+    if (slug === null) {
+      if (n === "projects" || n.startsWith("projects/") || n === "project-map.json" || n === "" || n === ".") {
+        throw new VaultError("PERMISSION_DENIED", `Project vault access denied without a resolved project: ${relativePath}`);
+      }
+      return n;
+    }
+
+    const prefix = `projects/${slug}`;
+    if (n === prefix || n.startsWith(prefix + "/")) return n;
+    if (n === "projects" || n.startsWith("projects/")) {
+      throw new VaultError("PERMISSION_DENIED", `Cross-project vault access denied: ${relativePath}`);
+    }
+    if (n === "project-map.json" || n === "" || n === ".") {
+      throw new VaultError("PERMISSION_DENIED", `Vault root is not readable from project ${slug}`);
+    }
+    return `${prefix}/${n}`;
   }
 
   async read(relativePath: string): Promise<string> {
@@ -161,7 +203,8 @@ export class VaultFS {
       const abs = this.resolve(relativePath);
       await stat(abs);
       return true;
-    } catch {
+    } catch (e) {
+      if (e instanceof VaultError) throw e;
       return false;
     }
   }

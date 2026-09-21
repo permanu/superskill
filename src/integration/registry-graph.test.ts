@@ -122,8 +122,8 @@ describe("integration > graph commands", () => {
       await ctx.vaultFs.write("projects/my-project/note-c.md", "# Note C");
 
       const result = await graphRelatedCommand({ path: "projects/my-project/note-a.md" }, ctx);
-      expect(result.outgoing).toContain("projects/my-project/note-b");
-      expect(result.outgoing).toContain("projects/my-project/note-c");
+      expect(result.outgoing).toContain("projects/my-project/note-b.md");
+      expect(result.outgoing).toContain("projects/my-project/note-c.md");
     });
 
     it("graphRelated finds backlinks to a note", async () => {
@@ -140,8 +140,8 @@ describe("integration > graph commands", () => {
       await ctx.vaultFs.write("projects/my-project/c.md", "# C");
 
       const result = await graphRelatedCommand({ path: "projects/my-project/a.md", hops: 2 }, ctx);
-      expect(result.outgoing).toContain("projects/my-project/b");
-      expect(result.outgoing).toContain("projects/my-project/c");
+      expect(result.outgoing).toContain("projects/my-project/b.md");
+      expect(result.outgoing).toContain("projects/my-project/c.md");
     });
 
     it("graphRelated on note with no links returns empty arrays", async () => {

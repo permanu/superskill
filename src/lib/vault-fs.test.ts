@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, rm, symlink } from "fs/promises";
+import { mkdir, writeFile, readFile, rm, symlink } from "fs/promises";
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { VaultFS, VaultError } from "./vault-fs.js";
@@ -241,6 +241,41 @@ describe("VaultFS", () => {
       }
       
       await rm(outsideDir, { recursive: true, force: true });
+    });
+  });
+
+  describe("project isolation", () => {
+    it("rewrites relative paths under projects/<slug>/", async () => {
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await scoped.write("note.md", "alpha-only");
+      const raw = await readFile(join(vaultRoot, "projects/alpha/note.md"), "utf-8");
+      expect(raw).toBe("alpha-only");
+      expect(await scoped.read("note.md")).toBe("alpha-only");
+      expect(await scoped.read("projects/alpha/note.md")).toBe("alpha-only");
+    });
+
+    it("denies sibling project paths", async () => {
+      await mkdir(join(vaultRoot, "projects/beta"), { recursive: true });
+      await writeFile(join(vaultRoot, "projects/beta/secret.md"), "leaked");
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await expect(scoped.read("projects/beta/secret.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(scoped.write("projects/beta/x.md", "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(scoped.list("projects")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(scoped.read("project-map.json")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
+
+    it("does not treat projects/alpha as prefix of projects/alphabet", async () => {
+      await mkdir(join(vaultRoot, "projects/alphabet"), { recursive: true });
+      await writeFile(join(vaultRoot, "projects/alphabet/x.md"), "no");
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await expect(scoped.read("projects/alphabet/x.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
+
+    it("denies projects/ when slug failed to resolve", async () => {
+      const locked = new VaultFS(vaultRoot, { projectSlug: null });
+      await mkdir(join(vaultRoot, "projects/alpha"), { recursive: true });
+      await writeFile(join(vaultRoot, "projects/alpha/x.md"), "no");
+      await expect(locked.read("projects/alpha/x.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     });
   });
 });

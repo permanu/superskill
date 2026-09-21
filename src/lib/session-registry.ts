@@ -127,14 +127,18 @@ export class SessionRegistryManager {
   /**
    * List active sessions. Deletes stale sessions and persists the change.
    */
-  async listActive(): Promise<Session[]> {
+  async listActive(project?: string | null): Promise<Session[]> {
     return await this.withLock(async () => {
       const registry = await this.readRegistry();
       const hadStale = this.cleanStale(registry);
       if (hadStale) {
         await this.writeRegistry(registry);
       }
-      return registry.sessions.filter((s) => s.status === "active");
+      return registry.sessions.filter((s) => {
+        if (s.status !== "active") return false;
+        if (project) return s.project === project;
+        return true;
+      });
     });
   }
 

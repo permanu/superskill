@@ -10,6 +10,8 @@ import {
 } from "../lib/frontmatter.js";
 import { scanForSecrets, formatSecretWarnings } from "../lib/secret-scanner.js";
 import { snapshotVersion } from "../lib/versioning.js";
+import { VaultError } from "../lib/vault-fs.js";
+import { upsertVaultFile } from "../lib/knowledge-index.js";
 
 export async function writeCommand(
   args: {
@@ -19,20 +21,21 @@ export async function writeCommand(
     frontmatter?: Partial<Frontmatter>;
   },
   ctx: CommandContext,
-): Promise<{ written: boolean; path: string; bytes: number; secret_warnings?: string[] }> {
+): Promise<{ written: boolean; path: string; bytes: number }> {
   const { path, content, mode = "append", frontmatter: fmOverrides } = args;
   const vaultFs = ctx.vaultFs;
 
   const secretMatches = scanForSecrets(content);
   if (secretMatches.length > 0) {
-    const warning = formatSecretWarnings(secretMatches);
-    console.error(warning);
+    throw new VaultError("SECRET_REJECTED", formatSecretWarnings(secretMatches));
   }
 
   if (mode === "append" || mode === "prepend") {
     const fileExists = await vaultFs.exists(path);
     if (!fileExists) {
-      return createNewFile(vaultFs, path, content, fmOverrides);
+      const created = await createNewFile(vaultFs, path, content, fmOverrides);
+      await syncIndex(ctx, path);
+      return created;
     }
     const existing = await vaultFs.read(path);
     const { data, content: body } = parseFrontmatter(existing);
@@ -41,6 +44,7 @@ export async function writeCommand(
       ? body.trimEnd() + "\n" + content
       : content + "\n" + body;
     const result = await vaultFs.write(path, serializeFrontmatter(updatedFm, newBody));
+    await syncIndex(ctx, path);
     return { written: true, ...result };
   }
 
@@ -62,7 +66,18 @@ export async function writeCommand(
   }
 
   const result = await vaultFs.write(path, fullContent);
-  return { written: true, ...result, ...(secretMatches.length > 0 ? { secret_warnings: secretMatches.map((m) => `${m.type}:line ${m.line}`) } : {}) };
+  await syncIndex(ctx, path);
+  return { written: true, ...result };
+}
+
+async function syncIndex(ctx: CommandContext, path: string): Promise<void> {
+  try {
+    const stored = ctx.vaultFs.jailPath(path);
+    const raw = await ctx.vaultFs.read(path);
+    upsertVaultFile(ctx.vaultPath, stored, raw);
+  } catch (e: unknown) {
+    console.error("[knowledge-index] sync skipped:", e instanceof Error ? e.message : e);
+  }
 }
 
 async function createNewFile(

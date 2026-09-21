@@ -2,7 +2,7 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { catalogFile } from "../catalog.js";
 import type {
   Graph,
   SkillNode,
@@ -11,6 +11,7 @@ import type {
   IndexResult,
   NeighborhoodResult,
   ContentResult,
+  ProjectPhase,
 } from "./schema.js";
 import { findNode, findNodes } from "./store.js";
 
@@ -35,6 +36,59 @@ export function loadIndex(graph: Graph): IndexResult {
     .map((e) => ({ from: e.from, to: e.to, w: e.w }));
 
   return { project: projectData, skills, topCoActivations };
+}
+
+/**
+ * Compact vertical (this project) + horizontal (sessions, co-activations) snapshot.
+ * Review/security consume this instead of a generic checklist dump.
+ */
+export function formatSystemBrief(
+  graph: Graph,
+  neighborhood: NeighborhoodResult,
+  phase: ProjectPhase,
+  task: string,
+): string {
+  const index = loadIndex(graph);
+  const sessions = findNodes<SessionNode>(graph, "session")
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 3);
+
+  const lines: string[] = [
+    `# System brief`,
+    `Task: ${task.slice(0, 160) || "(none)"}`,
+    `Phase: ${phase}`,
+    `Vertical (this repo): stack=[${index.project.stack.join(", ") || "unknown"}] tools=[${index.project.tools.join(", ") || "unknown"}]`,
+    `Indexed skills: ${index.skills.length} (catalog/graph — not a remote dump)`,
+  ];
+
+  if (sessions.length > 0) {
+    lines.push("Recent sessions (keep this model current):");
+    for (const s of sessions) {
+      const insight = s.insights[0] ? ` | ${s.insights[0]}` : "";
+      lines.push(`- ${s.intent.slice(0, 120)} [${s.skills.slice(0, 4).join(", ")}] ${s.outcome ?? "open"}${insight}`.slice(0, 220));
+    }
+  } else {
+    lines.push("Recent sessions: none. After work, session complete + learn so the next review is not blind.");
+  }
+
+  const co = neighborhood.coActivatedSkills.slice(0, 5);
+  if (co.length > 0) {
+    lines.push(`Horizontal co-activations: ${co.map((s) => s.id).join(", ")}`);
+  } else if (index.topCoActivations.length > 0) {
+    lines.push(`Horizontal co-activations: ${index.topCoActivations.slice(0, 5).map((e) => `${e.from}~${e.to}`).join(", ")}`);
+  }
+
+  if (
+    (phase === "review" || phase === "ship") &&
+    (/\b(review|diff|audit|pr)\b/i.test(task) ||
+      (/\b(security|cve|xss|authz)\b/i.test(task) && /\b(fix|bug|patch)\b/i.test(task)))
+  ) {
+    lines.push(
+      "Review/security protocol: do not judge from the diff or a generic OWASP list. Call `project_context` (full), `resume`, `search` (this project only, ADRs + learnings), then walk every caller of a changed symbol. If the system model changed, `learn add` before you finish.",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 export function loadNeighborhood(
@@ -95,23 +149,37 @@ export async function loadContent(
   skillIds: string[],
 ): Promise<ContentResult> {
   const skills: ContentResult["skills"] = [];
-  const home = homedir();
 
   for (const skillId of skillIds) {
     let content: string | null = null;
 
-    // Native skill: native/<skillName> — look in ~/.claude/skills/<skillName>/SKILL.md
-    if (skillId.startsWith("native/")) {
-      const skillName = skillId.slice("native/".length);
-      const nativePath = join(home, ".claude", "skills", skillName, "SKILL.md");
+    if (!skillId.includes("@") && skillId.includes("/")) {
       try {
-        const raw = await readFile(nativePath, "utf-8");
+        const raw = await readFile(catalogFile(skillId), "utf-8");
         content = compressContent(raw);
       } catch {
-        console.error(`[graph-loader] native skill content not found: ${skillId} (${nativePath})`);
+        console.error(`[graph-loader] catalog skill not found: ${skillId}`);
+      }
+    } else if (skillId.startsWith("native/")) {
+      const skillName = skillId.slice("native/".length);
+      const nativePaths = [
+        join(projectDir, ".agents", "skills", skillName, "SKILL.md"),
+        join(projectDir, ".superskill", "skills", skillName, "SKILL.md"),
+        join(projectDir, ".claude", "skills", skillName, "SKILL.md"),
+      ];
+      for (const nativePath of nativePaths) {
+        try {
+          const raw = await readFile(nativePath, "utf-8");
+          content = compressContent(raw);
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (content === null) {
+        console.error(`[graph-loader] native skill content not found: ${skillId}`);
       }
     } else {
-      // Routed skill: owner/repo@skillName
       const parts = skillId.split("@");
       if (parts.length < 2) continue;
       const ownerRepo = parts[0];
@@ -121,25 +189,17 @@ export async function loadContent(
       const owner = ownerRepoParts[0];
       const repo = ownerRepoParts.slice(1).join("/");
 
-      const cachePath = join(home, ".superskill", "skills", owner, repo, skillName, "SKILL.md");
       const localPath = join(projectDir, ".superskill", "skill-cache", owner, repo, skillName, "SKILL.md");
 
-      for (const path of [localPath, cachePath]) {
-        try {
-          const fileStat = await stat(path);
-          if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
-            console.error(`[graph-loader] stale cache for skill: ${skillId} (${path})`);
-            continue;
-          }
-          const raw = await readFile(path, "utf-8");
+      try {
+        const fileStat = await stat(localPath);
+        if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
+          console.error(`[graph-loader] stale cache for skill: ${skillId} (${localPath})`);
+        } else {
+          const raw = await readFile(localPath, "utf-8");
           content = compressContent(raw);
-          break;
-        } catch {
-          continue;
         }
-      }
-
-      if (content === null) {
+      } catch {
         console.error(`[graph-loader] content not found for skill: ${skillId}`);
       }
     }

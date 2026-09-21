@@ -103,6 +103,8 @@ describe("activateSkills (graph-driven)", () => {
     expect(result.success).toBe(true);
     expect(result.skills_loaded).toEqual([]);
     expect(result.matched_skill_ids).toEqual([]);
+    expect(result.content).toContain("System brief");
+    expect(result.content).toContain("typescript");
   });
 
   it("matches skills by keyword against graph", async () => {

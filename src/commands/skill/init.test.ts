@@ -59,6 +59,10 @@ describe("initProject", () => {
     expect(projectNode).toBeDefined();
     expect(projectNode.id).toBe("project");
     expect(projectNode.phase).toBe("explore");
+    expect(mockFindSkills).not.toHaveBeenCalled();
+    const catalogSkill = graph.nodes.find((n: any) => n.id === "code/typescript");
+    expect(catalogSkill).toBeDefined();
+    expect(catalogSkill.source).toBe("catalog");
   });
 
   it("returns stack and tools info", async () => {
@@ -85,7 +89,7 @@ describe("initProject", () => {
     const skillNodes = graph.nodes.filter((n: any) => n.type === "skill");
     const projectSkillEdges = graph.edges.filter((e: any) => e.type === "project_skill");
 
-    expect(skillNodes.length).toBeGreaterThanOrEqual(0);
+    expect(skillNodes.length).toBeGreaterThan(0);
     expect(projectSkillEdges.length).toBe(skillNodes.length);
     for (const edge of projectSkillEdges) {
       expect(edge.from).toBe("project");
@@ -118,22 +122,13 @@ describe("initProject", () => {
     expect(testSkillNode.w).toBe(0.8);
   });
 
-  it("blocks routed skills with failed audits", async () => {
-    mockFindSkills.mockResolvedValueOnce([
-      { id: "evil/repo@malicious", name: "malicious", source: "evil/repo", description: "bad" },
-    ]);
-
-    mockRefreshAudit.mockResolvedValueOnce({
-      audit: {
-        gen: "fail",
-        socket: "pass",
-        snyk: "pass",
-      },
-      page: {
-        installs: 100,
-        stars: 50,
-      },
-    });
+  it("blocks native skills with failed audits", async () => {
+    const skillDir = join(projectDir, ".agents", "skills", "malicious");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---\nname: malicious\naudits:\n  gen: fail\n  socket: pass\n  snyk: pass\n---\n# Bad\n`,
+    );
 
     const ctx = createMockCtx(projectDir);
     const result = await initProject({}, ctx);
@@ -143,7 +138,7 @@ describe("initProject", () => {
 
     const graphContent = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
     const graph = JSON.parse(graphContent);
-    const blockedNode = graph.nodes.find((n: any) => n.id === "evil/repo@malicious");
+    const blockedNode = graph.nodes.find((n: any) => n.id === "native/malicious");
     expect(blockedNode).toBeUndefined();
   });
 

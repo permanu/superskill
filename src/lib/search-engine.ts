@@ -117,9 +117,10 @@ export async function searchText(
 export async function searchStructured(
   vaultPath: string,
   filters: Record<string, string>,
-  options: { limit?: number } = {}
+  options: { limit?: number; pathFilter?: string } = {}
 ): Promise<SearchResult[]> {
-  const { limit = 10 } = options;
+  const { limit = 10, pathFilter } = options;
+  const searchRoot = pathFilter ? validateSearchPath(vaultPath, pathFilter) : vaultPath;
 
   const results: SearchResult[] = [];
 
@@ -138,7 +139,7 @@ export async function searchStructured(
       "--type", "md",
       "--regexp", keyPattern,
       "--regexp", valuePattern,
-      vaultPath,
+      searchRoot,
     ], { timeout: 10_000, maxBuffer: 1024 * 1024 });
     candidates = stdout.trim().split("\n").filter(Boolean);
   } catch (e: any) {

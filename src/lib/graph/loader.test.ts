@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 import type { Graph, SkillNode, SessionNode } from "./schema.js";
-import { loadIndex, loadNeighborhood, loadContent } from "./loader.js";
+import { loadIndex, loadNeighborhood, loadContent, formatSystemBrief } from "./loader.js";
 
 function makeProjectNode() {
   return {
@@ -192,43 +192,73 @@ describe("loadNeighborhood", () => {
   });
 });
 
+describe("formatSystemBrief", () => {
+  it("includes stack and review protocol", () => {
+    const graph: Graph = {
+      nodes: [
+        makeProjectNode(),
+        makeSkillNode("code/typescript", 0.8),
+        makeSessionNode("s1", 3000, ["code/typescript"]),
+      ],
+      edges: [
+        { type: "skill_skill", from: "code/typescript", to: "review/architect", w: 0.6, co_activations: 4 },
+      ],
+    };
+    const neighborhood = loadNeighborhood(graph, ["code/typescript"]);
+    const brief = formatSystemBrief(graph, neighborhood, "review", "review the auth diff");
+    expect(brief).toContain("stack=[ts, react]");
+    expect(brief).toContain("test session");
+    expect(brief).toContain("project_context");
+    expect(brief).toContain("Review/security protocol");
+  });
+
+  it("asks for a learning when no sessions exist", () => {
+    const graph: Graph = { nodes: [makeProjectNode()], edges: [] };
+    const brief = formatSystemBrief(graph, loadNeighborhood(graph, []), "implement", "add login");
+    expect(brief).toContain("none");
+    expect(brief).not.toContain("Review/security protocol");
+  });
+});
+
 describe("loadContent", () => {
   let testDir: string;
-  let skillCacheDir: string;
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `loader-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(testDir, { recursive: true });
-    skillCacheDir = join(homedir(), ".superskill", "skills", "owner", "repo", "my-skill");
-    await mkdir(skillCacheDir, { recursive: true });
   });
 
   afterEach(async () => {
     await rm(testDir, { recursive: true, force: true });
-    await rm(skillCacheDir, { recursive: true, force: true });
   });
 
-  it("reads SKILL.md from global cache and compresses long code blocks", async () => {
-    const longBlock = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
-    await writeFile(join(skillCacheDir, "SKILL.md"), `# My Skill\n\nSome rules here.\n\`\`\`js\n${longBlock}\n\`\`\`\n\nMore text.`, "utf-8");
-    const result = await loadContent(testDir, ["owner/repo@my-skill"]);
+  it("reads catalog skills and compresses long code blocks", async () => {
+    const result = await loadContent(testDir, ["code/typescript"]);
     expect(result.skills).toHaveLength(1);
-    expect(result.skills[0].id).toBe("owner/repo@my-skill");
-    expect(result.skills[0].content).toContain("Some rules here.");
-    expect(result.skills[0].content).toContain("// ... (8 lines truncated)");
-    expect(result.skills[0].content).toContain("line 1");
-    expect(result.skills[0].content).not.toContain("line 10");
+    expect(result.skills[0].id).toBe("code/typescript");
+    expect(result.skills[0].content).toContain("TypeScript");
   });
 
-  it("reads SKILL.md from local skill-cache first", async () => {
+  it("reads SKILL.md from local skill-cache", async () => {
     const localCacheDir = join(testDir, ".superskill", "skill-cache", "owner", "repo", "my-skill");
     await mkdir(localCacheDir, { recursive: true });
     await writeFile(join(localCacheDir, "SKILL.md"), "# Local Content", "utf-8");
-    await writeFile(join(skillCacheDir, "SKILL.md"), "# Global Content", "utf-8");
 
     const result = await loadContent(testDir, ["owner/repo@my-skill"]);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].content).toContain("Local Content");
+  });
+
+  it("compresses long code blocks in local cache", async () => {
+    const localCacheDir = join(testDir, ".superskill", "skill-cache", "owner", "repo", "my-skill");
+    await mkdir(localCacheDir, { recursive: true });
+    const longBlock = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+    await writeFile(join(localCacheDir, "SKILL.md"), `# My Skill\n\nSome rules here.\n\`\`\`js\n${longBlock}\n\`\`\`\n\nMore text.`, "utf-8");
+    const result = await loadContent(testDir, ["owner/repo@my-skill"]);
+    expect(result.skills[0].content).toContain("Some rules here.");
+    expect(result.skills[0].content).toContain("// ... (8 lines truncated)");
+    expect(result.skills[0].content).toContain("line 1");
+    expect(result.skills[0].content).not.toContain("line 10");
   });
 
   it("returns empty skills array for invalid skill ID format", async () => {

@@ -86,4 +86,13 @@ describe("writeCommand", () => {
     expect(content).toContain("tags:");
   });
   });
+
+  it("rejects secret material", async () => {
+    await expect(
+      writeCommand(
+        { path: "secrets.md", content: 'api_key = "abcdefghijklmnopqrstuvwxyz012345"', mode: "overwrite" },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+  });
 });

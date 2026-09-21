@@ -2,13 +2,10 @@
 
 import { readFile, appendFile, access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import matter from "gray-matter";
 import type { CommandContext } from "../../core/types.js";
 import { detectStack } from "../../lib/stack-detector.js";
 import { detectTool } from "../../lib/tool-detector.js";
-import { findSkills, type CliSearchResult } from "../../lib/skills-sh/cli.js";
-import { getAudit, isStale, refreshAuditWithMeta } from "../../lib/skills-sh/audit-cache.js";
 import {
   createEmptyGraph,
   ensureSuperskillDir,
@@ -18,12 +15,14 @@ import {
 } from "../../lib/graph/store.js";
 import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
 import { auditIsBlocked } from "../../lib/security-gate.js";
+import { loadCatalog } from "../../lib/catalog.js";
 import type {
   Graph,
   ProjectNode,
   SkillNode,
   AuditResult,
   AuditStatus,
+  SkillPack,
 } from "../../lib/graph/schema.js";
 
 export interface InitResult {
@@ -59,23 +58,11 @@ async function appendToInstructionFile(projectDir: string): Promise<void> {
 }
 
 function getSkillDirectories(projectDir: string): string[] {
-  const home = homedir();
-  const dirs = [
-    resolve(home, ".claude", "skills"),
-    resolve(home, ".cursor", "skills"),
-    resolve(home, ".codex", "skills"),
-    resolve(home, ".gemini", "skills"),
-    resolve(home, ".config", "opencode", "skills"),
-    resolve(home, ".codeium", "windsurf", "skills"),
-    resolve(home, ".aider", "skills"),
-    resolve(home, ".continue", "skills"),
-    resolve(home, ".config", "crush", "skills"),
-    resolve(home, ".factory", "skills"),
-    resolve(projectDir, ".claude", "skills"),
-    resolve(projectDir, ".cursor", "skills"),
+  return [
     resolve(projectDir, ".agents", "skills"),
+    resolve(projectDir, ".superskill", "skills"),
+    resolve(projectDir, ".claude", "skills"),
   ];
-  return dirs;
 }
 
 async function scanNativeSkillDirs(projectDir: string): Promise<string[]> {
@@ -120,6 +107,10 @@ async function parseNativeSkillFile(filePath: string): Promise<{
   installs?: number;
   stars?: number;
   source?: string;
+  pack?: SkillPack;
+  langs?: string[];
+  triggers?: string[];
+  always?: boolean;
 } | null> {
   try {
     const content = await readFile(filePath, "utf-8");
@@ -127,7 +118,17 @@ async function parseNativeSkillFile(filePath: string): Promise<{
     const name = typeof data.name === "string" ? data.name : "";
     if (!name) return null;
 
-    const result: { name: string; audits?: AuditResult; installs?: number; stars?: number; source?: string } = { name };
+    const result: {
+      name: string;
+      audits?: AuditResult;
+      installs?: number;
+      stars?: number;
+      source?: string;
+      pack?: SkillPack;
+      langs?: string[];
+      triggers?: string[];
+      always?: boolean;
+    } = { name };
 
     if (data.audits && typeof data.audits === "object") {
       const a = data.audits as Record<string, unknown>;
@@ -141,49 +142,15 @@ async function parseNativeSkillFile(filePath: string): Promise<{
     if (typeof data.installs === "number") result.installs = data.installs;
     if (typeof data.stars === "number") result.stars = data.stars;
     if (typeof data.source === "string") result.source = data.source;
+    if (typeof data.pack === "string") result.pack = data.pack as SkillPack;
+    if (Array.isArray(data.langs)) result.langs = data.langs.filter((v): v is string => typeof v === "string");
+    if (Array.isArray(data.triggers)) result.triggers = data.triggers.filter((v): v is string => typeof v === "string");
+    if (data.always === true) result.always = true;
 
     return result;
   } catch {
     return null;
   }
-}
-
-async function buildRoutedSkillNode(
-  candidate: CliSearchResult,
-): Promise<{ node: SkillNode | null; blocked: boolean }> {
-  const cached = await getAudit(candidate.id);
-  let audits: AuditResult = { gen: "unknown", socket: "unknown", snyk: "unknown" };
-  let installs = 0;
-  let stars = 0;
-
-  if (cached && !isStale(cached)) {
-    audits = { gen: cached.gen, socket: cached.socket, snyk: cached.snyk };
-  } else {
-    const refreshed = await refreshAuditWithMeta(candidate.id);
-    if (refreshed) {
-      audits = { gen: refreshed.audit.gen, socket: refreshed.audit.socket, snyk: refreshed.audit.snyk };
-      installs = refreshed.page.installs;
-      stars = refreshed.page.stars;
-    }
-  }
-
-  if (auditIsBlocked(audits)) {
-    return { node: null, blocked: true };
-  }
-
-  return {
-    node: {
-      type: "skill",
-      id: candidate.id,
-      source: "routed",
-      audits,
-      installs,
-      stars,
-      w: Math.max(normalizeInstalls(installs), normalizeStars(stars)),
-      ts: Date.now(),
-    },
-    blocked: false,
-  };
 }
 
 export async function initProject(
@@ -202,30 +169,64 @@ export async function initProject(
     const projectTools = tool.tool !== "unknown" ? [tool.tool] : [];
 
     const nativeFiles = await scanNativeSkillDirs(projectDir);
-    const nativeSkills: Array<{ id: string; name: string; audits?: AuditResult; installs?: number; stars?: number; source?: string }> = [];
+    const nativeSkills: Array<{
+      id: string;
+      name: string;
+      audits?: AuditResult;
+      installs?: number;
+      stars?: number;
+      source?: string;
+      pack?: SkillPack;
+      langs?: string[];
+      triggers?: string[];
+      always?: boolean;
+    }> = [];
     const seenNames = new Set<string>();
 
     for (const filePath of nativeFiles) {
       const parsed = await parseNativeSkillFile(filePath);
       if (!parsed || seenNames.has(parsed.name)) continue;
       seenNames.add(parsed.name);
-      nativeSkills.push({ id: `native/${parsed.name}`, name: parsed.name, audits: parsed.audits, installs: parsed.installs, stars: parsed.stars, source: parsed.source });
+      nativeSkills.push({
+        id: `native/${parsed.name}`,
+        name: parsed.name,
+        audits: parsed.audits,
+        installs: parsed.installs,
+        stars: parsed.stars,
+        source: parsed.source,
+        pack: parsed.pack,
+        langs: parsed.langs,
+        triggers: parsed.triggers,
+        always: parsed.always,
+      });
     }
 
-    const stackKeywords = projectStack.join(" ") || "typescript";
-    const discovered = await findSkills(stackKeywords);
-
-    const workflowQueries = ["brainstorm", "planning", "design", "code-review", "testing"];
-    const workflowResults = await Promise.all(
-      workflowQueries.map((q) => findSkills(q).catch(() => [])),
-    );
-    const discoveredIds = new Set(discovered.map((d) => d.id));
-    const workflowDiscovered = workflowResults.flat().filter((d) => !discoveredIds.has(d.id));
+    const catalog = await loadCatalog();
+    const catalogIds = new Set(catalog.map((s) => s.id));
 
     let skillsBlocked = 0;
     const skillNodes: SkillNode[] = [];
 
+    for (const item of catalog) {
+      skillNodes.push({
+        type: "skill",
+        id: item.id,
+        source: "catalog",
+        audits: { gen: "pass", socket: "pass", snyk: "pass" },
+        installs: 0,
+        stars: 0,
+        w: 0.8,
+        ts: Date.now(),
+        pack: item.pack,
+        langs: item.langs,
+        triggers: item.triggers,
+        always: item.always,
+        path: item.path,
+      });
+    }
+
     for (const native of nativeSkills) {
+      if (catalogIds.has(native.id) || catalogIds.has(native.name)) continue;
       const audits = native.audits ?? { gen: "unknown", socket: "unknown", snyk: "unknown" };
 
       if (auditIsBlocked(audits)) {
@@ -247,18 +248,11 @@ export async function initProject(
           ? Math.max(normalizeInstalls(installs), normalizeStars(stars))
           : 0.8,
         ts: Date.now(),
+        pack: native.pack,
+        langs: native.langs,
+        triggers: native.triggers,
+        always: native.always,
       });
-    }
-
-    for (const candidate of [...discovered, ...workflowDiscovered]) {
-      const { node, blocked } = await buildRoutedSkillNode(candidate);
-      if (blocked) {
-        skillsBlocked++;
-        continue;
-      }
-      if (node) {
-        skillNodes.push(node);
-      }
     }
 
     const projectNode: ProjectNode = {
@@ -294,7 +288,7 @@ export async function initProject(
       project_stack: projectStack,
       project_tools: projectTools,
       native_skills_found: nativeSkills.length,
-      skills_discovered: discovered.length,
+      skills_discovered: catalog.length,
       skills_blocked: skillsBlocked,
       graph_path: join(superskillDir, "graph.json"),
     };

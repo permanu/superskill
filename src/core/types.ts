@@ -16,6 +16,8 @@ export interface CommandContext {
   sessionRegistry: SessionRegistryManager;
   config: Config;
   log: Logger;
+  /** Set when this call is jailed to one vault project. */
+  projectSlug?: string | null;
 }
 
 export type CommandHandler<TArgs = unknown, TResult = unknown> = (

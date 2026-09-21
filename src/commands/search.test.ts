@@ -28,7 +28,7 @@ describe("searchCommand", () => {
     vaultRoot = join(homedir(), `.vault-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(vaultRoot, { recursive: true });
     vaultFs = new VaultFS(vaultRoot);
-    ctx = createCommandContext(vaultFs);
+    ctx = createCommandContext(vaultFs, { projectSlug: "test" });
     await mkdir(join(vaultRoot, "projects/test"), { recursive: true });
   });
 
@@ -39,7 +39,7 @@ describe("searchCommand", () => {
   describe("text search", () => {
     it("performs text search", async () => {
       await writeFile(join(vaultRoot, "projects/test/note.md"), "# Test Note\n\nSearchable content here");
-      const results = await searchCommand({ query: "Searchable", limit: 10 }, ctx);
+      const results = await searchCommand({ query: "Searchable", project: "test", limit: 10 }, ctx);
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].path).toContain("note.md");
     });
@@ -59,7 +59,7 @@ describe("searchCommand", () => {
         join(vaultRoot, "projects/test/doc.md"),
         "---\ntype: adr\nstatus: active\n---\n\nContent"
       );
-      const results = await searchCommand({ query: "type:adr status:active", structured: true, limit: 10 }, ctx);
+      const results = await searchCommand({ query: "type:adr status:active", structured: true, project: "test", limit: 10 }, ctx);
       expect(results.length).toBeGreaterThan(0);
     });
 
@@ -75,6 +75,12 @@ describe("searchCommand", () => {
       );
       const results = await searchCommand({ query: "type:adr", structured: true, project: "test", limit: 10 }, ctx);
       expect(results.every((r) => r.path.includes("test"))).toBe(true);
+    });
+
+    it("rejects a different project than the scoped context", async () => {
+      await expect(
+        searchCommand({ query: "type:adr", structured: true, project: "other", limit: 10 }, ctx),
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     });
   });
 });

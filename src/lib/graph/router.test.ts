@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Graph } from "./schema.js";
-import { matchTask, getPhaseForTask, rankSkills } from "./router.js";
+import { matchTask, getPhaseForTask, rankSkills, alwaysOnSkillIds } from "./router.js";
 
 function makeProjectNode(stack: string[] = ["ts", "react"]) {
   return {
@@ -144,8 +144,11 @@ describe("getPhaseForTask", () => {
 
   it("detects review phase from review/fix keywords", () => {
     expect(getPhaseForTask("review the auth code")).toBe("review");
-    expect(getPhaseForTask("fix the bug in payments")).toBe("review");
+    expect(getPhaseForTask("review this diff")).toBe("review");
     expect(getPhaseForTask("refactor the database layer")).toBe("review");
+    expect(getPhaseForTask("fix a typo in the readme")).not.toBe("review");
+    expect(getPhaseForTask("run the tests")).not.toBe("review");
+    expect(getPhaseForTask("fix a security bug in cookies")).toBe("review");
   });
 
   it("detects implement phase from build/create keywords", () => {
@@ -210,3 +213,107 @@ describe("rankSkills", () => {
     expect(input).toEqual(["skill-a", "skill-b"]);
   });
 });
+
+describe("catalog routing", () => {
+  function catalogGraph(): Graph {
+    return {
+      nodes: [
+        makeProjectNode(["typescript"]),
+        {
+          ...makeSkillNode("code/typescript", 0.8),
+          source: "catalog" as const,
+          pack: "code" as const,
+          langs: ["typescript"],
+          triggers: ["typescript", "ts"],
+        },
+        {
+          ...makeSkillNode("code/python", 0.8),
+          source: "catalog" as const,
+          pack: "code" as const,
+          langs: ["python"],
+          triggers: ["python"],
+        },
+        {
+          ...makeSkillNode("security/index", 0.5),
+          source: "catalog" as const,
+          pack: "security" as const,
+          always: true,
+          triggers: ["security"],
+        },
+        {
+          ...makeSkillNode("security/compliance", 0.5),
+          source: "catalog" as const,
+          pack: "security" as const,
+          always: false,
+          triggers: ["owasp", "pentest", "soc2"],
+        },
+        {
+          ...makeSkillNode("review/architect", 0.7),
+          source: "catalog" as const,
+          pack: "review" as const,
+          triggers: ["review", "diff"],
+        },
+      ],
+      edges: [],
+    };
+  }
+
+  it("does not load python on a typescript repo", () => {
+    const result = matchTask("add a typescript helper", catalogGraph());
+    expect(result).toContain("code/typescript");
+    expect(result).not.toContain("code/python");
+  });
+
+  it("loads python when the task names python", () => {
+    const result = matchTask("port this helper to python", catalogGraph());
+    expect(result).toContain("code/python");
+  });
+
+  it("keeps compliance off during implement unless asked", () => {
+    const result = matchTask("add a login form", catalogGraph());
+    expect(result).not.toContain("security/compliance");
+  });
+
+  it("loads compliance for pentest/owasp tasks", () => {
+    const result = matchTask("owasp pentest the auth flow", catalogGraph());
+    expect(result).toContain("security/compliance");
+  });
+
+  it("always-on security index loads for implement tasks", () => {
+    const always = alwaysOnSkillIds(catalogGraph(), "add a login form");
+    expect(always).toContain("security/index");
+    expect(always).not.toContain("security/compliance");
+  });
+
+  it("always-on optimizer algorithm pack loads", () => {
+    const g = catalogGraph();
+    g.nodes.push({
+      ...makeSkillNode("optimizer/algorithm", 0.9),
+      source: "catalog" as const,
+      pack: "optimizer" as const,
+      always: true,
+      triggers: ["complexity"],
+    });
+    const always = alwaysOnSkillIds(g, "add a login form");
+    expect(always).toContain("optimizer/algorithm");
+  });
+
+  it("always-on delivery pipeline is diagnostic not a forced waterfall", () => {
+    const g = catalogGraph();
+    g.nodes.push({
+      ...makeSkillNode("pipeline/delivery", 0.9),
+      source: "catalog" as const,
+      pack: "pipeline" as const,
+      always: true,
+      triggers: ["pipeline"],
+    });
+    const always = alwaysOnSkillIds(g, "fix a typo in the readme");
+    expect(always).toContain("pipeline/delivery");
+  });
+
+  it("loads review pack for review tasks", () => {
+    const result = matchTask("review this diff", catalogGraph());
+    expect(result).toContain("review/architect");
+  });
+});
+

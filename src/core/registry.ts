@@ -18,6 +18,8 @@ import { initProject } from "../commands/skill/init.js";
 import { activateSkills } from "../commands/skill/activate.js";
 import { statusCommand } from "../commands/skill/status.js";
 import { graphRelatedCommand, graphCrossProjectCommand } from "../commands/graph.js";
+import { knowledgeRebuildCommand, knowledgeVizCommand } from "../commands/knowledge.js";
+import { qaVizCommand } from "../commands/qa.js";
 import { linkCommand } from "../commands/link.js";
 import { extractCommand } from "../commands/extract.js";
 import { snapshotRepoState, envFactsCommand, credRefsCommand, rollbackCommand } from "../commands/snapshot.js";
@@ -119,7 +121,7 @@ export function createRegistry(): CommandRegistry {
     handler: searchCommand as CommandHandler,
     toolDef: {
       name: "search",
-      description: "Search across the AI vault. Supports full-text and structured (frontmatter) search.",
+      description: "Full-text search (SQLite FTS5 porter stemming) scoped to this project. Structured mode still matches frontmatter.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -439,7 +441,7 @@ export function createRegistry(): CommandRegistry {
     handler: initProject as CommandHandler,
     toolDef: {
       name: "init",
-      description: "Initialize superskill for the current project. Scans codebase, discovers skills from skills.sh, builds knowledge graph.",
+      description: "Initialize superskill for the current project. Detects stack, indexes the in-repo catalog, builds the knowledge graph. Does not scrape skills.sh.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -474,7 +476,7 @@ export function createRegistry(): CommandRegistry {
     }) as CommandHandler,
     toolDef: {
       name: "superskill",
-      description: "Route to the best skill for a task. Provides optimized, security-audited skill content. Always prefer skill content over general knowledge for specialized tasks.",
+      description: "Route a task to curated in-repo packs (code/review/security/ops/devops). Lazy: only matching language + phase. Does not scrape skills.sh.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -606,7 +608,7 @@ export function createRegistry(): CommandRegistry {
     handler: graphRelatedCommand as CommandHandler,
     toolDef: {
       name: "graph_related",
-      description: "Find notes related to a vault note via wikilinks (outgoing and backlinks).",
+      description: "Related notes via the FTS/edge index (related frontmatter + wikilinks), jailed to this project.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -623,11 +625,59 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
+  r.register("knowledge_rebuild", {
+    handler: knowledgeRebuildCommand as CommandHandler,
+    toolDef: {
+      name: "knowledge_rebuild",
+      description: "Rebuild this project's SQLite FTS5 + edges index from markdown. Source of truth stays the files.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+      },
+      annotations: { destructiveHint: false },
+    },
+    adaptArgs: (raw) => ({ project: s(raw.project) }),
+  });
+
+  r.register("knowledge_viz", {
+    handler: knowledgeVizCommand as CommandHandler,
+    toolDef: {
+      name: "knowledge_viz",
+      description: "Write knowledge-graph.html (browser) and knowledge-graph.canvas (open in Obsidian). Same edges as the FTS index.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+      },
+      annotations: { destructiveHint: false },
+    },
+    adaptArgs: (raw) => ({ project: s(raw.project) }),
+  });
+
+  r.register("qa_viz", {
+    handler: qaVizCommand as CommandHandler,
+    toolDef: {
+      name: "qa_viz",
+      description: "Regenerate the knowledge graph HTML and drive system Chrome to click nodes and read the panel. In-harness QA, not a plugin.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({ project: s(raw.project) }),
+  });
+
   r.register("graph_cross_project", {
     handler: graphCrossProjectCommand as CommandHandler,
     toolDef: {
       name: "graph_cross_project",
-      description: "Search across all projects and group results by project.",
+      description: "Search the current project's vault only. Cross-project search is denied.",
       inputSchema: {
         type: "object" as const,
         properties: {

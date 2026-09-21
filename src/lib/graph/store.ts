@@ -3,7 +3,7 @@
 // Operations on .superskill/ use raw fs (not VaultFS) because .superskill/ is
 // project-local, not inside the vault. VaultFS enforces vault-specific security policies.
 
-import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, appendFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -22,11 +22,34 @@ export function createEmptyGraph(): Graph {
   return { nodes: [], edges: [] };
 }
 
+const GITIGNORE_ENTRY = ".superskill/";
+
+/** Per-developer context. Never commit — each clone keeps its own trajectory. */
+export async function ensureSuperskillGitignore(projectDir: string): Promise<void> {
+  const gi = join(projectDir, ".gitignore");
+  let current = "";
+  try {
+    current = await readFile(gi, "utf-8");
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw err;
+  }
+  const lines = current.split(/\r?\n/);
+  const already = lines.some((l) => {
+    const t = l.trim();
+    return t === ".superskill/" || t === ".superskill" || t === "/.superskill/" || t === "/.superskill";
+  });
+  if (already) return;
+  const prefix = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+  await appendFile(gi, `${prefix}# SuperSkill local context (per-developer; do not share)\n${GITIGNORE_ENTRY}\n`);
+}
+
 export async function ensureSuperskillDir(projectDir: string): Promise<string> {
   const dir = join(projectDir, ".superskill");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
+  await ensureSuperskillGitignore(projectDir);
   return dir;
 }
 

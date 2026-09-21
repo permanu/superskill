@@ -46,7 +46,7 @@ export function formatSecretWarnings(matches: SecretMatch[]): string {
   if (matches.length === 0) return "";
 
   const lines: string[] = [];
-  lines.push(`[vault-write] WARNING: ${matches.length} potential secret(s) detected in content. Consider storing references instead of actual values.`);
+  lines.push(`[vault-write] Rejected: ${matches.length} potential secret(s) in content. Store references (cred_refs), not values.`);
   for (const m of matches.slice(0, 5)) {
     lines.push(`  - ${m.type} (line ${m.line}): ${m.snippet}`);
   }

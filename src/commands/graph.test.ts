@@ -244,7 +244,7 @@ type: note
   });
 
   describe("graphCrossProjectCommand", () => {
-    it("groups results by project", async () => {
+    it("jails results to the scoped project", async () => {
       await mkdir(join(vaultRoot, "projects/proj-a"), { recursive: true });
       await mkdir(join(vaultRoot, "projects/proj-b"), { recursive: true });
 
@@ -268,32 +268,24 @@ API client implementation
 `
       );
 
-      const result = await graphCrossProjectCommand({ query: "API", limit: 10 }, ctx);
+      const scoped = createCommandContext(vaultFs, { projectSlug: "proj-a" });
+      const result = await graphCrossProjectCommand({ query: "API", limit: 10 }, scoped);
 
-      // Results should be grouped
-      expect(typeof result).toBe("object");
+      expect(Object.keys(result)).toEqual(["proj-a"]);
+      expect(result["proj-a"].every((r) => r.path.includes("proj-a"))).toBe(true);
     });
 
-    it("uses _shared for non-project files", async () => {
-      await vaultFs.write(
-        "shared-note.md",
-        `---
-type: note
----
-
-Shared API documentation
-`
-      );
-
-      const result = await graphCrossProjectCommand({ query: "API", limit: 10 }, ctx);
-
-      expect(result["_shared"] || result["shared-note"]).toBeDefined;
+    it("rejects calls without a project scope", async () => {
+      await expect(
+        graphCrossProjectCommand({ query: "API", limit: 10 }, ctx),
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     });
 
     it("respects limit parameter", async () => {
+      await mkdir(join(vaultRoot, "projects/proj-a"), { recursive: true });
       for (let i = 0; i < 30; i++) {
         await vaultFs.write(
-          `note-${i}.md`,
+          `projects/proj-a/note-${i}.md`,
           `---
 type: note
 ---
@@ -303,7 +295,8 @@ Test content ${i}
         );
       }
 
-      const result = await graphCrossProjectCommand({ query: "Test", limit: 5 }, ctx);
+      const scoped = createCommandContext(vaultFs, { projectSlug: "proj-a" });
+      const result = await graphCrossProjectCommand({ query: "Test", limit: 5 }, scoped);
 
       const totalResults = Object.values(result).flat().length;
       expect(totalResults).toBeLessThanOrEqual(5);

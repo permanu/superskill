@@ -11,7 +11,8 @@ export interface AuditResult {
   snyk: AuditStatus;
 }
 
-export type SkillSource = "native" | "routed";
+export type SkillSource = "native" | "routed" | "catalog";
+export type SkillPack = "memory" | "code" | "review" | "security" | "ops" | "devops" | "optimizer" | "pipeline";
 export type ProjectPhase = "explore" | "implement" | "review" | "ship";
 export type SessionOutcome = "success" | "partial" | "abandoned";
 
@@ -33,6 +34,11 @@ export interface SkillNode {
   stars: number;
   w: number;
   ts: number;
+  pack?: SkillPack;
+  langs?: string[];
+  triggers?: string[];
+  always?: boolean;
+  path?: string;
 }
 
 export interface SessionNode {

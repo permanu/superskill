@@ -360,7 +360,7 @@ Some content.
         `---
 type: context
 project: test-project
-updated: "2026-05-08"
+updated: "2026-09-20"
 ---
 
 # Project Context

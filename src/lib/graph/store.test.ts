@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, readFile } from "node:fs/promises";
+import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type {
@@ -155,6 +155,15 @@ describe("ensureSuperskillDir", () => {
     await mkdir(join(testDir, ".superskill"), { recursive: true });
     const dir = await ensureSuperskillDir(testDir);
     expect(dir).toBe(join(testDir, ".superskill"));
+  });
+
+  it("adds .superskill/ to .gitignore and does not duplicate", async () => {
+    await writeFile(join(testDir, ".gitignore"), "node_modules/\n", "utf-8");
+    await ensureSuperskillDir(testDir);
+    await ensureSuperskillDir(testDir);
+    const gi = await readFile(join(testDir, ".gitignore"), "utf-8");
+    expect(gi).toContain("node_modules/");
+    expect(gi.match(/^\.superskill\/$/gm)?.length).toBe(1);
   });
 });
 

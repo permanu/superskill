@@ -6,3 +6,6 @@ coverage/
 *.tsbuildinfo
 .env*
 .vscode/
+# SuperSkill local context (per-developer; do not share)
+.superskill/
+

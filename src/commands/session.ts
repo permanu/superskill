@@ -82,7 +82,7 @@ export async function sessionCommand(
     }
 
     case "list_active": {
-      const sessions = await registry.listActive();
+      const sessions = await registry.listActive(ctx.projectSlug ?? undefined);
       return { active_sessions: sessions };
     }
 

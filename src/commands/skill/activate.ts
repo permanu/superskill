@@ -2,16 +2,16 @@
 
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph, writeGraph } from "../../lib/graph/store.js";
-import { matchTask } from "../../lib/graph/router.js";
-import { loadNeighborhood, loadContent } from "../../lib/graph/loader.js";
+import { matchTask, alwaysOnSkillIds, getPhaseForTask } from "../../lib/graph/router.js";
+import { loadNeighborhood, loadContent, formatSystemBrief } from "../../lib/graph/loader.js";
+import { findNode } from "../../lib/graph/store.js";
+import { planDelegation, type Orchestration } from "../../lib/orchestrate.js";
+import type { ProjectNode } from "../../lib/graph/schema.js";
 import { findOrCreateSession, recordActivation } from "../../lib/graph/learner.js";
 import { getPhaseBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
-import { getPhaseForTask } from "../../lib/graph/router.js";
-import { findSkills } from "../../lib/skills-sh/cli.js";
-import { getAudit, isStale, refreshAudit } from "../../lib/skills-sh/audit-cache.js";
 import { scanForPromptInjection } from "../../lib/security-scanner.js";
 import { auditIsBlocked, auditIsWarn } from "../../lib/security-gate.js";
-import type { SkillNode, AuditResult } from "../../lib/graph/schema.js";
+
 
 export interface ActivateResult {
   success: boolean;
@@ -20,6 +20,7 @@ export interface ActivateResult {
   matched_skill_ids: string[];
   total_tokens: number;
   warnings: string[];
+  orchestration?: Orchestration;
   error?: string;
 }
 
@@ -45,29 +46,37 @@ export async function activateSkills(
       };
     }
 
+    const phase = getPhaseForTask(task);
+    const project = findNode<ProjectNode>(graph, "project", "project");
+    const orchestration = planDelegation(task, project?.stack ?? []);
+
     let matchedIds: string[];
 
     if (args.skill_id) {
       matchedIds = [args.skill_id];
     } else {
-      matchedIds = matchTask(task, graph);
-
-      if (matchedIds.length === 0 && task) {
-        const discovered = await findSkills(task);
-        if (discovered.length > 0) {
-          matchedIds = discovered.slice(0, 3).map((s) => s.id);
-        }
-      }
+      const matched = matchTask(task, graph);
+      const always = alwaysOnSkillIds(graph, task);
+      const known = new Set(
+        graph.nodes.filter((n) => n.type === "skill").map((n) => n.id),
+      );
+      const delegated = orchestration.specialists
+        .map((s) => s.pack)
+        .filter((id) => known.has(id));
+      matchedIds = [...new Set([...always, ...matched, ...delegated])];
     }
+    const orchMd = `## Orchestration\n\n\`\`\`json\n${JSON.stringify(orchestration, null, 2)}\n\`\`\``;
 
     if (matchedIds.length === 0) {
+      const brief = formatSystemBrief(graph, loadNeighborhood(graph, []), phase, task);
       return {
         success: true,
         skills_loaded: [],
-        content: "No skills matched for this task. Try describing your task differently.",
+        content: `${brief}\n\n${orchMd}`,
         matched_skill_ids: [],
         total_tokens: 0,
         warnings: [],
+        orchestration,
       };
     }
 
@@ -100,10 +109,10 @@ export async function activateSkills(
 
     const contentResult = await loadContent(projectDir, safeIds);
 
-    const phase = getPhaseForTask(task);
     const budget = getPhaseBudget(phase);
-    const contents: string[] = [];
-    const contentSkillIds: string[] = [];
+    const brief = formatSystemBrief(graph, neighborhood, phase, task);
+    const contents: string[] = [brief, orchMd];
+    const contentSkillIds: string[] = ["system/brief", "system/orchestration"];
 
     for (const skill of contentResult.skills) {
       const scanResult = scanForPromptInjection(skill.content);
@@ -120,16 +129,19 @@ export async function activateSkills(
 
     const { included, usedTokens } = fitSkillsToBudget(contents, budget.totalBudget);
 
-    const loadedSkills = included.map((i) => ({
-      id: contentSkillIds[i],
-      source: "graph",
-    }));
+    const loadedSkills = included
+      .filter((i) => !contentSkillIds[i].startsWith("system/"))
+      .map((i) => ({
+        id: contentSkillIds[i],
+        source: "graph",
+      }));
     const finalContent = included.map((i) => contents[i]).join("\n\n---\n\n");
 
     let updatedGraph = graph;
     const { graph: sessionGraph, sessionId } = findOrCreateSession(graph, task);
     updatedGraph = sessionGraph;
     for (const skillId of contentSkillIds) {
+      if (skillId.startsWith("system/")) continue;
       updatedGraph = recordActivation(updatedGraph, sessionId, skillId, []);
     }
     await writeGraph(projectDir, updatedGraph);
@@ -141,6 +153,7 @@ export async function activateSkills(
       matched_skill_ids: safeIds,
       total_tokens: usedTokens,
       warnings,
+      orchestration,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

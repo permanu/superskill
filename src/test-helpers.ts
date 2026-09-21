@@ -66,6 +66,8 @@ export async function createTestContext(options?: {
   cleanup: () => Promise<void>;
 }> {
   const { vaultRoot, vaultFs, cleanup } = await createTestVault(options);
-  const ctx = createCommandContext(vaultFs);
+  const ctx = createCommandContext(vaultFs, {
+    projectSlug: options?.project,
+  });
   return { vaultRoot, vaultFs, ctx, cleanup };
 }

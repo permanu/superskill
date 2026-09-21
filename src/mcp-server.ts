@@ -13,10 +13,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { createRegistry } from "./core/registry.js";
 import { VaultError } from "./lib/vault-fs.js";
-import { createCtx, getSessionRegistry } from "./app-context.js";
+import { createScopedCtx, getSessionRegistry } from "./app-context.js";
 import { readCommand, listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
-import { searchText, searchStructured } from "./lib/search-engine.js";
 import { formatResumeContext, type ResumeContext } from "./commands/resume.js";
 import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
@@ -64,8 +63,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const ctx = createCtx();
   const raw = args as Record<string, unknown>;
+  const ctx = await createScopedCtx(
+    typeof raw.project === "string" ? raw.project : undefined,
+    name,
+  );
 
   try {
     checkRateLimit(name);
@@ -85,25 +87,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         throw readErr;
       }
-    }
-
-    if (name === "search" && raw.path_filter) {
-      const { query, path_filter, mode, limit } = raw;
-      if (!query || typeof query !== "string") throw new Error("Missing required field: query (string)");
-      if (mode === "structured") {
-        const filters: Record<string, string> = {};
-        for (const part of (query as string).split(/\s+/)) {
-          const idx = part.indexOf(":");
-          if (idx > 0) filters[part.slice(0, idx)] = part.slice(idx + 1);
-        }
-        const results = await searchStructured(ctx.vaultPath, filters, { limit: typeof limit === "number" ? limit : undefined });
-        return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
-      }
-      const results = await searchText(ctx.vaultPath, query as string, {
-        pathFilter: typeof path_filter === "string" ? path_filter : undefined,
-        limit: typeof limit === "number" ? limit : undefined,
-      });
-      return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
     }
 
     if (name === "resume") {
@@ -144,7 +127,8 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
   try {
     if (uri === "vault://coordination/active-sessions") {
-      const sessions = await getSessionRegistry().listActive();
+      const scoped = await createScopedCtx();
+      const sessions = await getSessionRegistry().listActive(scoped.projectSlug ?? undefined);
       return {
         contents: [{ uri, mimeType: "application/json", text: JSON.stringify(sessions, null, 2) }],
       };
@@ -153,7 +137,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const projectMatch = uri.match(/^vault:\/\/project\/([^/]+)\/context$/);
     if (projectMatch) {
       const slug = projectMatch[1];
-      const ctx = createCtx();
+      const ctx = await createScopedCtx(slug);
       const result = await registry.execute("project_context", { project: slug, detail_level: "summary" }, ctx) as any;
       return {
         contents: [{ uri, mimeType: "text/markdown", text: result.context_md }],
@@ -200,7 +184,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   try {
     if (name === "inject-project-context") {
       const project = args?.project as string | undefined;
-      const ctx = createCtx();
+      const ctx = await createScopedCtx(project);
       const result = await registry.execute("project_context", {
         project,
         detail_level: "summary",

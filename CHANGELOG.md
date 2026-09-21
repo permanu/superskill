@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-21
+
+### Added
+- Per-project **SQLite FTS5 + edges** index (`projects/<slug>/.knowledge-index.sqlite`). Porter stemming search; 2-hop related notes without spawning ripgrep. Rebuilt from markdown on write and via `knowledge_rebuild`.
+- In-harness **browser QA** (`qa_viz` / `superskill-cli qa viz`): system Chrome via playwright-core, clicks graph nodes and reads the panel. Not a plugin.
+- Optional **HTML graph viz** (`knowledge_viz` / `superskill-cli graph viz`) — `knowledge-graph.html` (browser) and `knowledge-graph.canvas` (Obsidian Canvas, no plugin).
+- In-repo **catalog packs** (`memory`, `code/<lang>`, `review`, `security`, `ops`, `devops`, `optimizer`) indexed on `init` instead of scraping skills.sh.
+- Inverted-index skill router (query tokens → posting lists) with language gates and phase packs.
+- **System brief** on every `superskill` activate: stack, recent sessions, co-activations. Review/ship phases require vault `project_context` / `resume` / `search` before judging.
+- Project-jailed `VaultFS`: paths rewritten under `projects/<slug>/`; sibling projects denied.
+- Vault writes with secret-like content throw `SECRET_REJECTED`.
+
+- **Orchestrator JSON** on every activate (`defaults`, specialists). Security bugs route to review + security + investigate.
+- **18-axis code review** playbook (`n/a` required per axis).
+- Factory packs: `pipeline/plan`, `tdd`, `verify`, `devops/sre`.
+- HTML viz tabs (Graph / HLA / LLA / ERD / Modules), mermaid diagrams, vault inventory in the panel.
+- `.superskill/` gitignored; `init` appends it so trajectories stay per-developer.
+
+### Changed
+- `init` / `activate` no longer auto-discover from skills.sh or `~/.claude/skills` (project-local skills still index).
+- Review phase is `review`/`refactor`/`audit`/`diff` plus **security bugs** — not every `fix`/`test`.
+- `search` and `graph_cross_project` are scoped to the current project.
+- Session `list_active` / resume filter to the current project.
+- Secret scanner is blocking, not a warning.
+
 ## [0.6.1] - 2026-05-08
 
 ### Added

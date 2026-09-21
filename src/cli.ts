@@ -17,7 +17,7 @@ import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
 import { resumeCommand, formatResumeContext } from "./commands/resume.js";
-import { createCtx } from "./app-context.js";
+import { createScopedCtx } from "./app-context.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills } from "./commands/skill/activate.js";
@@ -42,7 +42,7 @@ program
   .description("Read a vault note")
   .action(async (path: string) => {
     try {
-      const content = await readCommand({ path }, createCtx());
+      const content = await readCommand({ path }, await createScopedCtx());
       process.stdout.write(content);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -62,7 +62,7 @@ program
       if (Number.isNaN(depth) || depth < 1) {
         throw new Error("--depth must be a positive integer");
       }
-      const entries = await listCommand({ path, depth }, createCtx());
+      const entries = await listCommand({ path, depth }, await createScopedCtx());
       for (const entry of entries) {
         console.log(entry);
       }
@@ -99,7 +99,7 @@ program
         content: opts.content,
         mode: opts.mode as "overwrite" | "append" | "prepend",
         frontmatter: fm,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify(result));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -115,7 +115,7 @@ program
   .requiredOption("-c, --content <text>", "Content to append")
   .action(async (path: string, opts: { content: string }) => {
     try {
-      const result = await writeCommand({ path, content: opts.content, mode: "append" }, createCtx());
+      const result = await writeCommand({ path, content: opts.content, mode: "append" }, await createScopedCtx());
       console.log(JSON.stringify(result));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -142,7 +142,7 @@ program
         project: opts.project,
         limit,
         structured: opts.structured,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify(results, null, 2));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -166,7 +166,7 @@ program
       const result = await contextCommand({
         project: opts.project,
         detailLevel: opts.detail as "summary" | "full",
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(result.context_md);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -237,7 +237,7 @@ program
         alternatives: opts.alternatives,
         consequences: opts.consequences,
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify(result));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -262,7 +262,7 @@ todoCmd
         action: "list",
         project: opts.project,
         blockersOnly: opts.blockersOnly,
-      }, createCtx());
+      }, await createScopedCtx());
       for (const todo of result.todos) {
         const marker = todo.completed ? "[x]" : "[ ]";
         const priority = todo.priority === "high" ? "P0" : todo.priority === "low" ? "P2" : "P1";
@@ -291,7 +291,7 @@ todoCmd
         item: text,
         priority: opts.priority as "high" | "medium" | "low",
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(`Added: ${text}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -310,7 +310,7 @@ todoCmd
         action: "complete",
         item: text,
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(`Completed: ${text}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -347,7 +347,7 @@ taskCmd
         status: opts.status as TaskStatus | undefined,
         priority: opts.priority as TaskPriority | undefined,
         assignedTo: opts.assignedTo,
-      }, createCtx());
+      }, await createScopedCtx());
       if (!result.tasks?.length) {
         console.log("No tasks found.");
         return;
@@ -386,7 +386,7 @@ taskCmd
         blockedBy: opts.blockedBy,
         assignedTo: opts.assignedTo,
         tags,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify({ task_id: result.task_id, path: result.path }));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -423,7 +423,7 @@ taskCmd
         blockedBy: opts.blockedBy,
         assignedTo: opts.assignedTo,
         title: opts.title,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify({ task_id: result.task_id, updated_fields: result.updated_fields }));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -441,7 +441,7 @@ taskCmd
       const result = await taskCommand({
         action: "board",
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       if (!result.board) return;
 
       for (const [status, tasks] of Object.entries(result.board)) {
@@ -489,7 +489,7 @@ learnCmd
         tags,
         confidence: opts.confidence as Confidence,
         source: opts.source,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify({ learning_id: result.learning_id, path: result.path }));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -509,7 +509,7 @@ learnCmd
         action: "list",
         project: opts.project,
         tag: opts.tag,
-      }, createCtx());
+      }, await createScopedCtx());
       if (!result.learnings?.length) {
         console.log(JSON.stringify({ learnings: [] }));
         return;
@@ -541,7 +541,7 @@ program
         topic,
         content: opts.content,
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify(result));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -570,7 +570,7 @@ sessionCmd
         project: opts.project,
         taskSummary: opts.task,
         filesTouched: opts.files,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log(JSON.stringify(result, null, 2));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -584,7 +584,7 @@ sessionCmd
   .description("Update session heartbeat")
   .action(async (sessionId: string) => {
     try {
-      await sessionCommand({ action: "heartbeat", sessionId }, createCtx());
+      await sessionCommand({ action: "heartbeat", sessionId }, await createScopedCtx());
       console.log("Heartbeat updated");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -611,7 +611,7 @@ sessionCmd
         filesTouched: opts.files,
         tasksCompleted: opts.tasks,
         project: opts.project,
-      }, createCtx());
+      }, await createScopedCtx());
       console.log("Session completed");
       if (result.session_note_path) {
         console.log(`Session note: ${result.session_note_path}`);
@@ -628,7 +628,7 @@ sessionCmd
   .description("List active sessions")
   .action(async () => {
     try {
-      const result = await sessionCommand({ action: "list_active" }, createCtx());
+      const result = await sessionCommand({ action: "list_active" }, await createScopedCtx());
       if (!result.active_sessions?.length) {
         console.log("No active sessions");
         return;
@@ -649,6 +649,64 @@ const graphCmd = program
   .description("Knowledge graph traversal");
 
 graphCmd
+  .command("rebuild")
+  .description("Rebuild SQLite FTS5 + edges index from markdown")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const { knowledgeRebuildCommand } = await import("./commands/knowledge.js");
+      const result = await knowledgeRebuildCommand({ project: opts.project }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+graphCmd
+  .command("viz")
+  .description("Write knowledge-graph.html (browser) and knowledge-graph.canvas (Obsidian)")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const { knowledgeVizCommand } = await import("./commands/knowledge.js");
+      const ctx = await createScopedCtx();
+      const result = await knowledgeVizCommand({ project: opts.project }, ctx);
+      console.log(JSON.stringify(result, null, 2));
+      const htmlAbs = `${ctx.vaultPath}/${result.html}`;
+      const diagAbs = `${ctx.vaultPath}/${result.diagrams}`;
+      console.log(`\nDiagrams (HLA / LLA / ERD):\n  open "${diagAbs}"`);
+      console.log(`Interactive graph:\n  open "${htmlAbs}"`);
+      console.log(`Obsidian: vault root = ${ctx.vaultPath}, then open ${result.canvas}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("qa")
+  .description("In-harness browser QA")
+  .command("viz")
+  .description("Generate graph HTML and click through it in system Chrome")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const { qaVizCommand } = await import("./commands/qa.js");
+      const ctx = await createScopedCtx();
+      const result = await qaVizCommand({ project: opts.project }, ctx);
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.qa.ok) process.exitCode = 1;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+graphCmd
   .command("related <path>")
   .description("Get backlinks and outgoing links for a note")
   .option("--hops <number>", "Traversal depth", "1")
@@ -658,7 +716,7 @@ graphCmd
       if (Number.isNaN(hops) || hops < 1) {
         throw new Error("--hops must be a positive integer");
       }
-      const result = await graphRelatedCommand({ path, hops }, createCtx());
+      const result = await graphRelatedCommand({ path, hops }, await createScopedCtx());
       console.log(JSON.stringify(result, null, 2));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -677,7 +735,7 @@ graphCmd
       if (Number.isNaN(limit) || limit < 1) {
         throw new Error("--limit must be a positive integer");
       }
-      const grouped = await graphCrossProjectCommand({ query, limit }, createCtx());
+      const grouped = await graphCrossProjectCommand({ query, limit }, await createScopedCtx());
       for (const [project, results] of Object.entries(grouped)) {
         console.log(`\n${project} (${results.length} matches):`);
         for (const r of results) {
@@ -717,7 +775,7 @@ program
         mode: opts.mode as "dry-run" | "archive" | "delete",
         policy,
         all: opts.all,
-      }, createCtx());
+      }, await createScopedCtx());
       for (const r of results) {
         console.log(`\n=== ${r.project} ===`);
         console.log(`  Scanned: ${r.stats.sessions_scanned} sessions, ${r.stats.tasks_scanned} tasks`);
@@ -747,7 +805,7 @@ program
   .option("-p, --project <slug>", "Project slug")
   .action(async (opts: { project?: string }) => {
     try {
-      const result = await statsCommand({ project: opts.project }, createCtx());
+      const result = await statsCommand({ project: opts.project }, await createScopedCtx());
       console.log(`\n=== ${result.project} ===`);
       console.log(`  Sessions:    ${result.sessions}`);
       console.log(`  Tasks:       ${result.tasks.total} (backlog: ${result.tasks.backlog}, in-progress: ${result.tasks.inProgress}, done: ${result.tasks.done}, cancelled: ${result.tasks.cancelled})`);
@@ -769,7 +827,7 @@ program
   .option("-r, --reason <text>", "Reason for deprecation")
   .action(async (path: string, opts: { reason?: string }) => {
     try {
-      const result = await deprecateCommand({ path, reason: opts.reason }, createCtx());
+      const result = await deprecateCommand({ path, reason: opts.reason }, await createScopedCtx());
       console.log(`Deprecated: ${result.path} (status: ${result.status})`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -791,7 +849,7 @@ program
       if (Number.isNaN(limit) || limit < 1) {
         throw new Error("--limit must be a positive integer");
       }
-      const result = await resumeCommand({ project: opts.project, limit }, createCtx());
+      const result = await resumeCommand({ project: opts.project, limit }, await createScopedCtx());
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
@@ -815,7 +873,7 @@ skillCmd
   .option("--bridge", "Enable native skill bridge (replaces native skill files with superskill redirects)")
   .action(async (opts: { bridge?: boolean }) => {
     try {
-      const result = await initProject({ bridge: opts.bridge }, createCtx());
+      const result = await initProject({ bridge: opts.bridge }, await createScopedCtx());
       if (result.success) {
         console.log(`Initialized superskill graph:`);
         console.log(`  Stack: ${result.project_stack.join(", ") || "(none detected)"}`);
@@ -841,7 +899,7 @@ skillCmd
   .option("--skill-id <id>", "Load a specific skill by ID")
   .action(async (task: string | undefined, opts: { skillId?: string }) => {
     try {
-      const result = await activateSkills({ task, skill_id: opts.skillId }, createCtx());
+      const result = await activateSkills({ task, skill_id: opts.skillId }, await createScopedCtx());
       if (!result.success && result.error) {
         process.stderr.write(`Error: ${result.error}\n`);
         process.exit(1);
@@ -953,7 +1011,7 @@ skillCmd
   .description("Show knowledge graph status")
   .action(async () => {
     try {
-      const result = await statusCommand({}, createCtx());
+      const result = await statusCommand({}, await createScopedCtx());
       if (!result.initialized) {
         console.log("Superskill not initialized. Run: superskill skill init");
         return;
