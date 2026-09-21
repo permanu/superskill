@@ -35,9 +35,16 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm run build
-      - run: npm publish
+      - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          if npm view "superskill@${VER}" version >/dev/null 2>&1; then
+            echo "superskill@${VER} already published — skip"
+            exit 0
+          fi
+          npm publish
 
   github-release:
     needs: ci
@@ -81,6 +88,10 @@ jobs:
             echo "**Full Changelog:** https://github.com/permanu/superskill/compare/${PREV}...v${VERSION}"
           } > /tmp/release-body.md
 
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "GitHub release v${VERSION} already exists — skip"
+            exit 0
+          fi
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --notes-file /tmp/release-body.md
