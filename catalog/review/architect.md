@@ -38,13 +38,13 @@ Every ID fetch tenant-scoped. Authz on every mutating path. Default deny. No `ex
 No keys, tokens, or `.env` in git, vault, logs, or skill content. PII minimization, retention. Creds as `cred_refs` only.
 
 ### 8. Injection / parsers
-SQL/command/template/path. Bound parameters. Path jail (`VaultFS`). YAML/JSON from users: deny unknown where it matters.
+SQL/command/template/path. Bound parameters. Jail user paths. YAML/JSON from users: deny unknown where it matters.
 
 ### 9. API / contract
 Breaking change to CLI flags, MCP tool schemas, JSON fields, HTTP? Version or document. Status codes, pagination, idempotency keys.
 
 ### 10. Persistence / migrations
-Schema expand-then-contract. Backfill. Dual-write drift. Index vs markdown SoT (if they disagree, markdown wins — finding if code assumes the index is truth).
+Schema expand-then-contract. Backfill. Dual-write drift. If two stores can disagree, name which is source of truth.
 
 ### 11. Resource lifecycle
 Open files, DB handles, servers, timers, child processes. Close/abort on failure. No leaked goroutines / intervals.
@@ -68,7 +68,7 @@ Feature flag, config, rollback, migrate. Who gets paged? Fail closed on authz.
 Keyboard, labels, contrast, XSS in the new surface. Canvas/HTML: nodes must be clickable (`data-qa`), not canvas-only.
 
 ### 18. HLD / LLD
-Name the owner: vault, index, router, catalog, CLI. New pattern with one implementation is a finding. No second orchestrator.
+Name the owner module in this repo. New pattern with one implementation is a finding. No second framework “for later.”
 
 ## After
 If any axis cannot be honestly `n/a` and the human has not closed the branch: **stop and grill** (`pipeline/grill`). Do not invent the missing invariant.

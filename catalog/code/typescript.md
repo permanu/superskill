@@ -7,7 +7,7 @@ triggers: [typescript, javascript, ts, js, node, bun, type, generic, tsconfig]
 
 # TypeScript / Node (staff)
 
-Current TypeScript (strict, inference, `satisfies`) — not folklore "never use X" lists. This SuperSkill tree: ESM, Node 22+, `execFile` not `exec`.
+Current TypeScript (strict, inference, `satisfies`) — not folklore "never use X" lists. Match **this repo**: ESM vs CJS, Node vs Bun vs browser. `execFile` not `exec`.
 
 ## Defaults
 - `strict`. No `any`. `unknown` + narrow. Infer internals; annotate public API and `catch (e)`.
@@ -17,9 +17,9 @@ Current TypeScript (strict, inference, `satisfies`) — not folklore "never use 
 
 ## Edge cases
 - **Errors:** log unexpected codes (`EACCES`, `EISDIR`); do not swallow. Never `exec` with a shell.
-- **Races:** atomic write = tmpfile + rename (we already do this for `graph.json`).
+- **Races:** atomic write = tmpfile + rename (or DB transaction), not read-modify-write without a lock.
 - **ESM + extension:** import `./x.js` from `.ts` (Node16). Relative imports only inside the package.
-- **Trust:** validate at the MCP/CLI boundary. Vault paths only through `VaultFS`.
+- **Trust:** validate at the process boundary (HTTP, CLI, RPC). Never trust path/body from the client.
 - **Tests:** one check that fails if the new branch is wrong. Vitest, no fixture theater.
 
 ## When

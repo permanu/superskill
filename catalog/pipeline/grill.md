@@ -26,6 +26,6 @@ Systems prompts (pick the ones that are open):
 3. If this fails in prod, what is the **rollback**?
 4. Who is the **tenant / actor**, and what must they not see?
 5. What **feedback loop** does this create (more writes, more tokens, more pages)?
-6. Which existing SuperSkill piece owns this (vault / index / router / catalog)? If “new runtime”, why?
+6. Which existing module in **this repo** owns this? If the answer is “a new runtime / new app”, why?
 
 Write the answers into the vault (`decide` or `learn`) so the next agent is not grilled on the same branch.

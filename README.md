@@ -99,6 +99,8 @@ Then prompt normally and call the `superskill` tool with the task.
 | `SESSION_TTL_HOURS` | `2` | Session heartbeat TTL |
 | `CHROME_PATH` | macOS Chrome | Browser used by `qa viz` |
 
+npm publish is **manual** (`npm publish` on a maintainer machine). CI does not ship tokens.
+
 ## License
 
 AGPL-3.0-or-later — [LICENSE](./LICENSE)

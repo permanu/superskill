@@ -21,4 +21,4 @@ New behavior or a bug with a repro. Skip for a comment-only change.
 ## Hard gates
 - Do not write production code before a failing test exists for this slice.
 - Do not claim green without the command output.
-- SuperSkill verify (`pipeline/verify`) before commit.
+- Verify (`pipeline/verify`) before commit: evidence, not vibes.

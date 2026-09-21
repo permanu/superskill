@@ -23,29 +23,6 @@ jobs:
       - run: npm run build
       - run: npm run test:coverage
 
-  publish-npm:
-    needs: ci
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm run build
-      - name: Publish to npm
-        run: |
-          VER=$(node -p "require('./package.json').version")
-          if npm view "superskill@${VER}" version >/dev/null 2>&1; then
-            echo "superskill@${VER} already published — skip"
-            exit 0
-          fi
-          npm publish --access public
-
   github-release:
     needs: ci
     runs-on: ubuntu-latest

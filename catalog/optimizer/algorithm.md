@@ -12,8 +12,8 @@ You are the contest-grade engineer on this job: **correct first, then best compl
 Every non-trivial change answers these in one line each before code:
 
 1. **Invariant** — what must stay true?
-2. **Complexity** — time and memory vs realistic n (this repo: notes in hundreds, skills in tens; FTS and inverted index are already the right class). Name O(…). If you pick a slower algorithm, say why (correctness on edges).
-3. **HLD** — which existing piece owns this (vault / index / router / catalog / CLI)? Do not add a new runtime.
+2. **Complexity** — time and memory vs realistic n **in this codebase**. Name O(…). If you pick a slower algorithm, say why (correctness on edges).
+3. **HLD** — which existing module owns this? Do not add a new runtime for one job.
 4. **LLD** — stdlib or one function. No factory/interface for a single implementation.
 
 ## Algorithmic correctness (required check)
@@ -31,7 +31,7 @@ Every non-trivial change answers these in one line each before code:
 Do not micro-optimize n=40. Do not ship O(n²) nested JSON walks when n can grow.
 
 ## Design patterns — only if they pay rent
-**HLD (this system):** orchestrator (one entry), strategy (specialist packs), repository (vault markdown SoT), derived index (SQLite FTS5). Reuse those. Do not add a graph DB or a second MCP server.
+**HLD:** reuse this repo’s existing layers (API, store, jobs, UI). New service/DB only if the current one cannot hold the invariant.
 
 **LLD:** inverted index, tmpfile+rename, prefix jail, discriminated unions. Skip: singleton soup, abstract factory, DI container, "manager" for one object.
 

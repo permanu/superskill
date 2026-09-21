@@ -18,7 +18,7 @@ Drawn from how strong Rust code is actually written (ownership first, thiserror/
 ## Edge cases people miss
 - **Cancel safety (tokio):** do not `.await` while holding a `Mutex`. Prefer `tokio::sync` and short critical sections. `spawn_blocking` for CPU; async for IO.
 - **One runtime.** Do not mix `async-std` into a tokio crate.
-- **Lock + disk:** hold the lock across the full read-modify-write. Atomic write: write temp → `sync_all` → rename (same as our graph.json).
+- **Lock + disk:** hold the lock across the full read-modify-write. Atomic write: write temp → `sync_all` → rename.
 - **UTF-8:** truncate with `.chars()`, not bytes. PID reuse: store start time, not just pid.
 - **FFI / Tauri:** command bodies stay thin; domain in a lib crate so `cargo test` runs without the webview. `unsafe` is a tiny documented block.
 - **serde:** `deny_unknown_fields` on external input. Version file formats.
