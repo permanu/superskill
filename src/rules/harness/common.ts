@@ -102,6 +102,19 @@ export function skippedResult(tool: string): HarnessResult {
   return { ok: false, skipped: true, compiler: "skipped", output: `${tool} is not available` };
 }
 
+// Try the primary compiler, then the secondary; prefer the primary's failure
+// unless it was unavailable and the secondary actually ran.
+export async function fallbackResult(
+  primary: () => Promise<HarnessResult>,
+  secondary: () => Promise<HarnessResult>,
+): Promise<HarnessResult> {
+  const first = await primary();
+  if (first.ok) return first;
+  const second = await secondary();
+  if (second.ok) return second;
+  return first.skipped ? second : first;
+}
+
 export async function tryCandidates(
   compiler: string,
   candidates: string[],

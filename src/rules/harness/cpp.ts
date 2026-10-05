@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessResult } from "../types.js";
 import { splitPreamble } from "./c.js";
-import { probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from "./common.js";
+import { fallbackResult, probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from "./common.js";
 
 const TOOL = "clang++";
 
@@ -22,14 +22,22 @@ export function wrapCppMain(code: string): string {
   return `${preamble}\n${CPP_INCLUDES}\n\nint main() {\n${rest}\nreturn 0;\n}\n`;
 }
 
-export async function compileCpp(code: string): Promise<HarnessResult> {
-  const tool = await probeTool(TOOL, "clang++", ["--version"]);
+async function attemptCpp(cmd: string, code: string): Promise<HarnessResult> {
+  const tool = await probeTool(cmd, cmd, ["--version"]);
   if (!tool.available) return skippedResult(TOOL);
   return withTempDir("cpp", async (dir) => {
     const file = join(dir, "snippet.cpp");
     return tryCandidates(tool.compiler, [code, wrapCppMain(code)], async (candidate) => {
       await writeFile(file, `${candidate}\n`, "utf-8");
-      return runProcess("clang++", ["-fsyntax-only", "-std=c++23", file], { cwd: dir });
+      return runProcess(cmd, ["-fsyntax-only", "-std=c++23", file], { cwd: dir });
     });
   });
+}
+
+export async function compileCpp(code: string): Promise<HarnessResult> {
+  // clang with libstdc++ < 14 cannot see std::expected (concepts macro mismatch); g++ can.
+  return fallbackResult(
+    () => attemptCpp("clang++", code),
+    () => attemptCpp("g++", code),
+  );
 }

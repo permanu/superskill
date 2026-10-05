@@ -3,7 +3,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessResult } from "../types.js";
-import { probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from "./common.js";
+import { fallbackResult, probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from "./common.js";
 
 const TOOL = "clang";
 
@@ -34,14 +34,27 @@ export function wrapCMain(code: string): string {
   return `${preamble}\n${C_INCLUDES}\n\nint main(void) {\n${rest}\nreturn 0;\n}\n`;
 }
 
-export async function compileC(code: string): Promise<HarnessResult> {
-  const tool = await probeTool(TOOL, "clang", ["--version"]);
+// Strict -std=c* hides POSIX/BSD declarations in glibc (strtok_r, sigaction,
+// strerror_r, O_CLOEXEC, arc4random_buf); _DEFAULT_SOURCE exposes them while
+// keeping the XSI strerror_r variant.
+const FEATURE_MACROS = ["-D_DEFAULT_SOURCE"];
+
+async function attemptC(cmd: string, stdFlag: string, code: string): Promise<HarnessResult> {
+  const tool = await probeTool(cmd, cmd, ["--version"]);
   if (!tool.available) return skippedResult(TOOL);
   return withTempDir("c", async (dir) => {
     const file = join(dir, "snippet.c");
     return tryCandidates(tool.compiler, [code, wrapCMain(code)], async (candidate) => {
       await writeFile(file, `${candidate}\n`, "utf-8");
-      return runProcess("clang", ["-fsyntax-only", "-std=c23", file], { cwd: dir });
+      return runProcess(cmd, ["-fsyntax-only", stdFlag, ...FEATURE_MACROS, file], { cwd: dir });
     });
   });
+}
+
+export async function compileC(code: string): Promise<HarnessResult> {
+  // clang < 19 has no C23 `constexpr`; GCC 13+ provides it under -std=c2x.
+  return fallbackResult(
+    () => attemptC("clang", "-std=c23", code),
+    () => attemptC("gcc", "-std=c2x", code),
+  );
 }

@@ -8,6 +8,15 @@ import { probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from
 
 const TOOL = "javac";
 
+const JAVAC_FEATURE_RE = /javac\s+(\d+)/;
+
+export function compilerFeatureVersion(reported: string): string | null {
+  const match = reported.match(JAVAC_FEATURE_RE);
+  if (!match) return null;
+  const major = Number(match[1]);
+  return major >= 11 ? String(major) : null;
+}
+
 const TYPE_DECL_RE =
   /(?:^|\n)\s*(?:public\s+|final\s+|abstract\s+|sealed\s+|non-sealed\s+|strictfp\s+)*(?:@\s*interface|class|interface|enum|record)\s+\w+/;
 
@@ -126,6 +135,10 @@ export async function compileJava(code: string): Promise<HarnessResult> {
         const file = join(dir, target.file);
         await writeFile(file, `${candidateCode}\n`, "utf-8");
         const args = ["-d", dir];
+        // Preview APIs (FFM, unnamed variables) need --enable-preview plus a
+        // matching --release on every JDK; it is a no-op for final APIs.
+        const feature = compilerFeatureVersion(tool.compiler);
+        if (feature) args.push("--enable-preview", "--release", feature);
         if (classpath) args.push("-cp", classpath);
         args.push(file);
         return runProcess("javac", args, { cwd: dir });

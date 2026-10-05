@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { compileJava } from "./java.js";
+import { compileJava, compilerFeatureVersion } from "./java.js";
 
 describe("compileJava unit-level snippets", () => {
   it("compiles @interface declarations as-is", async () => {
@@ -54,6 +54,35 @@ public class StringJoinBenchmark {
       expect(result.output).toContain("missing-dependency");
       return;
     }
+    expect(result.ok, result.output).toBe(true);
+  }, 120_000);
+});
+
+describe("compilerFeatureVersion", () => {
+  it("parses the JDK feature version for preview and release flags", () => {
+    expect(compilerFeatureVersion("javac 21.0.12.1")).toBe("21");
+    expect(compilerFeatureVersion("javac 23")).toBe("23");
+    expect(compilerFeatureVersion("javac 1.8.0_401")).toBeNull();
+    expect(compilerFeatureVersion("unknown")).toBeNull();
+  });
+});
+
+describe("compileJava preview APIs", () => {
+  it("compiles FFM snippets via --enable-preview on the installed JDK", async () => {
+    const result = await compileJava(`import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+
+class ArenaDemo {
+    long size() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment segment = arena.allocate(64);
+            return segment.byteSize();
+        }
+    }
+}`);
+    if (result.skipped) return;
+    const feature = Number(compilerFeatureVersion(result.compiler) ?? "0");
+    if (!Number.isFinite(feature) || feature < 21) return;
     expect(result.ok, result.output).toBe(true);
   }, 120_000);
 });
