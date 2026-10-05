@@ -4,6 +4,7 @@ import { loadConfig, resolveProject } from "./config.js";
 import type { Config } from "./config.js";
 import { VaultFS } from "./lib/vault-fs.js";
 import { SessionRegistryManager } from "./lib/session-registry.js";
+import { detectProject } from "./lib/project-detector.js";
 import type { CommandContext, Logger } from "./core/types.js";
 
 let _config: Config | null = null;
@@ -63,6 +64,18 @@ export async function createScopedCtx(
   toolName?: string,
 ): Promise<CommandContext> {
   if (toolName && UNSCOPED_TOOLS.has(toolName)) {
+    return createCtx();
+  }
+  const hasExplicit = explicitSlug !== undefined && explicitSlug !== null && explicitSlug !== "";
+  if (!hasExplicit) {
+    let detected: string | null = null;
+    try {
+      detected = await detectProject(process.cwd(), getConfig().vaultPath);
+    } catch {
+      detected = null;
+    }
+    if (detected) return createCtx(detected);
+    if (toolName) return createCtx(null);
     return createCtx();
   }
   try {
