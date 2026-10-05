@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 import { createFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
 
 export interface CaptureItem {
@@ -50,9 +50,7 @@ export async function captureCommand(
   for (const item of args.items) {
     const dirName = typeDirMap[item.type] ?? item.type;
     const dirPath = `projects/${projectSlug}/${dirName}`;
-    const nextNum = await getNextNumber(vaultFs, dirPath);
     const slug = slugify(item.title);
-    const filePath = `${dirPath}/${String(nextNum).padStart(3, "0")}-${slug}.md`;
 
     const fmOverrides: Record<string, unknown> = {
       type: item.type,
@@ -70,9 +68,14 @@ export async function captureCommand(
 
     const fm = createFrontmatter(fmOverrides);
     const body = `# ${item.title}\n\n${item.content}`;
-    await vaultFs.write(filePath, serializeFrontmatter(fm, body));
+    const claim = await claimNumberedFile(
+      vaultFs,
+      dirPath,
+      (_number, padded) => `${padded}-${slug}.md`,
+      () => serializeFrontmatter(fm, body),
+    );
 
-    captured.push({ path: filePath, type: item.type, title: item.title });
+    captured.push({ path: claim.path, type: item.type, title: item.title });
   }
 
   return { captured };

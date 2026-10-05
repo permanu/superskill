@@ -4,6 +4,7 @@ import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js
 import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";
 import { removeTomlBlock } from "./toml-config.js";
 import { removeMarkdownInstruction, removeMdcInstruction } from "./instructions.js";
+import { removeSlashCommands } from "./commands.js";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClient } from "./detect.js";
 
@@ -76,6 +77,16 @@ export function teardownClient(
         unlinkSync(instructionPath);
       }
       result.instructionRemoved = true;
+    }
+
+    // 3. Remove host-native slash commands
+    if (config.commandPaths) {
+      if (options.dryRun) {
+        result.slashCommandsRemoved = ["(dry-run)"];
+      } else {
+        const slash = removeSlashCommands(config);
+        if (slash.removed.length > 0) result.slashCommandsRemoved = slash.removed;
+      }
     }
   } catch (e: unknown) {
     result.error = (e as Error).message;

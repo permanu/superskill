@@ -17,7 +17,7 @@ const PATTERNS: Array<{ type: string; pattern: RegExp }> = [
   { type: "supabase-key", pattern: /(?:eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})/ },
   { type: "slack-token", pattern: /xox[baprs]-[a-zA-Z0-9-]{10,}/ },
   { type: "stripe-key", pattern: /(?:sk|pk)_(?:test|live)_[a-zA-Z0-9]{20,}/ },
-  { type: "heroku-api-key", pattern: /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ },
+  { type: "heroku-api-key", pattern: /heroku[^\n]{0,40}?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i },
   { type: "encryption-key", pattern: /(?:encryption[_-]?key|enc[_-]?key)\s*[=:]\s*["']?[a-zA-Z0-9+/=]{16,}["']?/i },
 ];
 

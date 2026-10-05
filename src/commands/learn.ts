@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 
 export type Confidence = "high" | "medium" | "low";
 
@@ -49,12 +49,7 @@ export async function learnCommand(
         throw new Error(`Invalid confidence "${confidence}". Must be one of: ${VALID_CONFIDENCE.join(", ")}`);
       }
 
-      const nextNum = await getNextNumber(vaultFs, learningsDir);
-      const padded = String(nextNum).padStart(3, "0");
       const titleSlug = slugify(args.title);
-      const filename = `${padded}-${titleSlug}.md`;
-      const filePath = `${learningsDir}/${filename}`;
-      const learningId = padded;
 
       const fm = createFrontmatter({
         type: "learning",
@@ -67,9 +62,14 @@ export async function learnCommand(
       });
 
       const body = `\n# ${args.title}\n\n${args.discovery}\n`;
-      await vaultFs.write(filePath, serializeFrontmatter(fm, body));
+      const claim = await claimNumberedFile(
+        vaultFs,
+        learningsDir,
+        (_number, padded) => `${padded}-${titleSlug}.md`,
+        () => serializeFrontmatter(fm, body),
+      );
 
-      return { learning_id: learningId, path: filePath };
+      return { learning_id: String(claim.number).padStart(3, "0"), path: claim.path };
     }
 
     case "list": {

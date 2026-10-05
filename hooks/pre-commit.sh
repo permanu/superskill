@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # SuperSkill pre-commit hint.
 #
-# Runs `superskill-cli gate check --ci` when the CLI and the gate command are both
-# available. Optional and non-breaking: when either is missing the hook exits 0 with
-# a hint, so commits are never blocked by a missing tool.
+# Runs `superskill-cli gate check --ci "$SUPERSKILL_GATE_TARGET"` when the
+# target is set and the CLI and gate command are both available. Without a
+# target the hook exits 0 silently. Optional and non-breaking: a missing
+# target, CLI, or gate command never blocks a commit; an explicit gate
+# failure exits non-zero so the commit is blocked by the gate itself.
 #
 # Install (optional, from the repository root):
 #   ln -sf ../../hooks/pre-commit.sh .git/hooks/pre-commit
@@ -12,12 +14,17 @@
 # symlink. Set SUPERSKILL_GATE=off to keep the hook installed but skip the check.
 #
 # Environment:
-#   SUPERSKILL_CLI   CLI command to invoke (default: superskill-cli)
-#   SUPERSKILL_GATE  set to "off" to skip the gate check
+#   SUPERSKILL_GATE_TARGET  spec or ticket ref to gate (unset = skip silently)
+#   SUPERSKILL_CLI          CLI command to invoke (default: superskill-cli)
+#   SUPERSKILL_GATE         set to "off" to skip the gate check
 
 set -u
 
 if [[ "${SUPERSKILL_GATE:-on}" == "off" ]]; then
+  exit 0
+fi
+
+if [[ -z "${SUPERSKILL_GATE_TARGET:-}" ]]; then
   exit 0
 fi
 
@@ -33,4 +40,4 @@ if ! "$CLI" --help 2>&1 | grep -q "gate"; then
   exit 0
 fi
 
-exec "$CLI" gate check --ci
+exec "$CLI" gate check --ci "$SUPERSKILL_GATE_TARGET"

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, open } from "fs/promises";
+import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, readdir, stat, open } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { SessionRegistryManager } from "./session-registry.js";
@@ -213,6 +213,16 @@ describe("SessionRegistryManager", () => {
       const { session_id } = await manager.register("claude-code", "proj");
       expect(session_id).toBeDefined();
     });
+
+    it("allows sequential acquisitions and releases the lock", async () => {
+      const first = await manager.register("claude-code", "proj");
+      const second = await manager.register("opencode", "proj");
+      expect(first.session_id).toBeDefined();
+      expect(second.session_id).toBeDefined();
+
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      await expect(stat(lockPath)).rejects.toThrow();
+    });
   });
 
   describe("readRegistry validation", () => {
@@ -256,6 +266,27 @@ describe("SessionRegistryManager", () => {
       
       const active = await manager.listActive();
       expect(active).toEqual([]);
+    });
+
+    it("preserves a corrupt registry and starts fresh", async () => {
+      const coordinationDir = join(vaultRoot, "coordination");
+      const registryPath = join(coordinationDir, "session-registry.json");
+      await mkdir(coordinationDir, { recursive: true });
+      await fspWriteFile(registryPath, "{ this is not json");
+
+      const active = await manager.listActive();
+      expect(active).toEqual([]);
+
+      const entries = await readdir(coordinationDir);
+      const quarantined = entries.filter((name) => name.startsWith("session-registry.json.corrupt-"));
+      expect(quarantined).toHaveLength(1);
+      expect(await fspReadFile(join(coordinationDir, quarantined[0]), "utf-8")).toBe("{ this is not json");
+
+      const result = await manager.register("claude-code", "proj");
+      expect(result.session_id).toBeDefined();
+
+      const parsed = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+      expect(parsed.sessions).toHaveLength(1);
     });
   });
 });

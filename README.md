@@ -1,6 +1,6 @@
 # SuperSkill
 
-One-entry orchestrator for coding agents: deterministic rule planning, evidence gates, a project-jailed vault, and a local knowledge graph. Curated packs — not a dump of 90k remote skills.
+One-entry orchestrator for coding agents: deterministic rule planning, evidence gates, a project-jailed vault, a local knowledge graph, and safe cache sharing across agent worktrees. Curated packs — not a dump of 90k remote skills.
 
 [![npm](https://img.shields.io/npm/v/superskill)](https://www.npmjs.com/package/superskill)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
@@ -9,7 +9,7 @@ Prompt normally. Call **`superskill`** with the task. It diagnoses, then loads a
 
 Everything is local-first: the vault is markdown under `projects/<slug>/`, the search index is derived SQLite, and vault IO is jailed to the current project.
 
-Requires **Node 22+** (`node:sqlite`).
+Requires **Node 22.13+** (`node:sqlite`).
 
 ## Why
 
@@ -24,7 +24,7 @@ SuperSkill injects a system brief from the project graph, jails vault IO to `pro
 ## Quick start
 
 ```bash
-npm install -g superskill          # Node 22+
+npm install -g superskill          # Node 22.13+
 
 # in your repo
 superskill-cli skill init          # detect stack, index the in-repo catalog, build .superskill/graph.json
@@ -32,8 +32,8 @@ superskill-cli setup               # register MCP + instructions in every detect
 ```
 
 1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
-2. `setup` finds installed clients and writes the MCP entry (plus an instruction file where the client supports one) for each. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
-3. Describe the task. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff tasks (and security bugs) also get the vault brief plus a caller protocol.
+2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/superskill`) for each host that supports them. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
+3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
 4. Activations write `.superskill/graph.json` (local only).
 
 Want a vault context document too? `superskill-cli init .` prints a draft `context.md`; review it, then save it with `superskill-cli write`.
@@ -162,6 +162,216 @@ Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS
 
 skills.sh remains **opt-in install** (`skill install`), not the default catalog.
 
+## Worktree caches
+
+An agent that spawns a git worktree per subagent pays twice: once when the first build starts from cold, and again when `target/`, `node_modules/`, `.venv/`, or `DerivedData/` are duplicated into every worktree. SuperSkill shares the inputs that are safe to share (package stores, compiler caches, module caches), isolates the state that must stay per worktree (build dirs, venvs, DerivedData), and makes a fresh worktree cheap by seeding it with copy-on-write copies instead of a cold build.
+
+### Agent-first usage
+
+No CLI is needed. Activate once per repo — the agent can do it via the MCP tool `worktree_activate` — and after that:
+
+1. Every `git worktree add` fires a guarded `post-checkout` hook that seeds cheap caches (reflink copy where the filesystem supports it) and always exits 0; it never blocks or changes the checkout.
+2. Host session hooks inject the shared-cache environment (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, GrokBuild, plus a generic `AGENTS.md` fallback) when a session starts in a worktree.
+
+MCP tools: `worktree_status`, `worktree_audit`, `worktree_env`, `worktree_activate`, `worktree_apply`, `worktree_gc`, `worktree_uninstall`. They mirror the CLI below one-for-one, with two exceptions: there is no `worktree bootstrap` MCP tool, and the MCP `worktree_gc` has no `--verbose` (per-path skip reasons stay CLI-only). An agent can still audit, apply, and collect caches without shelling out.
+
+### What superskill will never do
+
+- Never remove, prune, or move worktrees.
+- Never run `git clean`, `git reset`, or `git checkout -f`.
+- Never delete dirty, untracked, or ignored user files; never touch stashes, unpushed commits, submodules, or in-progress operations (merge / rebase / cherry-pick / revert / bisect).
+- GC touches only the platform cache root, and only by moving directories into `_quarantine/` (reversible with `--undo`). Permanent deletion happens only on `gc --purge --yes`, and only inside `_quarantine/`.
+- Worktree-local caches (`node_modules/`, `target/`, `DerivedData/`, …) are reclaimed only with explicit consent plus a seeded-file manifest audit; reclaims are renamed into `.git/superskill/quarantine/<id>` and can be restored.
+- When state is unknown, keep it: skipping is always safer than deleting.
+
+### How it works
+
+- **Policy** — `.git/superskill/policy.json` (the repo's common git dir, so all worktrees share it). Records repo id, stacks, toolchain env flags, host list, and activation flags (`hooks`, `seed`, `install`). `hook.state`, `journal.jsonl`, and per-worktree manifests live beside it.
+- **Cache payload** — `~/Library/Caches/superskill/<repoHash>` on macOS, `~/.cache/superskill/<repoHash>` (or `$XDG_CACHE_HOME`) on Linux, `%LOCALAPPDATA%\superskill\<repoHash>` on Windows; override the root with `SUPERSKILL_CACHE_ROOT`. Only shared caches live here — per-worktree build state stays in the worktree.
+- **post-checkout flow** — `worktree activate` installs a guarded block into `.git/hooks/post-checkout` (or the configured `core.hooksPath`, husky, or `.lefthook-local.yml`). On a worktree-creating checkout it runs `superskill-cli worktree bootstrap --source worktree-create` in the background: seed cheap caches from the main worktree via reflink and record a manifest. The block always exits 0 and never changes the hook's exit status.
+- **env injection flow** — host session hooks run `worktree bootstrap --source session`; the OpenCode plugin runs `worktree env --json` and merges the result into every shell. The resolved values are read-only cache locations plus per-worktree build-dir overrides; injection never edits the repo's own files.
+
+### CLI reference
+
+Every subcommand supports `--help`, e.g. `superskill-cli worktree gc --help`.
+
+| Command | Purpose |
+|---|---|
+| `worktree status` | One-screen health: worktrees, safe/unsafe verdicts, cache size, policy + hook state, budget |
+| `worktree audit` | Per-worktree safety verdict, cache duplication, manifest drift, repo items |
+| `worktree env` | Print the shared-cache environment for this worktree |
+| `worktree activate` | Write policy, install the post-checkout hook and host session adapters |
+| `worktree apply` | Apply audit items (policy, hook, seed, prune); dry-run unless `--yes` |
+| `worktree gc` | Cache GC: report, quarantine (`--apply`), purge (`--purge --yes`), undo |
+| `worktree uninstall` | Remove hooks/adapters; keep policy, caches, and quarantine |
+| `worktree bootstrap` | Hook-internal cache seed / env bootstrap (not usually run by hand) |
+
+**Default is a dry-run report; nothing is deleted.** `gc` and `apply` plan first; `gc --apply` only quarantines (reversible); only `gc --purge --yes` permanently deletes, and only inside `_quarantine/`.
+
+#### `worktree status`
+
+Read-only. Options: `--json`; `--budget <size>` (e.g. `2G`, `500M`; notes when cache bytes exceed it).
+
+```bash
+superskill-cli worktree status
+superskill-cli worktree status --budget 5G --json
+```
+
+#### `worktree audit`
+
+Read-only. Options: `--json`; `--sizes` (du every cache dir); `--worktree <name>` (audit one worktree by path or name).
+
+```bash
+superskill-cli worktree audit --sizes
+superskill-cli worktree audit --worktree feat-login --json
+```
+
+#### `worktree env`
+
+Read-only. Options: `--json`; `--eval` (shell `export` lines, the form hooks use); `--shell <sh|fish|powershell>`; `--providers <ids...>` (restrict to detected toolchains such as `rust`, `go`, `node`, `python`, `swift`).
+
+```bash
+eval "$(superskill-cli worktree env --eval)"
+superskill-cli worktree env --json
+superskill-cli worktree env --providers rust node
+```
+
+#### `worktree activate`
+
+Options: `--yes` (non-interactive consent); `--dry-run`; `--no-hooks`; `--no-seed`; `--hosts <ids...>` (`claude-code`, `opencode`, `codex`, `cursor`, `gemini`, `grokbuild`, `generic`); `--install`; `--json`. Detected hosts are used when `--hosts` is omitted.
+
+```bash
+superskill-cli worktree activate --dry-run
+superskill-cli worktree activate --hosts claude-code,opencode
+```
+
+#### `worktree gc`
+
+Options:
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--all` | All repos in the cache root, not just this one | off |
+| `--worktree <name>` | Resolve the repo from this worktree path or name | `$PWD` |
+| `--project <name\|path>` | Scope to a vault-mapped project slug | off |
+| `--tool <ids...>` | Only these tools (`rust`, `go`, `node`, `python`, `cpp`, `ruby`) | all |
+| `--older-than <dur>` / `--min-age <dur>` | Minimum age (`30d`, `12h`, `2w`) | auto tier needs `30d` |
+| `--newer-than <dur>` | Maximum age | off |
+| `--min-size <size>` / `--max-size <size>` | Size gate (`500M`, `1G`, or bare bytes) | off |
+| `--tier <auto\|consent\|both>` | Candidate tier | `both` |
+| `--keep-latest <n>` | Keep the n most recent dirs per tool | off |
+| `--include <glob...>` / `--exclude <glob...>` | Path globs relative to `<repoHash>/` | off |
+| `--apply` | Quarantine selected dirs (reversible) | off (dry-run report) |
+| `--purge`, `--yes` | Delete quarantine entries older than 14 days; `--yes` required | plan only |
+| `--undo <journalId>` | Restore a quarantine journal | — |
+| `--json`, `--verbose` | Machine-readable output / per-path skip reasons (CLI only) | off |
+
+Tiering: `auto` (compiler/build caches such as `go-build`, `sccache`, `pnpm-store`, `uv`) is selected only when at least 30 days old unless you pass an explicit age or tier; `consent` (e.g. `cargo-build`, `node-modules`) requires `--tier consent` or an explicit age filter. Tool-native prunes (`go clean -cache`, `pnpm store prune`, `uv cache prune --ci`, …) are printed as informational commands — run them through the tool when you want them.
+
+```bash
+superskill-cli worktree gc                           # report for this repo (dry run)
+superskill-cli worktree gc --older-than 30d --apply  # quarantine (reversible)
+superskill-cli worktree gc --all --tool node,rust --min-size 1G --json
+superskill-cli worktree gc --purge --yes             # delete quarantined dirs >= 14d old
+superskill-cli worktree gc --undo 2026-10-05T12-00-00.000Z
+```
+
+Default is a dry-run report; nothing is deleted. `--apply` moves candidates into `_quarantine/` (reversible with `--undo`); only `--purge --yes` deletes, and only inside `_quarantine/`.
+
+#### `worktree apply`
+
+Options: `--item <ids...>` (audit ids such as `policy`, `hook`, `env`, `seed:<provider>:<relative>`, `prune:<tool>`, `reclaim:<provider>:<dir-id>`); `--all-safe`; `--yes`; `--undo <journalId>`; `--json`.
+
+```bash
+superskill-cli worktree apply --all-safe
+superskill-cli worktree apply --item seed --yes
+superskill-cli worktree apply --undo 2026-10-05T14-22-01.000Z-a1b2c3d4 --yes
+```
+
+Default is a dry-run report; nothing is deleted. `reclaim:<provider>:<dir-id>` items rename a worktree-local cache directory (`node_modules/`, `target/`, `DerivedData/`, …) into `.git/superskill/quarantine/<id>` (never a copy+delete); restore it with `worktree apply --undo <id>`. `--all-safe` skips consent items; name a consent item explicitly with `--item <id> --yes` to apply it. Reclaims and other mutations require `--yes` on the CLI or `confirm: true` on the MCP `worktree_apply` tool.
+
+#### `worktree bootstrap`
+
+Options: `--source <worktree-create|session>`; `--claude-env` (append exports to `$CLAUDE_ENV_FILE`); `--json`. Normally invoked by hooks and adapters; safe to run by hand to re-seed. Skips the main worktree, honors `SUPERSKILL_WORKTREE_BOOTSTRAP=0`, and requires an activated repo.
+
+```bash
+superskill-cli worktree bootstrap --source worktree-create
+```
+
+#### `worktree uninstall`
+
+Options: `--purge-local` (quarantine this repo's cache namespace; needs `--yes`); `--yes`; `--json`.
+
+```bash
+superskill-cli worktree uninstall
+superskill-cli worktree uninstall --purge-local --yes
+```
+
+Plain uninstall removes the post-checkout hook and host adapters and stops future seeding/env injection; it keeps the policy and touches no cache data. `--purge-local --yes` only moves this repo's cache namespace into quarantine (reversible with `worktree gc --undo <journalId>`); without `--yes` it is skipped.
+
+### Filter cookbook
+
+```bash
+# This repo only (the default)
+superskill-cli worktree gc
+
+# A vault-mapped project by slug
+superskill-cli worktree gc --project my-app
+
+# Every repo in the cache root, keeping the newest dir per tool
+superskill-cli worktree gc --all --keep-latest 1
+
+# One tool, old entries only
+superskill-cli worktree gc --tool rust --older-than 60d
+
+# Age window
+superskill-cli worktree gc --older-than 14d --newer-than 90d
+
+# Size gate
+superskill-cli worktree gc --all --min-size 500M
+
+# Interactive TTY: read the report, then apply the same filters
+superskill-cli worktree gc --all
+superskill-cli worktree gc --all --older-than 30d --apply
+
+# JSON for scripts
+superskill-cli worktree gc --all --json | jq '.plan.selected[] | { path, bytes }'
+
+# Undo a quarantine
+superskill-cli worktree gc --undo <journalId>
+```
+
+### Host support matrix
+
+| Host | Hook surface | What superskill writes | Notes |
+|---|---|---|---|
+| Claude Code | `SessionStart` hook | `.claude/settings.local.json` | runs `worktree bootstrap --source session --claude-env`, appending exports to `$CLAUDE_ENV_FILE` |
+| OpenCode | `shell.env` plugin | `.opencode/plugins/superskill-worktree.js` | runs `worktree env --json` and merges the env into every shell |
+| Codex CLI | `SessionStart` hook | `.codex/hooks.json` | env injected when the session starts |
+| Cursor | `sessionStart` hook | `.cursor/hooks.json` | notes when a Claude Code bootstrap hook is already present (auto-import) |
+| Gemini CLI | `SessionStart` hook | `.gemini/settings.json` | env injected when the session starts |
+| GrokBuild | `SessionStart` hook | `.grokbuild/hooks.json` | hook surface unverified; relies on the MCP tools + git post-checkout hook |
+| Generic | managed block in `AGENTS.md` | `AGENTS.md` (marker-delimited) | fallback when no host is detected; tells agents to run `worktree env --eval` |
+| Git (universal) | `post-checkout` hook | `.git/hooks/post-checkout` or `core.hooksPath` | seeds caches after `git worktree add`; guarded and always exits 0 |
+
+### Troubleshooting
+
+- **First look** — `superskill-cli worktree status` shows repo id, worktrees with safe/unsafe reasons, cache size, policy/hook state, and hosts. Add `--budget 5G` to flag over-budget cache usage.
+- **Drill down** — `superskill-cli worktree audit --sizes` shows every cache dir (local vs shared), plus seeded-manifest drift (`modified` / `missing`) for each worktree. Manifest drift is reported, never auto-fixed.
+- **Per-path skip reasons** — `superskill-cli worktree gc --verbose` explains why each candidate was not selected.
+- **Health check** — `superskill-cli doctor` includes worktree checks (policy active, guarded hook installed) alongside install, MCP wiring, vault, catalog, and toolchains; run it when worktree commands are missing after an upgrade.
+- **Hook did not fire** — husky and lefthook are supported; a `.pre-commit-config.yaml` repo needs the post-checkout command added manually (the config is never rewritten). Re-run `worktree activate` after changing hook managers.
+- **Where state lives** — policy, `hook.state`, `journal.jsonl`, and manifests under `.git/superskill/`; caches under the platform cache root (`SUPERSKILL_CACHE_ROOT` to move it); quarantined dirs under `<cacheRoot>/_quarantine/`.
+- **Opt out** — `SUPERSKILL_WORKTREE_BOOTSTRAP=0` disables post-checkout seeding for one process; `superskill-cli worktree uninstall` removes hooks and adapters entirely.
+
+### Uninstall
+
+```bash
+superskill-cli worktree uninstall
+```
+
+This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill-cli worktree uninstall --purge-local --yes` and undo with `superskill-cli worktree gc --undo <journalId>`.
+
 ## CLI reference
 
 All commands work as `superskill-cli <command>`. Many commands accept `-p, --project <slug>`; the project is auto-detected from the current directory when omitted.
@@ -263,7 +473,7 @@ Set `SUPERSKILL_TELEMETRY=1` (or `0`) to override the persisted setting for one 
 
 ## MCP tools
 
-The MCP server exposes the tools below. The CLI covers the same surface plus `setup`/`teardown`; tool names use underscores.
+The MCP server exposes the tools below — the superset of the CLI surface. MCP tool names use underscores; the CLI adds `setup`/`teardown` but lacks `link`, `extract`, `capture`, `template`, `snapshot_repo_state`, `env_facts`, `cred_refs`, and `rollback`.
 
 | Tool | What it does |
 |---|---|
@@ -309,6 +519,13 @@ The MCP server exposes the tools below. The CLI covers the same surface plus `se
 | `gate` | Deterministic evidence gate for a spec or ticket. |
 | `impact` | Code-graph impact: definitions, importers, callers, shortest path. |
 | `claims` | Verify structured claims against a code-graph scan. |
+| `worktree_status` | Worktree health: repo id, worktrees, safe/unsafe verdicts, cache size, policy/hook state. Params: `json`, `budget`. |
+| `worktree_audit` | Per-worktree safety verdict, cache duplication, manifest drift, repo items. Params: `json`, `sizes`, `worktree`. |
+| `worktree_env` | Resolve the shared-cache environment for the current worktree. Params: `json`, `shell`, `providers`. |
+| `worktree_activate` | Write the per-repo policy and install the guarded post-checkout hook + host session adapters. Preview with `confirm: false`; params `confirm`, `hooks`, `hosts`, `seed`, `install`, `dry_run`. |
+| `worktree_apply` | Apply audit items (policy, hook, seed, prune); plan unless `confirm: true`. Params: `item`, `all_safe`, `confirm`. |
+| `worktree_gc` | Cache GC: dry-run report by default; quarantine/purge/undo with `confirm: true`. Params: `tool`, `older_than`, `newer_than`, `min_size`, `max_size`, `tier`, `include`, `exclude`, `keep_latest`, `project`, `all`, `worktree`, `purge`, `undo`, `confirm`. |
+| `worktree_uninstall` | Remove hooks/adapters; policy, caches, and quarantine stay unless `purge_local` + `confirm: true`. |
 
 ## Workflows
 
@@ -418,7 +635,7 @@ Verification should only trust EXTRACTED edges — they are exactly what the AST
 Both hooks are optional and non-breaking: a missing constitution, CLI, or gate command never blocks a session or commit.
 
 - **Session start** — `hooks/session-start.sh` reads `catalog/constitution.md` and emits it as session context. `hooks/session-start.sh --claude-code` prints the Claude Code SessionStart JSON; copy `hooks/claude-settings.example.json` into `.claude/settings.json` to wire it up. Other harnesses can run the script and inject stdout.
-- **Pre-commit** — `hooks/pre-commit.sh` runs the gate check when the CLI and `gate` command exist; otherwise it prints a hint and exits 0. `git commit --no-verify` bypasses it once, `SUPERSKILL_GATE=off` keeps it installed but skips the check, and `SUPERSKILL_CLI` overrides the CLI command.
+- **Pre-commit** — `hooks/pre-commit.sh` runs `gate check --ci "$SUPERSKILL_GATE_TARGET"` only when `SUPERSKILL_GATE_TARGET` is set and both the CLI and `gate` command exist; without a target it exits 0 silently. `git commit --no-verify` bypasses it once, `SUPERSKILL_GATE=off` keeps it installed but skips the check, and `SUPERSKILL_CLI` overrides the CLI command.
 - **CI** — `.github/workflows/ci.yml` runs a fast schema-only `validate --no-compile`, then a per-language toolchain matrix (`validate --lang <lang> --strict`) that compiles every Bad/Good snippet with the real compiler. `--strict` fails a job instead of silently skipping when a toolchain is missing.
 
 Details and installation snippets: `docs/harness.md`.
@@ -432,6 +649,8 @@ Details and installation snippets: `docs/harness.md`.
 | `SESSION_TTL_HOURS` | `2` | Session heartbeat TTL (clamped 1–168). |
 | `CHROME_PATH` | macOS Chrome | Browser used by `qa viz`; Chromium/Brave paths are also probed. |
 | `SUPERSKILL_TELEMETRY` | unset | `1`/`0` override for local rule-selection telemetry (also `telemetry enable`). |
+| `SUPERSKILL_CACHE_ROOT` | platform cache dir | Root for shared worktree caches (default `~/Library/Caches/superskill` on macOS, `~/.cache/superskill` on Linux, `%LOCALAPPDATA%\superskill` on Windows). |
+| `SUPERSKILL_WORKTREE_BOOTSTRAP` | unset | `0` makes `worktree bootstrap` a no-op, disabling post-checkout seeding for that process. |
 | `SUPERSKILL_RUST_HARNESS_DIR` | `~/.superskill/cache/rust-harness` | Warm cargo fixture used by the rules compile harness. |
 | `SUPERSKILL_JAVA_JAR_CACHE` | `~/.superskill/cache/jars` | JUnit/JMH jars used by the Java compile harness. |
 

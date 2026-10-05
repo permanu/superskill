@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 try {
   const { detectClients } = await import("./detect.js");
+  const { CLIENT_REGISTRY } = await import("./clients.js");
 
   if (!process.stdout.isTTY) process.exit(0);
 
@@ -16,7 +17,7 @@ try {
     console.log("  No AI clients detected.");
   }
 
-  console.log('  Run "superskill-cli setup --all" to configure all 8 supported clients.\n');
+  console.log(`  Run "superskill-cli setup --all" to configure all ${CLIENT_REGISTRY.length} supported clients.\n`);
 } catch {
   // Postinstall must never fail the install
   process.exit(0);

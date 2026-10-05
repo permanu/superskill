@@ -76,6 +76,32 @@ describe("evidence storage", () => {
     expect(await readEvidence(vaultFs, "p", "ticket-999")).toEqual([]);
   });
 
+  it("preserves both records when appending twice", async () => {
+    const { vaultFs, cleanup: clean } = await createTestVault();
+    cleanup = clean;
+
+    await appendEvidence(vaultFs, "p", record({ ticket: "ticket-777", command: "first" }));
+    await appendEvidence(vaultFs, "p", record({ ticket: "ticket-777", command: "second" }));
+
+    const records = await readEvidence(vaultFs, "p", "ticket-777");
+    expect(records.map((r) => r.command)).toEqual(["first", "second"]);
+
+    const raw = await vaultFs.read(evidencePath("p", "ticket-777"));
+    expect(raw.split("\n").filter(Boolean)).toHaveLength(2);
+  });
+
+  it("adds a separator when the existing file has no trailing newline", async () => {
+    const { vaultFs, cleanup: clean } = await createTestVault();
+    cleanup = clean;
+
+    const path = evidencePath("p", "ticket-778");
+    await vaultFs.write(path, JSON.stringify(record({ ticket: "ticket-778", command: "first" })));
+    await appendEvidence(vaultFs, "p", record({ ticket: "ticket-778", command: "second" }));
+
+    const records = await readEvidence(vaultFs, "p", "ticket-778");
+    expect(records.map((r) => r.command)).toEqual(["first", "second"]);
+  });
+
   it("skips malformed lines", async () => {
     const { vaultFs, cleanup: clean } = await createTestVault();
     cleanup = clean;

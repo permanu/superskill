@@ -18,6 +18,8 @@ import { readJsonConfig } from "../setup/json-config.js";
 import type { DetectedClient } from "../setup/types.js";
 import { isTelemetryEnabled, telemetryPaths } from "../telemetry/recorder.js";
 import { readTelemetryEvents } from "../telemetry/report.js";
+import { isHookInstalled } from "../lib/worktree/hooks.js";
+import { readPolicy } from "../lib/worktree/state.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -146,6 +148,57 @@ const TOOLCHAIN_PROBES: ReadonlyArray<{ lang: string; cmd: string; args: string[
 ];
 
 /**
+ * Worktree-cache checks: shared policy, guarded post-checkout hook, and the
+ * report-only default of `worktree gc`. Best-effort — a repo that never ran
+ * activation simply gets the hint.
+ */
+export async function worktreeDoctorChecks(cwd: string): Promise<DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+
+  const policy = await readPolicy(cwd);
+  checks.push(
+    policy !== null
+      ? check("worktree-policy", "Worktree policy", "ok", `active (repo ${policy.repoId})`)
+      : check(
+          "worktree-policy",
+          "Worktree policy",
+          "warn",
+          "no shared worktree-cache policy in this repo",
+          "run the `worktree_activate` MCP tool (or `superskill-cli worktree activate`); nothing is deleted"
+        )
+  );
+
+  let hookInstalled = false;
+  try {
+    hookInstalled = await isHookInstalled(cwd);
+  } catch (e) {
+    console.error(`[doctor] worktree hook probe failed: ${(e as Error).message}`);
+  }
+  checks.push(
+    hookInstalled
+      ? check("worktree-hook", "Worktree hook", "ok", "guarded post-checkout bootstrap hook installed")
+      : check(
+          "worktree-hook",
+          "Worktree hook",
+          "warn",
+          "post-checkout bootstrap hook not installed",
+          "`worktree_activate` installs it; existing hooks are preserved and nothing is deleted"
+        )
+  );
+
+  checks.push(
+    check(
+      "worktree-caches",
+      "Worktree caches",
+      "ok",
+      "shared per-repo cache; `worktree gc` is report-only by default (deletion requires explicit flags)"
+    )
+  );
+
+  return checks;
+}
+
+/**
  * One-shot health check across every layer: runtime, install vs running MCP
  * servers, vault + mapping, project graph isolation (must stay gitignored and
  * project-local), rules catalog, compile toolchains, telemetry, MCP clients.
@@ -158,11 +211,20 @@ export async function doctorCommand(
   const checks: DoctorCheck[] = [];
   const version = packageVersion();
 
-  const major = Number.parseInt(process.versions.node, 10);
+  const [nodeMajor = 0, nodeMinor = 0] = process.versions.node
+    .split(".")
+    .map((part) => Number.parseInt(part, 10));
+  const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13);
   checks.push(
-    major >= 22
+    nodeOk
       ? check("node", "Node runtime", "ok", `v${process.versions.node}`)
-      : check("node", "Node runtime", "fail", `v${process.versions.node}`, "superskill requires Node >= 22")
+      : check(
+          "node",
+          "Node runtime",
+          "fail",
+          `v${process.versions.node} (requires >= 22.13)`,
+          "superskill needs Node >= 22.13 for `node:sqlite`; upgrade Node"
+        )
   );
 
   const root = packageRoot();
@@ -334,6 +396,8 @@ export async function doctorCommand(
         : check("clients", "MCP clients", "warn", `0/${clients.length} detected client(s) configured`, "run `superskill-cli setup --dry-run` then `setup`")
     );
   }
+
+  checks.push(...(await worktreeDoctorChecks(process.cwd())));
 
   const summary = summarizeChecks(checks);
   return { version, healthy: summary.fail === 0, summary, checks };

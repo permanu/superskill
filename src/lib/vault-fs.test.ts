@@ -242,6 +242,84 @@ describe("VaultFS", () => {
       
       await rm(outsideDir, { recursive: true, force: true });
     });
+
+    it("denies writing a new file through a symlinked directory", async () => {
+      const outsideDir = join(homedir(), `.outside-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(outsideDir, { recursive: true });
+      await symlink(outsideDir, join(vaultRoot, "linkdir"));
+
+      try {
+        await expect(vaultFs.write("linkdir/escaped.md", "pwned")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+        await expect(readFile(join(outsideDir, "escaped.md"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("denies overwriting an existing file through a symlinked directory", async () => {
+      const outsideDir = join(homedir(), `.outside-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(outsideDir, { recursive: true });
+      await writeFile(join(outsideDir, "escaped.md"), "outside");
+      await symlink(outsideDir, join(vaultRoot, "linkdir"));
+
+      try {
+        await expect(vaultFs.write("linkdir/escaped.md", "pwned")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+        await expect(vaultFs.delete("linkdir/escaped.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+        expect(await readFile(join(outsideDir, "escaped.md"), "utf-8")).toBe("outside");
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("denies a dangling symlink pointing outside the vault", async () => {
+      const outsideDir = join(homedir(), `.outside-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(outsideDir, { recursive: true });
+      await symlink(join(outsideDir, "created-later.md"), join(vaultRoot, "dangling.md"));
+
+      try {
+        await expect(vaultFs.write("dangling.md", "pwned")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+        await expect(readFile(join(outsideDir, "created-later.md"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("denies moving a file into a symlinked directory", async () => {
+      const outsideDir = join(homedir(), `.outside-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(outsideDir, { recursive: true });
+      await symlink(outsideDir, join(vaultRoot, "linkdir"));
+      await vaultFs.write("source.md", "content");
+
+      try {
+        await expect(vaultFs.move("source.md", "linkdir/escaped.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+        expect(await vaultFs.exists("source.md")).toBe(true);
+        await expect(readFile(join(outsideDir, "escaped.md"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    it("allows creating a normal nested new file", async () => {
+      await vaultFs.write("fresh/nested/new.md", "ok");
+      expect(await vaultFs.read("fresh/nested/new.md")).toBe("ok");
+    });
+
+    it("allows writes when the vault root itself is a symlink", async () => {
+      const actualRoot = join(homedir(), `.vault-actual-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const linkRoot = join(homedir(), `.vault-link-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(actualRoot, { recursive: true });
+      await symlink(actualRoot, linkRoot);
+      const linkedFs = new VaultFS(linkRoot);
+
+      try {
+        await linkedFs.write("nested/new.md", "ok");
+        expect(await readFile(join(actualRoot, "nested/new.md"), "utf-8")).toBe("ok");
+        expect(await linkedFs.read("nested/new.md")).toBe("ok");
+      } finally {
+        await rm(linkRoot, { recursive: true, force: true });
+        await rm(actualRoot, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("project isolation", () => {

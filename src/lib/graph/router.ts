@@ -228,7 +228,7 @@ export function isSecurityIncident(task: string): boolean {
 
 export function getPhaseForTask(task: string): ProjectPhase {
   const lower = task.toLowerCase();
-  const reviewKeywords = ["review", "refactor", "audit", "diff"];
+  const reviewKeywords = ["review", "refactor", "audit", "diff", "defect", "critique"];
   const shipKeywords = ["deploy", "release", "ship", "publish", "bump", "tag", "version"];
   const implementKeywords = ["add", "build", "create", "implement", "write", "develop", "feature", "integrate"];
   const exploreKeywords = ["brainstorm", "explore", "research", "investigate", "discover", "plan", "design", "prototype", "spike"];

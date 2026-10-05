@@ -28,3 +28,10 @@ Writing or reviewing `Cargo.toml`, axum/tokio, Tauri commands, native cores. If 
 
 ## Verify
 `cargo test`, `cargo clippy --all-targets`, `cargo fmt --check`. Table-driven tests for parsers and error paths. No network in unit tests.
+
+## Worktree & caches
+- **Never share `CARGO_TARGET_DIR` across concurrent worktrees.** Stale fingerprints make cargo skip rebuilds it should run (cargo#16642); one target dir per worktree.
+- Relocate intermediates per worktree with `CARGO_BUILD_BUILD_DIR` and a `{workspace-path-hash}` placeholder so each worktree gets a distinct build dir; don't point it at a shared path.
+- Share `sccache` (`RUSTC_WRAPPER=sccache`, `SCCACHE_DIR` in the cache root) and set `SCCACHE_BASEDIRS` to cover every worktree path — cross-worktree hits require path normalization.
+- Seed a fresh worktree's `target/` with a reflink copy (APFS `cp -Rc`) instead of a cold rebuild; the copy diverges after seeding and is not shared.
+- `cargo clean` cleans one target dir; never clean another worktree's dir, and never share a build dir to make it "one".

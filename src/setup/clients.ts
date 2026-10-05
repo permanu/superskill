@@ -16,6 +16,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     envKey: "env",
     instructionStrategy: "markdown-file",
     instructionPaths: home(".claude/CLAUDE.md"),
+    commandPaths: home(".claude/commands"),
     verified: true,
   },
   {
@@ -43,6 +44,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     envKey: "env",
     instructionStrategy: "mdc-file",
     instructionPaths: home(".cursor/rules/superskill.mdc"),
+    commandPaths: home(".cursor/commands"),
     verified: true,
   },
   {
@@ -56,6 +58,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     extraFields: { type: "local" },
     instructionStrategy: "config-array",
     instructionPaths: home(".config/opencode/superskill-instructions.md"),
+    commandPaths: home(".config/opencode/commands"),
     verified: false,
   },
   {
@@ -83,6 +86,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     envKey: "env",
     instructionStrategy: "markdown-file",
     instructionPaths: home(".codex/AGENTS.md"),
+    commandPaths: home(".codex/prompts"),
     verified: true,
   },
   {
@@ -95,6 +99,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
     envKey: "env",
     instructionStrategy: "markdown-file",
     instructionPaths: home(".gemini/GEMINI.md"),
+    commandPaths: home(".gemini/commands"),
     verified: true,
   },
   {

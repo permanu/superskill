@@ -21,6 +21,7 @@ export interface ClientConfig {
   extraFields?: Record<string, unknown>;
   instructionStrategy: InstructionStrategy;
   instructionPaths?: Record<Platform, string>;
+  commandPaths?: Record<Platform, string>;
   verified: boolean;
 }
 
@@ -48,6 +49,7 @@ export interface SetupResult {
   client: string;
   mcpConfigured: boolean;
   instructionConfigured: boolean;
+  slashCommandsInstalled?: string[];
   skipped?: string;
   error?: string;
 }
@@ -56,6 +58,7 @@ export interface TeardownResult {
   client: string;
   mcpRemoved: boolean;
   instructionRemoved: boolean;
+  slashCommandsRemoved?: string[];
   error?: string;
 }
 

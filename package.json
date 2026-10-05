@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",
@@ -23,13 +23,18 @@
     "!dist/**/*.test.js",
     "!dist/**/*.test.d.ts",
     "!dist/**/*.test.js.map",
+    "!dist/**/__fixtures__/",
+    "!dist/test-helpers.*",
     ".claude-plugin/",
-    ".mcp.json",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md",
-    "registry/",
-    "catalog/"
+    "catalog/",
+    "hooks/",
+    "docs/harness.md",
+    "docs/SKILL-TEMPLATE.md",
+    "docs/authoring/CONTRACT.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -80,6 +85,6 @@
     "codex"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.13.0"
   }
 }

@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 
 export async function decideCommand(
   args: {
@@ -18,11 +18,7 @@ export async function decideCommand(
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
 
   const decisionsDir = `projects/${projectSlug}/decisions`;
-  const nextNumber = await getNextNumber(ctx.vaultFs, decisionsDir);
-  const paddedNumber = String(nextNumber).padStart(3, "0");
   const slug = slugify(args.title);
-  const filename = `${paddedNumber}-${slug}.md`;
-  const filePath = `${decisionsDir}/${filename}`;
 
   const fm = createFrontmatter({
     type: "adr",
@@ -31,7 +27,12 @@ export async function decideCommand(
     tags: [],
   });
 
-  const body = `
+  const claim = await claimNumberedFile(
+    ctx.vaultFs,
+    decisionsDir,
+    (_number, paddedNumber) => `${paddedNumber}-${slug}.md`,
+    (_number, paddedNumber) => {
+      const body = `
 # ADR-${paddedNumber}: ${args.title}
 
 ## Context
@@ -51,7 +52,9 @@ ${args.alternatives ?? "None documented."}
 ${args.consequences ?? "To be evaluated."}
 `.trimStart();
 
-  await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
+      return serializeFrontmatter(fm, body);
+    },
+  );
 
-  return { path: filePath, decision_number: nextNumber };
+  return { path: claim.path, decision_number: claim.number };
 }

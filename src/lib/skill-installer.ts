@@ -21,7 +21,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { tmpdir, homedir } from "os";
-import { join, resolve, basename } from "path";
+import { join, resolve, basename, relative, isAbsolute } from "path";
 import { readdir, readFile, writeFile, mkdir, cp, rm, stat } from "fs/promises";
 import matter from "gray-matter";
 import { fetchPublisherSkills, fetchSkillPage, type PublisherSkill } from "./skills-sh/client.js";
@@ -212,6 +212,39 @@ let _installDir: string | null = null;
 export function _setInstallDir(dir: string): void { _installDir = dir; }
 export function _resetInstallDir(): void { _installDir = null; }
 
+const SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const UNAUDITED_MARKER = ".unaudited-superskill";
+
+export function isValidSkillName(name: string): boolean {
+  if (name === "." || name === "..") return false;
+  return SKILL_NAME_PATTERN.test(name);
+}
+
+/**
+ * Resolve a skill name to an absolute directory strictly inside the install dir.
+ * Returns null when the name is invalid or would escape the install directory.
+ */
+function resolveSkillDir(installDir: string, name: string): string | null {
+  if (!isValidSkillName(name)) return null;
+  const base = resolve(installDir);
+  const target = resolve(base, name);
+  const rel = relative(base, target);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  return target;
+}
+
+async function writeUnauditedMarker(installDir: string, name: string): Promise<void> {
+  const dir = resolveSkillDir(installDir, name);
+  if (!dir) return;
+  const marker = {
+    unaudited: true,
+    source: "github-fallback",
+    reason: "skills.sh was unreachable; no audit results available",
+    installedAt: new Date().toISOString(),
+  };
+  await writeFile(join(dir, UNAUDITED_MARKER), JSON.stringify(marker, null, 2), "utf-8");
+}
+
 /**
  * Install skills from skills.sh — the secure, preferred path.
  *
@@ -301,7 +334,11 @@ async function installFromSkillsSh(
       }
 
       // Step 6: Write verified content
-      const destDir = join(installDir, skillRef.skill);
+      const destDir = resolveSkillDir(installDir, skillRef.skill);
+      if (!destDir) {
+        errors.push(`${skillRef.skill}: Invalid skill name`);
+        continue;
+      }
       await mkdir(destDir, { recursive: true });
 
       const skillMd = `---\nname: ${skillRef.skill}\ndescription: Skill from ${owner}/${repo}\nsource: skills.sh\ninstalls: ${pageData.installs}\nstars: ${pageData.stars}\naudits:\n  gen: ${pageData.audits.gen}\n  socket: ${pageData.audits.socket}\n  snyk: ${pageData.audits.snyk}\n---\n\n${content}`;
@@ -379,7 +416,11 @@ async function installFromGitHub(
           warnings.push(`${skill.name}: ${w}`);
         }
 
-        const destDir = join(installDir, skill.name);
+        const destDir = resolveSkillDir(installDir, skill.name);
+        if (!destDir) {
+          errors.push(`${skill.name}: Invalid skill name`);
+          continue;
+        }
         await mkdir(destDir, { recursive: true });
         await cp(skill.skillDir, destDir, {
           recursive: true,
@@ -424,17 +465,58 @@ export async function installSkills(
     };
   }
 
-  // Try skills.sh first (secure path with audit results)
-  const shResult = await installFromSkillsSh(parsed.owner, parsed.repo, options);
+  const installDir = _installDir ?? getInstallDir();
 
-  // If skills.sh found and installed skills, return those results
+  // Try skills.sh first (secure path with audit results)
+  let shResult: InstallResult;
+  let fetchFailed = false;
+  try {
+    shResult = await installFromSkillsSh(parsed.owner, parsed.repo, options);
+  } catch (err) {
+    fetchFailed = true;
+    shResult = {
+      success: false,
+      installed: [],
+      errors: [`skills.sh unreachable: ${(err as Error).message}`],
+      warnings: [],
+      blocked: [],
+    };
+  }
+
+  // Audited installs or explicit blocks always win — never fall back for these
   if (shResult.installed.length > 0 || shResult.blocked.length > 0) {
     return shResult;
   }
 
-  // Fallback to GitHub clone
-  console.error(`[skill-installer] skills.sh returned no results, falling back to GitHub clone for ${parsed.owner}/${parsed.repo}`);
-  return installFromGitHub(parsed, options);
+  if (!fetchFailed) {
+    console.error(`[skill-installer] skills.sh returned no results for ${parsed.owner}/${parsed.repo}; refusing unaudited GitHub fallback`);
+    return {
+      success: false,
+      installed: [],
+      errors: [
+        ...shResult.errors,
+        `No installable skills found via skills.sh for ${parsed.owner}/${parsed.repo}. Refusing unaudited GitHub fallback.`,
+      ],
+      warnings: [
+        ...shResult.warnings,
+        "GitHub fallback skipped: skills.sh returned empty results (audit status cannot be verified).",
+      ],
+      blocked: shResult.blocked,
+    };
+  }
+
+  // Only a thrown/fetch-failed skills.sh attempt may use the unaudited fallback
+  console.error(`[skill-installer] WARNING: skills.sh unreachable for ${parsed.owner}/${parsed.repo}; installing via unaudited GitHub clone`);
+  const fallback = await installFromGitHub(parsed, options);
+  if (fallback.installed.length > 0) {
+    for (const name of fallback.installed) {
+      await writeUnauditedMarker(installDir, name);
+    }
+    fallback.warnings.push(
+      `Installed without skills.sh audit. Marked with ${UNAUDITED_MARKER}; run audits before use.`
+    );
+  }
+  return fallback;
 }
 
 /**
@@ -442,7 +524,11 @@ export async function installSkills(
  */
 export async function removeSkill(name: string): Promise<{ success: boolean; error?: string }> {
   const installDir = _installDir ?? getInstallDir();
-  const skillDir = join(installDir, name);
+  const skillDir = resolveSkillDir(installDir, name);
+
+  if (!skillDir) {
+    return { success: false, error: `Invalid skill name: "${name}"` };
+  }
 
   try {
     await stat(skillDir);
@@ -472,7 +558,8 @@ export async function listInstalledSkills(): Promise<Array<{ name: string; descr
       if (entry.name === "learned") continue;
 
       // Find SKILL.md — could be at root or nested
-      const dir = join(installDir, entry.name);
+      const dir = resolveSkillDir(installDir, entry.name);
+      if (!dir) continue;
       const candidates = [
         join(dir, "SKILL.md"),
         join(dir, "skills", entry.name, "SKILL.md"),

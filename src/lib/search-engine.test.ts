@@ -123,6 +123,10 @@ describe("search-engine", () => {
       expect(results).toEqual([]);
     });
 
+    it("returns empty array for empty filters without throwing", async () => {
+      await expect(searchStructured(vaultRoot, {})).resolves.toEqual([]);
+    });
+
     it("excludes hidden directories", async () => {
       await mkdir(join(vaultRoot, ".hidden"), { recursive: true });
       await writeFile(

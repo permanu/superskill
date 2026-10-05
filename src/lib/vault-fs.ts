@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile, writeFile, appendFile, mkdir, readdir, stat, realpath, unlink, rename } from "fs/promises";
-import { join, resolve, relative, dirname } from "path";
+import { readFile, writeFile, appendFile, mkdir, readdir, stat, lstat, realpath, readlink, unlink, rename } from "fs/promises";
+import { join, resolve, relative, dirname, isAbsolute } from "path";
 
 /**
  * Safe filesystem operations on the vault.
@@ -211,24 +211,73 @@ export class VaultFS {
 
   /**
    * Verify a path doesn't follow symlinks outside the vault.
+   *
+   * Checks the target if it exists, then walks up to the deepest existing
+   * ancestor (lstat) and verifies its realpath stays inside the vault. This
+   * also covers new files created through a symlinked directory and dangling
+   * symlinks, which would otherwise be followed on write.
    */
   async verifyNoSymlinkEscape(relativePath: string): Promise<void> {
     const abs = this.resolve(relativePath);
+    const root = resolve(this._root);
 
-    if (!(await this.exists(relativePath))) {
-      return;
+    let realRoot: string;
+    try {
+      realRoot = await realpath(root);
+    } catch (e: any) {
+      if (e.code === "ENOENT") realRoot = root;
+      else throw e;
     }
 
-    try {
-      const [realAbs, realRoot] = await Promise.all([realpath(abs), realpath(this._root)]);
-      const rel = relative(realRoot, realAbs);
-      if (rel.startsWith("..")) {
-        throw new VaultError("PERMISSION_DENIED", `Symlink escapes vault: ${relativePath}`);
+    await this.verifyPathInsideVault(relativePath, abs, realRoot, root);
+  }
+
+  private async verifyPathInsideVault(
+    display: string,
+    absPath: string,
+    realRoot: string,
+    root: string,
+    depth = 0
+  ): Promise<void> {
+    if (depth > 32) {
+      throw new VaultError("PERMISSION_DENIED", `Symlink chain too deep: ${display}`);
+    }
+
+    let current = absPath;
+    while (this.isWithin(root, current)) {
+      let entry;
+      try {
+        entry = await lstat(current);
+      } catch (e: any) {
+        if (e.code === "ENOENT") {
+          current = dirname(current);
+          continue;
+        }
+        throw e;
       }
-    } catch (e: any) {
-      if (e instanceof VaultError) throw e;
-      if (e.code === "ENOENT") return;
-      throw e;
+
+      if (entry.isSymbolicLink()) {
+        const linkTarget = resolve(dirname(current), await readlink(current));
+        if (!this.isWithin(root, linkTarget) && !this.isWithin(realRoot, linkTarget)) {
+          throw new VaultError("PERMISSION_DENIED", `Symlink escapes vault: ${display}`);
+        }
+        return this.verifyPathInsideVault(display, linkTarget, realRoot, root, depth + 1);
+      }
+
+      const realCurrent = await realpath(current);
+      this.assertInsideVault(realRoot, realCurrent, display);
+      return;
+    }
+  }
+
+  private isWithin(parent: string, child: string): boolean {
+    const rel = relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  }
+
+  private assertInsideVault(realRoot: string, realTarget: string, display: string): void {
+    if (!this.isWithin(realRoot, realTarget)) {
+      throw new VaultError("PERMISSION_DENIED", `Symlink escapes vault: ${display}`);
     }
   }
 }

@@ -151,6 +151,11 @@ describe("getPhaseForTask", () => {
     expect(getPhaseForTask("fix a security bug in cookies")).toBe("review");
   });
 
+  it("detects review phase from defect/critique wording", () => {
+    expect(getPhaseForTask("check for defects across the project")).toBe("review");
+    expect(getPhaseForTask("critique the architecture")).toBe("review");
+  });
+
   it("detects implement phase from build/create keywords", () => {
     expect(getPhaseForTask("add user authentication")).toBe("implement");
     expect(getPhaseForTask("build a new dashboard")).toBe("implement");

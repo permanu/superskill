@@ -24,6 +24,18 @@ describe("parseMcpProcesses", () => {
   it("handles empty output", () => {
     expect(parseMcpProcesses("")).toEqual([]);
   });
+
+  it("drops short lines, unrelated commands, and unparseable dates", () => {
+    const processes = parseMcpProcesses(
+      [
+        "too short",
+        "Mon Oct  5 09:58:02 2026 111 node /usr/bin/other-tool",
+        "Nope Oct  5 09:58:02 2026 222 node /usr/bin/superskill",
+        "Mon Oct  5 09:58:02 2026 333 node /Users/x/superskill",
+      ].join("\n"),
+    );
+    expect(processes.map((entry) => entry.pid)).toEqual(["333"]);
+  });
 });
 
 describe("summarizeChecks", () => {
@@ -36,6 +48,29 @@ describe("summarizeChecks", () => {
       { id: "e", label: "e", status: "skip", detail: "" },
     ];
     expect(summarizeChecks(checks)).toEqual({ ok: 1, warn: 2, fail: 1, skip: 1 });
+  });
+});
+
+describe("renderDoctor", () => {
+  it("renders every status mark, hints, and the unhealthy suffix", () => {
+    const text = renderDoctor({
+      version: "9.9.9",
+      healthy: false,
+      summary: { ok: 1, warn: 1, fail: 1, skip: 1 },
+      checks: [
+        { id: "a", label: "A", status: "ok", detail: "fine" },
+        { id: "b", label: "B", status: "warn", detail: "careful", hint: "hint-b" },
+        { id: "c", label: "C", status: "fail", detail: "broken" },
+        { id: "d", label: "D", status: "skip", detail: "later" },
+      ],
+    });
+
+    expect(text).toContain("[ok  ] A");
+    expect(text).toContain("[warn] B");
+    expect(text).toContain("↳ hint-b");
+    expect(text).toContain("[FAIL] C");
+    expect(text).toContain("[skip] D");
+    expect(text).toContain("— fix the FAIL entries");
   });
 });
 
@@ -65,6 +100,9 @@ describe("doctorCommand", () => {
         "toolchains",
         "telemetry",
         "clients",
+        "worktree-policy",
+        "worktree-hook",
+        "worktree-caches",
       ]);
       const total = Object.values(result.summary).reduce((acc, n) => acc + n, 0);
       expect(total).toBe(result.checks.length);
@@ -75,5 +113,26 @@ describe("doctorCommand", () => {
     } finally {
       await rm(vault, { recursive: true, force: true });
     }
+  });
+
+  it("fails the vault check when the vault path does not exist", async () => {
+    const missing = join(
+      tmpdir(),
+      `doctor-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const ctx = {
+      vaultFs: {} as CommandContext["vaultFs"],
+      vaultPath: missing,
+      sessionRegistry: {} as CommandContext["sessionRegistry"],
+      config: { vaultPath: missing, maxInjectTokens: 1500, sessionTtlHours: 2 },
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      projectSlug: null,
+    } satisfies CommandContext;
+
+    const result = await doctorCommand({}, ctx, { skipCatalog: true, skipToolchains: true });
+
+    expect(result.checks.find((entry) => entry.id === "vault")?.status).toBe("fail");
+    expect(result.checks.find((entry) => entry.id === "project-map")?.status).toBe("skip");
+    expect(result.healthy).toBe(false);
   });
 });

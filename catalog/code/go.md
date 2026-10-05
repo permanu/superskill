@@ -15,3 +15,10 @@ triggers: [go, golang, goroutine, context, errgroup]
 
 ## When
 Repos that already are Go. Do not add a Go service beside a working Node one.
+
+## Worktree & caches
+- `GOCACHE` and `GOMODCACHE` are user-global and concurrent-safe by design; sharing them across worktrees is the default and correct behavior.
+- The duplication vector is an isolated `HOME` (containers, CI, agent sandboxes): point `GOCACHE`/`GOMODCACHE` at the shared cache root there.
+- Never place `GOCACHE`/`GOMODCACHE` inside the repo — it pollutes git status and defeats sharing.
+- Append `GOFLAGS=-trimpath` (never replace existing flags) so own-package builds stay cacheable across differing worktree paths.
+- `go clean -cache` is user-global: it invalidates every worktree's builds, so run it deliberately.

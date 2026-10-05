@@ -27,3 +27,11 @@ This repo, or any Node/TS service on this Mac. If the repo is Bun-only, match th
 
 ## Verify
 `npm test` on the files you touched, `tsc --noEmit`.
+
+## Worktree & caches
+- Share the package-manager store (`PNPM_CONFIG_STORE_DIR`, `npm_config_cache`, `YARN_CACHE_FOLDER`, `BUN_INSTALL_CACHE_DIR`); never share `node_modules`.
+- pnpm: keep `PNPM_CONFIG_PACKAGE_IMPORT_METHOD=clone` so each worktree gets real files from the shared store instead of hardlinks.
+- Never symlink `node_modules` between worktrees: resolution, patched deps, and native builds diverge.
+- Install per worktree from the shared store; seed a new worktree's `node_modules` with a reflink copy, not a symlink or bind mount.
+- Turbo/Nx caches are already shared across worktrees by default — do not override their cache dirs.
+- Keep `.next`, `.vite`, and other build outputs per worktree; only the store is shared.

@@ -122,6 +122,10 @@ export async function searchStructured(
   const { limit = 10, pathFilter } = options;
   const searchRoot = pathFilter ? validateSearchPath(vaultPath, pathFilter) : vaultPath;
 
+  // No filters means no structured criteria; return no matches rather than
+  // building an empty regex.
+  if (Object.keys(filters).length === 0) return [];
+
   const results: SearchResult[] = [];
 
   // Build grep patterns to narrow candidates (search for both key and value)

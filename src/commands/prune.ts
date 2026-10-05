@@ -22,6 +22,8 @@ const DEFAULT_POLICY: RetentionPolicy = {
   todos: 0,
 };
 
+const VALID_PRUNE_MODES = new Set(["dry-run", "archive", "delete"]);
+
 export interface PruneResult {
   project: string;
   archived: { from: string; to: string }[];
@@ -57,6 +59,12 @@ export async function pruneCommand(
   },
   ctx: CommandContext,
 ): Promise<PruneResult[]> {
+  if (!VALID_PRUNE_MODES.has(args.mode)) {
+    throw new Error(
+      `Unknown retention mode: "${args.mode}". Allowed modes: dry-run, archive, delete.`
+    );
+  }
+
   const policy = { ...DEFAULT_POLICY, ...args.policy };
   const results: PruneResult[] = [];
   const vaultFs = ctx.vaultFs;

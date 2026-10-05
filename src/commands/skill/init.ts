@@ -50,6 +50,7 @@ This project uses superskill for skill routing and rules.
 - Call the \`superskill\` tool with your task before creative work, debugging, or review.
 - No "done" without \`gate check\` evidence.
 - Only verified rules are injected by default.
+- Worktree caches: run once per repo via MCP tool \`worktree_activate\` (or \`superskill-cli worktree activate\`); it installs a guarded post-checkout hook and shared-cache env for every worktree. Nothing is ever deleted.
 - Constitution: catalog/constitution.md in the superskill package (always applies).
 `;
 

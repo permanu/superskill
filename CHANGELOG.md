@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-05
+
+### Added
+- **Worktree shared-cache policy**: agents can share cheap caches (package stores, compiler caches, module caches) across git worktrees while keeping per-worktree build state isolated. `worktree activate` writes `.git/superskill/policy.json` and installs a guarded `post-checkout` hook that seeds new worktrees (reflink where available) and always exits 0.
+- Host session adapters for Claude Code, OpenCode, Codex, Cursor, Gemini CLI, and GrokBuild (plus a generic `AGENTS.md` fallback) inject the shared-cache environment at session start; the OpenCode plugin merges `worktree env --json` into every shell.
+- MCP tools `worktree_status`, `worktree_audit`, `worktree_env`, `worktree_activate`, `worktree_apply`, `worktree_gc`, `worktree_uninstall` (mirrored by `superskill-cli worktree …`). `worktree status` / `worktree audit` report per-worktree safety verdicts, cache duplication, seeded-manifest drift, and a `--budget` flag.
+- `worktree gc` defaults to a dry-run report, quarantines selected dirs with `--apply` (reversible via `--undo <journalId>`), and permanently deletes only quarantine entries with `--purge --yes`; filters cover scope (`--all`, `--worktree`, `--project`, `--tool`), age (`--older-than`/`--min-age`, `--newer-than`), size, tier, globs, and `--keep-latest`.
+- `worktree apply` applies audit items (policy, hook, seed, prune) behind consent; `worktree uninstall` removes hooks/adapters and keeps policy, caches, and quarantine. Seeding can be disabled with `SUPERSKILL_WORKTREE_BOOTSTRAP=0`; the cache root is configurable with `SUPERSKILL_CACHE_ROOT`.
+- Docs: new **Worktree caches** README guide (agent-first usage, safety contract, full CLI reference, filter cookbook, host support matrix, troubleshooting, uninstall) and per-language `## Worktree & caches` notes in `catalog/code/`.
+- **Slash-command installer**: `setup` writes `/review`, `/worktree`, and `/superskill` command files for every host that supports them (markdown for most hosts, TOML for Gemini CLI); installs are idempotent and marker-guarded, and `teardown` removes them.
+- `doctor` now includes worktree checks (shared policy present, guarded post-checkout hook installed) alongside runtime, install, MCP freshness, vault, graph isolation, catalog, toolchains, telemetry, and clients.
+- Pre-commit hook runs `gate check` only when `SUPERSKILL_GATE_TARGET` is set; without a target it is a silent no-op.
+
+### Fixed
+- CLI bin symlinks (`superskill`, `superskill-cli`) execute correctly when invoked through `node_modules/.bin`.
+- Quarantine containment hardening: worktree-local reclaims stay inside the worktree, cache-root quarantines stay inside the cache root, and symlinked or escaping quarantine roots are refused.
+- Worktree activation is consent-gated: policy and hooks are written only with explicit `--yes` / `confirm: true`.
+- MCP `worktree_gc` tier validation rejects unknown tiers, and MCP write tools are rate-limited.
+- Seeded-manifest verification covers directory entries, concurrent writes, and containment before a manifest is trusted.
+- Hook backup/restore preserves bytes exactly.
+- VaultFS rejects symlink escapes on every read/write path.
+- Skill installer rejects path traversal and fails closed when audit status is unavailable.
+- `prune` validates the mode before acting.
+- Project-scope commands fail closed when no project slug can be resolved.
+- Session registry, auto-number, and evidence writes are race-safe.
 
 ## [0.9.0] - 2026-10-05
 

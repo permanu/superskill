@@ -2,7 +2,7 @@
 name: architect
 pack: review
 always: false
-triggers: [review, pr, diff, architect, techlead, greptile, coderabbit, nits, regression]
+triggers: [review, pr, diff, architect, techlead, greptile, coderabbit, nits, regression, defects, defect, critique, entire project, codebase audit, quality]
 ---
 
 # Multi-axis review (no skipped axis)

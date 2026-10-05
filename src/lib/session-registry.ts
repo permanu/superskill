@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile, writeFile, mkdir, unlink, stat, open } from "fs/promises";
+import { readFile, writeFile, mkdir, unlink, stat, open, rename } from "fs/promises";
 import { resolve, dirname } from "path";
 import { randomBytes } from "crypto";
 
@@ -167,111 +167,170 @@ export class SessionRegistryManager {
   }
 
   private async readRegistry(): Promise<SessionRegistry> {
+    let raw: string;
     try {
-      const raw = await readFile(this.registryPath, "utf-8");
-      const parsed = JSON.parse(raw);
-
-      // Schema validation: ensure sessions is an array of valid objects
-      if (!parsed || !Array.isArray(parsed.sessions)) {
-        return { sessions: [] };
-      }
-
-      // Filter out malformed entries
-      const validSessions = parsed.sessions.filter(
-        (s: any): s is Session =>
-          typeof s === "object" &&
-          s !== null &&
-          typeof s.id === "string" &&
-          typeof s.tool === "string" &&
-          typeof s.status === "string" &&
-          typeof s.started_at === "string" &&
-          typeof s.last_heartbeat === "string" &&
-          !isNaN(new Date(s.last_heartbeat).getTime()) &&
-          Array.isArray(s.files_touched)
-      );
-
-      return { sessions: validSessions };
+      raw = await readFile(this.registryPath, "utf-8");
     } catch (e: any) {
       if (e?.code !== "ENOENT") {
         console.error("[session-registry] Error reading registry:", e.message);
       }
       return { sessions: [] };
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e: any) {
+      await this.quarantineCorruptRegistry(`invalid JSON: ${e?.message}`);
+      return { sessions: [] };
+    }
+
+    // Schema validation: ensure sessions is an array of valid objects
+    if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as any).sessions)) {
+      await this.quarantineCorruptRegistry("missing sessions array");
+      return { sessions: [] };
+    }
+
+    // Filter out malformed entries
+    const validSessions = (parsed as any).sessions.filter(
+      (s: any): s is Session =>
+        typeof s === "object" &&
+        s !== null &&
+        typeof s.id === "string" &&
+        typeof s.tool === "string" &&
+        typeof s.status === "string" &&
+        typeof s.started_at === "string" &&
+        typeof s.last_heartbeat === "string" &&
+        !isNaN(new Date(s.last_heartbeat).getTime()) &&
+        Array.isArray(s.files_touched)
+    );
+
+    return { sessions: validSessions };
+  }
+
+  /**
+   * Rename a corrupt registry aside so it is never silently dropped.
+   */
+  private async quarantineCorruptRegistry(reason: string): Promise<void> {
+    const quarantinePath = `${this.registryPath}.corrupt-${Date.now()}`;
+    try {
+      await rename(this.registryPath, quarantinePath);
+      console.error(`[session-registry] Corrupt registry (${reason}); preserved at ${quarantinePath}`);
+    } catch (e: any) {
+      if (e?.code !== "ENOENT") {
+        console.error("[session-registry] Failed to quarantine corrupt registry:", e?.message);
+      }
+    }
   }
 
   private async writeRegistry(registry: SessionRegistry): Promise<void> {
     await mkdir(dirname(this.registryPath), { recursive: true });
-    await writeFile(this.registryPath, JSON.stringify(registry, null, 2), "utf-8");
+    const tmpPath = `${this.registryPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      await writeFile(tmpPath, JSON.stringify(registry, null, 2), "utf-8");
+      await rename(tmpPath, this.registryPath);
+    } catch (e) {
+      await unlink(tmpPath).catch(() => {});
+      throw e;
+    }
   }
 
   /**
    * PID-based lockfile for safe concurrent writes.
-   * Times out after 2 seconds with retry.
+   * Times out after 2 seconds with retry. Stale locks are taken over via
+   * write-temp + rename, then confirmed by re-reading our own PID.
    */
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const lockPath = resolve(this.locksDir, "session-registry.lock");
     await mkdir(this.locksDir, { recursive: true });
 
+    const lockContent = JSON.stringify({
+      pid: process.pid,
+      tool: "superskill",
+      timestamp: new Date().toISOString(),
+    });
+
     const maxRetries = 8;
     const retryDelay = 100;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      let acquired = false;
       try {
-        const lockContent = JSON.stringify({
-          pid: process.pid,
-          tool: "superskill",
-          timestamp: new Date().toISOString(),
-        });
-
         const fd = await open(lockPath, "wx");
         try {
           await fd.write(Buffer.from(lockContent, "utf-8"));
         } finally {
           await fd.close();
         }
-
-        // Lock acquired — run the function
-        try {
-          return await fn();
-        } finally {
-          await unlink(lockPath).catch(() => {});
-        }
+        acquired = true;
       } catch (e: any) {
-        if (e.code === "EEXIST") {
-          // Lock exists — check if it's stale
-          try {
-            const lockStat = await stat(lockPath);
-            const lockAge = Date.now() - lockStat.mtimeMs;
-            if (lockAge > 5000) {
-              // Lock is stale (>5s), force remove
-              await unlink(lockPath).catch(() => {});
-              continue;
-            }
+        if (e.code !== "EEXIST") throw e;
+      }
 
-            // Lock is fresh — check if PID is alive
-            const lockData = JSON.parse(await readFile(lockPath, "utf-8"));
-            try {
-              process.kill(lockData.pid, 0);
-              // PID is alive — wait and retry
-            } catch {
-              // PID is dead — remove stale lock
-              await unlink(lockPath).catch(() => {});
-              continue;
-            }
-          } catch {
-            // Can't read lock — try to remove it
-            await unlink(lockPath).catch(() => {});
-            continue;
-          }
+      if (!acquired && !(await this.takeOverStaleLock(lockPath, lockContent))) {
+        await new Promise((r) => setTimeout(r, retryDelay));
+        continue;
+      }
 
-          // Wait before retrying
-          await new Promise((r) => setTimeout(r, retryDelay));
-        } else {
-          throw e;
-        }
+      try {
+        return await fn();
+      } finally {
+        await this.releaseLock(lockPath);
       }
     }
 
     throw new Error("Failed to acquire lock after retries");
+  }
+
+  /**
+   * Replace a stale lock by writing our lock to a temp path and renaming it
+   * over the lock. Losers detect a foreign PID on re-read and back off.
+   */
+  private async takeOverStaleLock(lockPath: string, lockContent: string): Promise<boolean> {
+    let stale = false;
+    try {
+      const lockStat = await stat(lockPath);
+      if (Date.now() - lockStat.mtimeMs > 5000) {
+        stale = true;
+      } else {
+        const lockData = JSON.parse(await readFile(lockPath, "utf-8"));
+        try {
+          process.kill(lockData.pid, 0);
+        } catch (e: any) {
+          if (e?.code === "ESRCH") stale = true;
+        }
+      }
+    } catch (e: any) {
+      if (e?.code === "ENOENT") return false;
+      return false;
+    }
+
+    if (!stale) return false;
+
+    const tmpPath = `${lockPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      await writeFile(tmpPath, lockContent, "utf-8");
+      await rename(tmpPath, lockPath);
+    } catch {
+      await unlink(tmpPath).catch(() => {});
+      return false;
+    }
+
+    try {
+      const confirmed = JSON.parse(await readFile(lockPath, "utf-8"));
+      return confirmed.pid === process.pid;
+    } catch {
+      return false;
+    }
+  }
+
+  private async releaseLock(lockPath: string): Promise<void> {
+    try {
+      const lockData = JSON.parse(await readFile(lockPath, "utf-8"));
+      if (lockData.pid !== process.pid) return;
+    } catch {
+      return;
+    }
+    await unlink(lockPath).catch(() => {});
   }
 }

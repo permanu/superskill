@@ -69,6 +69,6 @@ export async function createScopedCtx(
     const slug = await resolveProject(getConfig().vaultPath, explicitSlug);
     return createCtx(slug);
   } catch {
-    return createCtx();
+    return createCtx(null);
   }
 }

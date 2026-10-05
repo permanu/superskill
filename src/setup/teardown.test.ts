@@ -5,6 +5,7 @@ import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.j
 import { removeTomlBlock } from "./toml-config.js";
 import { removeMarkdownInstruction, removeMdcInstruction } from "./instructions.js";
 import { CLIENT_REGISTRY } from "./clients.js";
+import { detectClient } from "./detect.js";
 import type { DetectedClient } from "./types.js";
 
 vi.mock("./json-config.js");
@@ -115,11 +116,80 @@ describe("teardownClient", () => {
     const result = teardownClient(makeDetected("claude-desktop"));
     expect(result.instructionRemoved).toBe(false);
   });
+
+  it("handles a null JSON config and dry-run TOML teardown", () => {
+    mockExists.mockReturnValue(true);
+    vi.mocked(readJsonConfig).mockReturnValue(null);
+    const nullJson = teardownClient(makeDetected("claude-code"));
+    expect(nullJson.mcpRemoved).toBe(false);
+
+    vi.mocked(readFileSync).mockClear();
+    const tomlDry = teardownClient(makeDetected("codex"), { dryRun: true });
+    expect(tomlDry.mcpRemoved).toBe(true);
+    expect(readFileSync).not.toHaveBeenCalled();
+  });
+
+  it("keeps the TOML file when no superskill block is found", () => {
+    mockExists.mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue("plain content");
+    vi.mocked(removeTomlBlock).mockReturnValue({ content: "plain content", removed: false });
+
+    const result = teardownClient(makeDetected("codex"));
+    expect(result.mcpRemoved).toBe(false);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("ignores instruction strategies without an instruction path", () => {
+    mockExists.mockReturnValue(true);
+    vi.mocked(readJsonConfig).mockReturnValue({});
+    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
+
+    for (const slug of ["claude-code", "cursor", "opencode"]) {
+      const result = teardownClient({ ...makeDetected(slug), instructionPath: null });
+      expect(result.instructionRemoved).toBe(false);
+    }
+  });
+
+  it("leaves the config array alone when the instruction path is not listed", () => {
+    mockExists.mockReturnValue(true);
+    vi.mocked(readJsonConfig).mockReturnValue({ instructions: ["/other/path"] });
+    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
+
+    const result = teardownClient(makeDetected("opencode"));
+    expect(result.instructionRemoved).toBe(true);
+    expect(writeJsonConfig).not.toHaveBeenCalled();
+  });
+
+  it("reports slash commands as a dry-run marker", () => {
+    mockExists.mockReturnValue(true);
+    const result = teardownClient(makeDetected("opencode"), { dryRun: true });
+    expect(result.slashCommandsRemoved).toEqual(["(dry-run)"]);
+  });
+
+  it("captures unexpected file errors", () => {
+    mockExists.mockReturnValue(true);
+    vi.mocked(readFileSync).mockImplementation(() => {
+      throw new Error("boom");
+    });
+
+    const result = teardownClient(makeDetected("codex"));
+    expect(result.error).toBe("boom");
+  });
 });
 
 describe("teardownAll", () => {
   it("returns empty array when no clients detected", async () => {
     const results = await teardownAll();
     expect(results).toEqual([]);
+  });
+
+  it("scopes teardown to the requested client slugs", async () => {
+    vi.mocked(detectClient).mockReturnValue(makeDetected("codex"));
+
+    const results = await teardownAll({ clients: ["codex"] });
+
+    expect(results).toHaveLength(1);
+    expect(vi.mocked(detectClient).mock.calls).toHaveLength(1);
+    expect(vi.mocked(detectClient).mock.calls[0][0].slug).toBe("codex");
   });
 });

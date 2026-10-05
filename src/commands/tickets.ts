@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { serializeFrontmatter, createFrontmatter, mergeFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, getNextNumber, slugify } from "../lib/auto-number.js";
 import {
   normalizeAcceptance,
   validateAcceptance,
@@ -76,33 +76,40 @@ export async function ticketsCommand(
         throw new Error(`Spec content hash mismatch (modified after freeze): ${specPath}`);
       }
 
-      const nextNumber = await getNextNumber(ctx.vaultFs, ticketsDir);
-      const planned = args.tickets.map((input, index) => ({
-        input,
-        id: `ticket-${String(nextNumber + index).padStart(3, "0")}`,
-      }));
+      const startNumber = await getNextNumber(ctx.vaultFs, ticketsDir);
+      const planned = args.tickets.map((input, index) => {
+        const number = startNumber + index;
+        return {
+          input,
+          number,
+          id: `ticket-${String(number).padStart(3, "0")}`,
+          acceptance: normalizeAcceptance(input.acceptance ?? []),
+          blockedBy: [...new Set(input.blockedBy ?? [])],
+        };
+      });
       const batchIds = new Set(planned.map((entry) => entry.id));
       const existingIds = new Set((await listTickets(ctx.vaultFs, ticketsDir)).map((ticket) => ticket.id));
 
-      const created: Array<{ ticket_id: string; title: string; path: string }> = [];
-
-      for (const { input, id } of planned) {
+      // Validate the full batch before claiming any file.
+      for (const { input, id, acceptance, blockedBy } of planned) {
         if (!input.title?.trim()) throw new Error(`Ticket ${id} is missing a title`);
 
-        const acceptance = normalizeAcceptance(input.acceptance ?? []);
         const errors = validateAcceptance(acceptance);
         if (errors.length > 0) {
           throw new Error(`Invalid ticket ${id}: ${errors.join("; ")}`);
         }
 
-        const blockedBy = [...new Set(input.blockedBy ?? [])];
         for (const blocker of blockedBy) {
           if (blocker === id) throw new Error(`Ticket ${id} cannot block itself`);
           if (!batchIds.has(blocker) && !existingIds.has(blocker)) {
             throw new Error(`Ticket ${id} blocked_by unknown ticket: ${blocker}`);
           }
         }
+      }
 
+      const created: Array<{ ticket_id: string; title: string; path: string }> = [];
+
+      for (const { input, number, acceptance, blockedBy } of planned) {
         const fm = createFrontmatter({
           type: "ticket",
           project: projectSlug,
@@ -115,9 +122,19 @@ export async function ticketsCommand(
           evidence: [],
         });
 
-        const filePath = `${ticketsDir}/${id}-${slugify(input.title)}.md`;
-        await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, `# ${input.title.trim()}\n`));
-        created.push({ ticket_id: id, title: input.title.trim(), path: filePath });
+        const claim = await claimNumberedFile(
+          ctx.vaultFs,
+          ticketsDir,
+          (_number, padded) => `ticket-${padded}-${slugify(input.title)}.md`,
+          () => serializeFrontmatter(fm, `# ${input.title.trim()}\n`),
+          { startAt: number },
+        );
+
+        created.push({
+          ticket_id: `ticket-${String(claim.number).padStart(3, "0")}`,
+          title: input.title.trim(),
+          path: claim.path,
+        });
       }
 
       return { spec: specPath, spec_hash: loadedSpec.hash, created };

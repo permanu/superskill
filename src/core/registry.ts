@@ -35,6 +35,13 @@ import { claimsCommand } from "../commands/claims.js";
 import { telemetryCommand, type TelemetryAction } from "../commands/telemetry.js";
 import { registerCommand } from "../commands/register.js";
 import { doctorCommand } from "../commands/doctor.js";
+import { worktreeEnvCommand } from "../commands/worktree/env.js";
+import { worktreeAuditCommand } from "../commands/worktree/audit.js";
+import { worktreeStatusCommand } from "../commands/worktree/status.js";
+import { worktreeGcCommand } from "../commands/worktree/gc.js";
+import { worktreeActivateCommand } from "../commands/worktree/activate.js";
+import { worktreeApplyCommand } from "../commands/worktree/apply.js";
+import { worktreeUninstallCommand } from "../commands/worktree/uninstall.js";
 import type { AcceptanceInput } from "../lib/gates/spec.js";
 import type { TicketStatus } from "../lib/gates/tickets.js";
 
@@ -80,6 +87,10 @@ const s = (v: unknown) => typeof v === "string" ? v : undefined;
 const n = (v: unknown) => typeof v === "number" ? v : undefined;
 const a = (v: unknown) => Array.isArray(v) ? v as unknown[] : undefined;
 const b = (v: unknown) => v === true;
+const tier = (v: unknown): "auto" | "consent" | "both" | undefined => {
+  const value = s(v);
+  return value === "auto" || value === "consent" || value === "both" ? value : undefined;
+};
 
 export function createRegistry(): CommandRegistry {
   const r = new CommandRegistry();
@@ -1188,6 +1199,202 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       claims: raw.claims,
       root: s(raw.root),
+    }),
+  });
+
+  r.register("worktree_env", {
+    handler: worktreeEnvCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_env",
+      description:
+        "Resolve shared-cache environment variables for the current git worktree (cache dirs + hit-enabling flags). Use before running installs/builds in a worktree.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          json: { type: "boolean", description: "Return the raw variable map as JSON instead of shell syntax" },
+          shell: { type: "string", enum: ["sh", "fish", "powershell"], description: "Shell syntax for the env text (default sh)" },
+          providers: { type: "array", items: { type: "string" }, description: "Restrict to these build-cache providers (default: all detected)" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      json: b(raw.json),
+      shell: s(raw.shell) as "sh" | "fish" | "powershell" | undefined,
+      providers: a(raw.providers) as string[] | undefined,
+    }),
+  });
+
+  r.register("worktree_audit", {
+    handler: worktreeAuditCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_audit",
+      description:
+        "Read-only audit of git worktrees and build-cache duplication for this repo. Reports safety verdicts and recommendation items. Never deletes anything.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          json: { type: "boolean", description: "Return JSON instead of text" },
+          sizes: { type: "boolean", description: "Measure cache directory sizes (slower)" },
+          worktree: { type: "string", description: "Audit only this worktree path (default: all worktrees)" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      json: b(raw.json),
+      sizes: b(raw.sizes),
+      worktree: s(raw.worktree),
+    }),
+  });
+
+  r.register("worktree_status", {
+    handler: worktreeStatusCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_status",
+      description: "Worktree cache status: policy/hook state, per-worktree safety, cache bytes, optional budget check.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          json: { type: "boolean", description: "Return JSON instead of text" },
+          budget: { type: "string", description: "Cache budget to check, e.g. '2G'" },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      json: b(raw.json),
+      budget: s(raw.budget),
+    }),
+  });
+
+  r.register("worktree_activate", {
+    handler: worktreeActivateCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_activate",
+      description:
+        "Install the shared build-cache policy for this repo: policy file in .git/superskill, guarded post-checkout hook, and host session hooks. Call with confirm=false first to preview; only pass confirm=true after the user agrees. Nothing is ever deleted.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          confirm: { type: "boolean", description: "true applies changes; false previews first (required)" },
+          hooks: { type: "boolean", description: "Install the guarded post-checkout hook (default true)" },
+          hosts: { type: "array", items: { type: "string" }, description: "Host session-hook adapters to install (default: all detected)" },
+          seed: { type: "boolean", description: "Seed cache manifests into worktrees (default true)" },
+          install: { type: "boolean", description: "Run toolchain installs after activation (default false)" },
+          dry_run: { type: "boolean", description: "Preview only; write nothing" },
+          json: { type: "boolean", description: "Return JSON instead of text" },
+        },
+        required: ["confirm"],
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    adaptArgs: (raw) => ({
+      yes: b(raw.confirm),
+      hooks: raw.hooks === false ? false : true,
+      hosts: a(raw.hosts) as string[] | undefined,
+      seed: raw.seed === false ? false : true,
+      install: b(raw.install),
+      dryRun: b(raw.dry_run) || !b(raw.confirm),
+      json: b(raw.json),
+    }),
+  });
+
+  r.register("worktree_apply", {
+    handler: worktreeApplyCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_apply",
+      description:
+        "Apply selected audit recommendation items (policy/hook/seed/tool-prune) after user consent. Requires confirm=true to mutate; without it returns the plan. Never removes worktrees or user files.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          item: { type: "array", items: { type: "string" }, description: "Audit item ids to apply (e.g. policy, hook, seed:pnpm)" },
+          all_safe: { type: "boolean", description: "Apply every safe item that needs no extra consent" },
+          confirm: { type: "boolean", description: "true mutates; false or omitted returns the plan" },
+          json: { type: "boolean", description: "Return JSON instead of text" },
+        },
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      item: a(raw.item) as string[] | undefined,
+      allSafe: b(raw.all_safe),
+      yes: b(raw.confirm),
+      json: b(raw.json),
+    }),
+  });
+
+  r.register("worktree_gc", {
+    handler: worktreeGcCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_gc",
+      description:
+        "Reclaim rebuildable build-cache entries (project-wise or --all). Default is a dry-run report. Mutations require confirm=true; deletions are quarantine-only (reversible via undo). Filters: tool, older_than, newer_than, min_size, max_size, tier, include, exclude, keep_latest, project, all, undo, purge.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          tool: { type: "array", items: { type: "string" }, description: "Restrict to these tools (e.g. pnpm, cargo)" },
+          older_than: { type: "string", description: "Only entries older than this (e.g. 30d, 12h, 2w)" },
+          newer_than: { type: "string", description: "Only entries newer than this (e.g. 7d)" },
+          min_size: { type: "string", description: "Only entries at least this size (e.g. 1M)" },
+          max_size: { type: "string", description: "Only entries at most this size (e.g. 2G)" },
+          tier: { type: "string", enum: ["auto", "consent", "both"], description: "Candidate tier (default both)" },
+          include: { type: "array", items: { type: "string" }, description: "Glob patterns to include" },
+          exclude: { type: "array", items: { type: "string" }, description: "Glob patterns to exclude" },
+          keep_latest: { type: "number", description: "Always keep the N newest entries per tool" },
+          project: { type: "string", description: "Vault project slug to scope to" },
+          all: { type: "boolean", description: "Scan all repos, not just this one" },
+          undo: { type: "string", description: "Restore a quarantine journal id, reversing an apply" },
+          purge: { type: "boolean", description: "Permanently delete quarantined entries older than 14d (requires confirm=true)" },
+          worktree: { type: "string", description: "Worktree path to scope to (default: cwd)" },
+          confirm: { type: "boolean", description: "true applies/quarantines/purges; false or omitted is a dry-run report" },
+          json: { type: "boolean", description: "Return JSON instead of text" },
+        },
+      },
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    adaptArgs: (raw) => ({
+      tool: a(raw.tool) as string[] | undefined,
+      olderThan: s(raw.older_than),
+      newerThan: s(raw.newer_than),
+      minSize: s(raw.min_size),
+      maxSize: s(raw.max_size),
+      tier: tier(raw.tier),
+      include: a(raw.include) as string[] | undefined,
+      exclude: a(raw.exclude) as string[] | undefined,
+      keepLatest: n(raw.keep_latest),
+      project: s(raw.project),
+      all: b(raw.all),
+      undo: s(raw.undo),
+      purge: b(raw.purge),
+      worktree: s(raw.worktree),
+      apply: b(raw.confirm),
+      yes: b(raw.confirm),
+      json: b(raw.json),
+    }),
+  });
+
+  r.register("worktree_uninstall", {
+    handler: worktreeUninstallCommand as CommandHandler,
+    toolDef: {
+      name: "worktree_uninstall",
+      description:
+        "Remove worktree-cache integration for this repo: host session hooks, post-checkout hook, policy metadata. Caches are untouched unless purge_local=true AND confirm=true (then this repo's cache namespace is quarantined, still reversible).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          purge_local: { type: "boolean", description: "Quarantine this repo's cache namespace (reversible; requires confirm=true)" },
+          confirm: { type: "boolean", description: "true applies mutations; false or omitted skips cache purge" },
+          json: { type: "boolean", description: "Return JSON instead of text" },
+        },
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      purgeLocal: b(raw.purge_local),
+      yes: b(raw.confirm),
+      json: b(raw.json),
     }),
   });
 

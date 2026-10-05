@@ -9,6 +9,7 @@ import {
   writeMarkdownInstruction,
   writeMdcInstruction,
 } from "./instructions.js";
+import { installSlashCommands } from "./commands.js";
 
 export function buildMcpEntry(
   commandType: "string" | "array",
@@ -151,6 +152,17 @@ export function configureClient(
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
       writeFileSync(instructionPath, INSTRUCTION_TEXT + "\n", "utf-8");
       result.instructionConfigured = true;
+    }
+
+    // 3. Install host-native slash commands (/review, /worktree, /superskill)
+    if (config.commandPaths) {
+      const slash = installSlashCommands(config, { dryRun: options.dryRun });
+      if (slash.installed.length > 0) {
+        result.slashCommandsInstalled = slash.installed;
+      }
+      if (slash.skipped.length > 0) {
+        result.skipped = (result.skipped ? result.skipped + "; " : "") + `commands kept: ${slash.skipped.join(", ")}`;
+      }
     }
   } catch (e: unknown) {
     result.error = (e as Error).message;

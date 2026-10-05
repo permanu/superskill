@@ -57,15 +57,20 @@ start and inject stdout as additional context.
 
 ### Pre-commit
 
-`hooks/pre-commit.sh` runs `superskill-cli gate check --ci` when both the CLI and
-the `gate` command exist. Otherwise it prints a hint and exits 0.
+`hooks/pre-commit.sh` runs `superskill-cli gate check --ci "$SUPERSKILL_GATE_TARGET"`
+only when `SUPERSKILL_GATE_TARGET` is set and both the CLI and the `gate`
+command exist. Without a target it exits 0 silently; a missing CLI or gate
+command prints a hint and exits 0.
 
 ```bash
 ln -sf ../../hooks/pre-commit.sh .git/hooks/pre-commit
+export SUPERSKILL_GATE_TARGET=001   # spec ref or ticket id; unset = skip
 ```
 
 - `git commit --no-verify` bypasses the hook for one commit.
 - `SUPERSKILL_GATE=off` keeps the hook installed but skips the check.
+- `SUPERSKILL_GATE_TARGET=<spec|ticket>` is required for the gate to run; without
+  it the hook is a silent no-op, so the hook can be installed repo-wide safely.
 - `SUPERSKILL_CLI=/path/to/superskill-cli` overrides the CLI command.
 
 ## CI

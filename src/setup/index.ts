@@ -97,6 +97,9 @@ export function registerSetupCommands(program: Command): void {
               : "Instruction added to";
             console.log(`    + ${instrLabel} ${target.instructionPath ?? "config"}`);
           }
+          if (result.slashCommandsInstalled && result.slashCommandsInstalled.length > 0) {
+            console.log(`    + Slash commands: ${result.slashCommandsInstalled.map((c) => "/" + c).join(" ")}`);
+          }
           if (target.config.instructionStrategy === "none") {
             console.log("    i No instruction mechanism — AI will discover tools automatically");
           }
@@ -148,6 +151,7 @@ export function registerSetupCommands(program: Command): void {
         } else {
           if (r.mcpRemoved) console.log("    - MCP entry removed");
           if (r.instructionRemoved) console.log("    - Instruction removed");
+          if (r.slashCommandsRemoved && r.slashCommandsRemoved.length > 0) console.log("    - Slash commands removed");
           if (!r.mcpRemoved && !r.instructionRemoved) console.log("    ~ Nothing found");
         }
       }

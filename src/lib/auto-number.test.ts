@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getNextNumber, slugify } from "./auto-number.js";
+import { claimNumberedFile, getNextNumber, slugify } from "./auto-number.js";
 import { VaultFS } from "./vault-fs.js";
 
 describe("auto-number", () => {
@@ -75,6 +75,54 @@ describe("auto-number", () => {
       
       const result = await getNextNumber(vaultFs, "triple");
       expect(result).toBe(101);
+    });
+  });
+
+  describe("claimNumberedFile", () => {
+    it("exclusively creates the first numbered file", async () => {
+      await mkdir(join(vaultRoot, "claims"), { recursive: true });
+
+      const claim = await claimNumberedFile(
+        vaultFs,
+        "claims",
+        (_number, padded) => `${padded}-first.md`,
+        (number) => `content-${number}`,
+      );
+
+      expect(claim.number).toBe(1);
+      expect(claim.path).toBe("claims/001-first.md");
+      expect(await vaultFs.read(claim.path)).toBe("content-1");
+    });
+
+    it("increments past an existing file on EEXIST", async () => {
+      await vaultFs.write("retry/001-here.md", "taken");
+
+      const claim = await claimNumberedFile(
+        vaultFs,
+        "retry",
+        (_number, padded) => `${padded}-here.md`,
+        () => "new",
+        { startAt: 1 },
+      );
+
+      expect(claim.number).toBe(2);
+      expect(claim.path).toBe("retry/002-here.md");
+      expect(await vaultFs.read("retry/001-here.md")).toBe("taken");
+      expect(await vaultFs.read("retry/002-here.md")).toBe("new");
+    });
+
+    it("gives concurrent claims distinct numbers", async () => {
+      await mkdir(join(vaultRoot, "race"), { recursive: true });
+
+      const [a, b] = await Promise.all([
+        claimNumberedFile(vaultFs, "race", (_number, padded) => `${padded}-same.md`, (number) => `a-${number}`),
+        claimNumberedFile(vaultFs, "race", (_number, padded) => `${padded}-same.md`, (number) => `b-${number}`),
+      ]);
+
+      expect([a.number, b.number].sort((x, y) => x - y)).toEqual([1, 2]);
+      expect(a.path).not.toBe(b.path);
+      expect(await vaultFs.read("race/001-same.md")).toBeDefined();
+      expect(await vaultFs.read("race/002-same.md")).toBeDefined();
     });
   });
 

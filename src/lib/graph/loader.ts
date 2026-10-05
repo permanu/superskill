@@ -78,9 +78,13 @@ export function formatSystemBrief(
     lines.push(`Horizontal co-activations: ${index.topCoActivations.slice(0, 5).map((e) => `${e.from}~${e.to}`).join(", ")}`);
   }
 
+  lines.push(
+    "Worktree caches: use MCP worktree_status / worktree_audit; worktree_activate installs the shared-cache policy (consent first).",
+  );
+
   if (
     (phase === "review" || phase === "ship") &&
-    (/\b(review|diff|audit|pr)\b/i.test(task) ||
+    (/\b(review|diff|audit|pr|defect|critique)\b/i.test(task) ||
       (/\b(security|cve|xss|authz)\b/i.test(task) && /\b(fix|bug|patch)\b/i.test(task)))
   ) {
     lines.push(

@@ -36,6 +36,7 @@ const WRITE_TOOLS = new Set([
   "prune", "deprecate", "init", "skill_install", "skill_remove",
   "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
   "rollback", "capture", "register",
+  "worktree_activate", "worktree_apply", "worktree_gc", "worktree_uninstall",
 ]);
 
 function checkRateLimit(toolName: string): void {
@@ -51,9 +52,12 @@ function checkRateLimit(toolName: string): void {
   writeTimestamps.push(now);
 }
 
+const SERVER_INSTRUCTIONS =
+  "Repo-local shared build-cache policy for git worktrees. Before installs/builds in a worktree, call worktree_env. If a repo has multiple worktrees or heavy build caches and no policy, inspect with worktree_audit or worktree_status, then propose worktree_activate (preview with confirm=false). Env, audit, and status are read-only. worktree_gc defaults to a dry-run report; it quarantines only with confirm=true, and quarantine is reversible via undo. worktree_apply requires confirm=true. worktree_uninstall removes hooks/policy; caches stay unless purge_local and confirm are both true. Never delete worktrees or user files. Pass confirm=true only after the user agrees.";
+
 const server = new Server(
   { name: "superskill", version },
-  { capabilities: { tools: {}, resources: {}, prompts: {} } }
+  { capabilities: { tools: {}, resources: {}, prompts: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
 // ── Tools ─────────────────────────────────────────────
@@ -222,7 +226,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}`,
+              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}\n\n## Worktree Cache\nRun worktree_status to check worktree-cache policy, hook state, and per-worktree safety before installs or builds.`,
             },
           },
         ],
