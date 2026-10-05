@@ -31,6 +31,8 @@ superskill-cli skill init          # detect stack, index the in-repo catalog, bu
 superskill-cli setup               # register MCP + instructions in every detected AI client
 ```
 
+Two commands ship: **`superskill-cli`** for everything you run yourself (`setup`, `doctor`, `skill`, …), and **`superskill`** — the MCP server your AI client launches; you rarely call it directly (its `--version`/`--help` work if you do).
+
 1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
 2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) for each host that supports them — plus the harness-agnostic `superskill` skill at `~/.agents/skills/superskill/SKILL.md` so hosts with skill discovery list it. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
 3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/watchdog [dig|fix]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
@@ -39,6 +41,24 @@ superskill-cli setup               # register MCP + instructions in every detect
 Want a vault context document too? `superskill-cli init .` prints a draft `context.md`; review it, then save it with `superskill-cli write`.
 
 Verify any time with `superskill-cli doctor`: install vs running MCP servers, vault + project mapping, project graph isolation (fails if `.superskill/` is tracked), catalog validation, compile toolchains, telemetry, and MCP clients.
+
+### Upgrade
+
+```bash
+npm install -g superskill@latest
+superskill-cli setup        # refresh slash commands + the shared skill (idempotent)
+```
+
+`setup --force` also rewrites the MCP entry and instruction file. MCP servers pick up the new version on their next restart.
+
+### Uninstall
+
+```bash
+superskill-cli teardown     # MCP entries, instructions, slash commands, shared skill
+npm uninstall -g superskill
+```
+
+`teardown` supports `--dry-run` and `--clients <list>` and leaves your vault data (`VAULT_PATH`) untouched; project-local `.superskill/` state can be deleted per repo.
 
 ### MCP configuration
 
@@ -95,7 +115,7 @@ args = ["-y", "superskill"]
 VAULT_PATH = "~/Vaults/ai"
 ```
 
-Claude Code plugin: `/plugin marketplace add permanu/superskill` then `/plugin install superskill`.
+**Claude Code plugin** — `/plugin marketplace add permanu/superskill`, then `/plugin install superskill@superskill`. The plugin ships the `superskill` skill; run `superskill-cli setup` once to register the MCP server.
 
 Then prompt normally and call the `superskill` tool with the task.
 
@@ -366,7 +386,7 @@ superskill-cli worktree gc --undo <journalId>
 - **Where state lives** — policy, `hook.state`, `journal.jsonl`, and manifests under `.git/superskill/`; caches under the platform cache root (`SUPERSKILL_CACHE_ROOT` to move it); quarantined dirs under `<cacheRoot>/_quarantine/`.
 - **Opt out** — `SUPERSKILL_WORKTREE_BOOTSTRAP=0` disables post-checkout seeding for one process; `superskill-cli worktree uninstall` removes hooks and adapters entirely.
 
-### Uninstall
+### Uninstalling the worktree integration
 
 ```bash
 superskill-cli worktree uninstall
