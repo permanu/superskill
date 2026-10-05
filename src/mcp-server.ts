@@ -12,6 +12,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createRegistry } from "./core/registry.js";
+import { handleInfoFlags } from "./core/cli-info.js";
 import { VaultError } from "./lib/vault-fs.js";
 import { createScopedCtx, getSessionRegistry } from "./app-context.js";
 import { readCommand, listCommand } from "./commands/read.js";
@@ -290,6 +291,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 // ── Start ─────────────────────────────────────────────
 
 async function main() {
+  if (handleInfoFlags(process.argv.slice(2), version)) return;
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
