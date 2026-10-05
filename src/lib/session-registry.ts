@@ -94,10 +94,19 @@ export class SessionRegistryManager {
   }
 
   /**
+   * Look up a session by id without modifying the registry.
+   */
+  async get(sessionId: string): Promise<Session | null> {
+    return await this.withLock(async () => {
+      const registry = await this.readRegistry();
+      return registry.sessions.find((s) => s.id === sessionId) ?? null;
+    });
+  }
+
+  /**
    * Update heartbeat for a session. Returns false if session not found.
    */
-  async heartbeat(sessionId: string): Promise<boolean> {
-    return await this.withLock(async () => {
+  async heartbeat(sessionId: string): Promise<boolean> {    return await this.withLock(async () => {
       const registry = await this.readRegistry();
       const session = registry.sessions.find((s) => s.id === sessionId);
       if (!session) return false;

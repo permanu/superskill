@@ -2,6 +2,9 @@
 import type { CommandContext } from "../core/types.js";
 import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
 import { serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";
+import { loadGraph, writeGraph, findNodes } from "../lib/graph/store.js";
+import { endSession } from "../lib/graph/learner.js";
+import type { SessionNode, SessionOutcome } from "../lib/graph/schema.js";
 
 export async function sessionCommand(
   args: {
@@ -58,6 +61,7 @@ export async function sessionCommand(
 
     case "complete": {
       if (!args.sessionId) throw new Error("Session ID required for complete");
+      const existing = await registry.get(args.sessionId);
       await registry.complete(args.sessionId, args.taskSummary);
 
       let sessionNotePath: string | undefined;
@@ -65,7 +69,7 @@ export async function sessionCommand(
         sessionNotePath = await persistSessionNote(vaultFs, {
           sessionId: args.sessionId,
           project: args.project,
-          tool: args.tool ?? extractToolFromId(args.sessionId),
+          tool: args.tool ?? existing?.tool ?? extractToolFromId(args.sessionId),
           outcome: args.outcome ?? args.taskSummary ?? "",
           filesTouched: args.filesTouched ?? [],
           tasksCompleted: args.tasksCompleted ?? [],
@@ -74,9 +78,11 @@ export async function sessionCommand(
           blocked: args.blocked ?? [],
           verificationRun: args.verificationRun,
           commandsToResume: args.commandsToResume ?? [],
-          startedAt: new Date().toISOString(),
+          startedAt: existing?.started_at ?? new Date().toISOString(),
         });
       }
+
+      await settleGraphSession(args, existing?.tool);
 
       return { session_note_path: sessionNotePath };
     }
@@ -97,6 +103,46 @@ function extractToolFromId(sessionId: string): string {
     return parts.slice(0, -1).join("-");
   }
   return "unknown";
+}
+
+function mapOutcome(args: { outcome?: string; blocked?: string[]; partiallyCompleted?: string[] }): SessionOutcome {
+  const explicit = (args.outcome ?? "").toLowerCase();
+  if (explicit.includes("abandon")) return "abandoned";
+  if (explicit.includes("partial")) return "partial";
+  if (/(success|complete|done|shipped)/.test(explicit)) return "success";
+  if ((args.blocked ?? []).length > 0 || (args.partiallyCompleted ?? []).length > 0) return "partial";
+  return "success";
+}
+
+/**
+ * Best-effort: close the most recent open graph session with a real outcome and
+ * insights. Sessions are opened by skill activation in this repo; this records
+ * what actually happened so retro-style analysis has outcomes to work with.
+ */
+async function settleGraphSession(
+  args: { outcome?: string; blocked?: string[]; partiallyCompleted?: string[]; completed?: string[] },
+  _tool?: string,
+): Promise<void> {
+  try {
+    const projectDir = process.cwd();
+    const graph = await loadGraph(projectDir);
+    if (graph.nodes.length === 0) return;
+    const open = findNodes<SessionNode>(graph, "session")
+      .filter((session) => session.outcome === null)
+      .sort((a, b) => b.ts - a.ts);
+    if (open.length === 0) return;
+
+    const outcome = mapOutcome(args);
+    const insights = [
+      ...(args.completed ?? []),
+      ...(args.blocked ?? []).map((item) => `blocked: ${item}`),
+    ].slice(0, 10);
+
+    const updated = endSession(graph, open[0].id, outcome, insights);
+    await writeGraph(projectDir, updated);
+  } catch (err: unknown) {
+    console.error(`[session] graph outcome update failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function persistSessionNote(

@@ -43,6 +43,7 @@ import { worktreeActivateCommand } from "../commands/worktree/activate.js";
 import { worktreeApplyCommand } from "../commands/worktree/apply.js";
 import { worktreeUninstallCommand } from "../commands/worktree/uninstall.js";
 import { hygieneCommand } from "../commands/hygiene.js";
+import { watchdogCommand, type WatchdogArgs } from "../commands/watchdog.js";
 import { HYGIENE_CATEGORY_ORDER } from "../lib/hygiene/report.js";
 import type { AcceptanceInput } from "../lib/gates/spec.js";
 import type { TicketStatus } from "../lib/gates/tickets.js";
@@ -1422,6 +1423,56 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       sizes: b(raw.sizes),
       categories: a(raw.categories) as string[] | undefined,
+    }),
+  });
+
+  r.register("watchdog", {
+    handler: watchdogCommand as CommandHandler,
+    toolDef: {
+      name: "watchdog",
+      description:
+        "Session review + environment optimization. action='dig' analyzes a session, a window of sessions, or the machine environment and returns severity-ranked findings with evidence and proposals (digests for agent reasoning, persisted to the vault as watchdog notes). action='fix' applies approved repairs — dry-run by default; file reclamation is quarantined and reversible. action='status' lists past digs and pending findings.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["dig", "fix", "status"], description: "watchdog action" },
+          scope: { type: "string", enum: ["session", "window", "env", "all"], description: "dig scope (default session)" },
+          session_id: { type: "string", description: "Session id, optionally tool:id (default: latest session in this project)" },
+          tool: { type: "string", description: "Restrict to a harness: opencode | claude-code | codex" },
+          since: { type: "string", description: "Window start for scope=window: 7d, 24h, or ISO date" },
+          count: { type: "number", description: "Max sessions in window (default 20)" },
+          project: { type: "string", description: "Project slug (auto-detected when omitted)" },
+          all_projects: { type: "boolean", description: "Ignore the current project filter; review sessions across all projects" },
+          persist: { type: "boolean", description: "Persist the dig report to the vault (default true)" },
+          finding_ids: { type: "array", items: { type: "string" }, description: "Finding ids for action=fix" },
+          categories: {
+            type: "array",
+            items: { type: "string" },
+            description: "Finding categories for action=fix; include 'leaked-tmp' to reclaim leaked .tmp files",
+          },
+          dismiss: { type: "boolean", description: "action=fix: mark dismissed instead of applied" },
+          apply: { type: "boolean", description: "action=fix: actually perform changes (default false = dry-run)" },
+          report_path: { type: "string", description: "action=fix: target a specific stored report path" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as WatchdogArgs["action"],
+      scope: s(raw.scope) as WatchdogArgs["scope"],
+      sessionId: s(raw.session_id),
+      tool: s(raw.tool),
+      since: s(raw.since),
+      count: n(raw.count),
+      project: s(raw.project),
+      allProjects: b(raw.all_projects),
+      persist: typeof raw.persist === "boolean" ? raw.persist : undefined,
+      findingIds: a(raw.finding_ids) as string[] | undefined,
+      categories: a(raw.categories) as string[] | undefined,
+      dismiss: b(raw.dismiss),
+      apply: b(raw.apply),
+      reportPath: s(raw.report_path),
     }),
   });
 

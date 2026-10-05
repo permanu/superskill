@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.10.0",
+  "version": "0.9.0",
   "description": "One-entry orchestrator for coding agents: skill routing, jailed project vault, spec/ticket/evidence gates, and an in-repo catalog of curated packs with 2,245 verified atomic rules.",
   "author": {
     "name": "Permanu (Atharva Pandey)",

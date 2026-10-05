@@ -5,6 +5,7 @@ import type {
   SessionNode,
   SessionOutcome,
   ProjectSkillEdge,
+  SkillNode,
   SkillSkillEdge,
 } from "./schema.js";
 import { addNode, addEdge, updateNode, findNode, findNodes, pruneSessions, decayWeights } from "./store.js";
@@ -131,6 +132,10 @@ export function recordActivation(
     };
     updated = { ...updated, edges };
   }
+
+  updated = updateNode(updated, "skill", skillId, {
+    lastUsed: Date.now(),
+  } as Partial<SkillNode>);
 
   for (const existingSkillId of session.skills) {
     if (existingSkillId === skillId) continue;

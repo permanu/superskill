@@ -38,6 +38,7 @@ import { worktreeApplyCommand, renderWorktreeApply } from "./commands/worktree/a
 import { worktreeUninstallCommand, renderWorktreeUninstall } from "./commands/worktree/uninstall.js";
 import { worktreeBootstrapCommand } from "./commands/worktree/bootstrap.js";
 import { hygieneCommand, renderHygieneReport } from "./commands/hygiene.js";
+import { watchdogCommand } from "./commands/watchdog.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
@@ -1946,6 +1947,128 @@ export function createProgram(): Command {
           console.log(JSON.stringify(report, null, 2));
         } else {
           console.log(renderHygieneReport(report, { due: opts.due }));
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── watchdog ─────────────────────────────────────────
+  const watchdogCmd = program
+    .command("watchdog")
+    .description("Session review + environment optimization — dig for findings, fix what you approve");
+
+  watchdogCmd
+    .command("dig")
+    .description("Analyze a session, a window of sessions, or the machine environment")
+    .option("--session <id>", "Session id, optionally tool:id (default: latest session in this project)")
+    .option("--scope <kind>", "session | window | env | all (default: session)")
+    .option("--since <duration>", "Window start: 7d, 24h, or ISO date")
+    .option("--count <n>", "Max sessions in a window (default 20)")
+    .option("--all-projects", "Review sessions across all projects (ignore the current project filter)")
+    .option("-p, --project <slug>", "Target a vault project (default: auto-detect)")
+    .option("--tool <name>", "Restrict to a harness: opencode | claude-code | codex")
+    .option("--no-persist", "Return the report without writing it to the vault")
+    .option("--json", "Print raw JSON instead of the rendered report")
+    .addHelpText(
+      "after",
+      "\nExamples:\n  $ superskill-cli watchdog dig\n  $ superskill-cli watchdog dig --scope window --since 7d\n  $ superskill-cli watchdog dig --scope env\n  $ superskill-cli watchdog dig --session opencode:ses_abc123",
+    )
+    .action(async (opts: { session?: string; scope?: string; since?: string; count?: string; allProjects?: boolean; project?: string; tool?: string; persist?: boolean; json?: boolean }) => {
+      try {
+        const result = await watchdogCommand(
+          {
+            action: "dig",
+            sessionId: opts.session,
+            scope: opts.scope as "session" | "window" | "env" | "all" | undefined,
+            since: opts.since,
+            count: opts.count ? Number(opts.count) : undefined,
+            allProjects: opts.allProjects,
+            project: opts.project,
+            tool: opts.tool,
+            persist: opts.persist,
+          },
+          await createScopedCtx(),
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        if (result.action !== "dig") return;
+        console.log(result.rendered);
+        if (result.persisted_path) console.log(`\nSaved: ${result.persisted_path}`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  watchdogCmd
+    .command("fix")
+    .description("Apply approved repairs (dry-run unless --apply; quarantine+undo for file reclamation)")
+    .option("--finding <ids...>", "Finding ids to mark")
+    .option("--category <names...>", "Finding categories to mark, or 'leaked-tmp' to reclaim leaked .tmp files")
+    .option("--dismiss", "Mark findings dismissed instead of applied")
+    .option("--apply", "Actually perform changes (default: dry-run preview)")
+    .option("-p, --project <slug>", "Target a vault project (default: auto-detect)")
+    .option("--json", "Print raw JSON")
+    .addHelpText(
+      "after",
+      "\nExamples:\n  $ superskill-cli watchdog fix --category leaked-tmp\n  $ superskill-cli watchdog fix --category leaked-tmp --apply\n  $ superskill-cli watchdog fix --finding f_ab12cd34ef --apply",
+    )
+    .action(async (opts: { finding?: string[]; category?: string[]; dismiss?: boolean; apply?: boolean; project?: string; json?: boolean }) => {
+      try {
+        const result = await watchdogCommand(
+          {
+            action: "fix",
+            findingIds: opts.finding,
+            categories: opts.category,
+            dismiss: opts.dismiss,
+            apply: opts.apply,
+            project: opts.project,
+          },
+          await createScopedCtx(),
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        if (result.action !== "fix") return;
+        if (result.actions.length === 0) {
+          console.log("Watchdog fix: nothing selected. Pass --finding <id> or --category <name> (see `watchdog status`).");
+          return;
+        }
+        console.log(result.dryRun ? "Watchdog fix (dry-run — pass --apply to execute):" : "Watchdog fix:");
+        for (const action of result.actions) {
+          console.log(`- [${action.status}] ${action.description}${action.error ? ` — ${action.error}` : ""}`);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  watchdogCmd
+    .command("status")
+    .description("List past digs, open findings, and detected trace sources")
+    .option("-p, --project <slug>", "Target a vault project (default: auto-detect)")
+    .option("--json", "Print raw JSON")
+    .action(async (opts: { project?: string; json?: boolean }) => {
+      try {
+        const result = await watchdogCommand({ action: "status", project: opts.project }, await createScopedCtx());
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        if (result.action !== "status") return;
+        console.log(result.rendered);
+        const detected = result.sources.filter((source) => source.root !== null).map((source) => source.id);
+        if (detected.length > 0) {
+          console.log(`\nTrace sources: ${detected.join(", ")}`);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

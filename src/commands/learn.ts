@@ -69,6 +69,10 @@ export async function learnCommand(
         () => serializeFrontmatter(fm, body),
       );
 
+      if (args.sessionId) {
+        await noteLearningCaptured(vaultFs, projectSlug, args.sessionId);
+      }
+
       return { learning_id: String(claim.number).padStart(3, "0"), path: claim.path };
     }
 
@@ -88,8 +92,39 @@ export async function learnCommand(
   }
 }
 
-async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, learningsDir: string): Promise<LearningItem[]> {
+async function noteLearningCaptured(
+  vaultFs: import("../lib/vault-fs.js").VaultFS,
+  projectSlug: string,
+  sessionId: string,
+): Promise<void> {
+  const dir = `projects/${projectSlug}/sessions`;
   let files: string[];
+  try {
+    files = await vaultFs.list(dir, 1);
+  } catch {
+    return;
+  }
+  for (const file of files.filter((name) => name.endsWith(".md"))) {
+    const path = `${dir}/${file}`;
+    let content: string;
+    try {
+      content = await vaultFs.read(path);
+    } catch {
+      continue;
+    }
+    const { data, content: body } = parseFrontmatter(content);
+    if (data.type !== "session" || data.session_id !== sessionId) continue;
+    const count = Number(data.learnings_captured ?? 0) + 1;
+    try {
+      await vaultFs.write(path, serializeFrontmatter({ ...data, learnings_captured: count }, body));
+    } catch (err: unknown) {
+      console.error(`[learn] could not update learnings_captured: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+}
+
+async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, learningsDir: string): Promise<LearningItem[]> {  let files: string[];
   try {
     files = await vaultFs.list(learningsDir, 1);
   } catch {

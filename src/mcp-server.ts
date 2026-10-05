@@ -35,7 +35,7 @@ const WRITE_TOOLS = new Set([
   "write", "decide", "task", "learn", "brainstorm", "session",
   "prune", "deprecate", "init", "skill_install", "skill_remove",
   "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
-  "rollback", "capture", "register",
+  "rollback", "capture", "register", "watchdog",
   "worktree_activate", "worktree_apply", "worktree_gc", "worktree_uninstall",
 ]);
 

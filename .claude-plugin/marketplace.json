@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "One-entry orchestrator for coding agents: skill routing, jailed vault, curated packs, and verified atomic rules.",
-    "version": "0.10.0"
+    "version": "0.9.0"
   },
   "plugins": [
     {
@@ -16,7 +16,7 @@
         "url": "https://github.com/permanu/superskill.git"
       },
       "description": "One-entry orchestrator for coding agents: routes tasks to curated packs and 2,245 sourced rules, keeps a jailed project vault, and enforces spec/ticket/evidence gates.",
-      "version": "0.10.0",
+      "version": "0.9.0",
       "strict": true
     }
   ]

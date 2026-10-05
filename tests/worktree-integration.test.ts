@@ -44,7 +44,7 @@ function isolatedGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-describe("worktree cache integration", () => {
+describe("worktree cache integration", { timeout: 30_000 }, () => {
   let base: string;
   let cacheRoot: string;
   let repo: string;

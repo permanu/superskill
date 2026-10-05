@@ -3,7 +3,7 @@
 export type NodeType = "project" | "skill" | "session";
 export type EdgeType = "project_skill" | "skill_skill" | "session_skill" | "session_file";
 
-export const GRAPH_SCHEMA_VERSION = 2;
+export const GRAPH_SCHEMA_VERSION = 3;
 
 export type AuditStatus = "pass" | "fail" | "warn" | "unknown";
 
@@ -14,7 +14,7 @@ export interface AuditResult {
 }
 
 export type SkillSource = "native" | "routed" | "catalog";
-export type SkillPack = "memory" | "code" | "review" | "security" | "ops" | "devops" | "optimizer" | "pipeline";
+export type SkillPack = "memory" | "code" | "review" | "security" | "ops" | "devops" | "optimizer" | "pipeline" | "watchdog";
 export type ProjectPhase = "explore" | "implement" | "review" | "ship";
 export type SessionOutcome = "success" | "partial" | "abandoned";
 
@@ -36,6 +36,8 @@ export interface SkillNode {
   stars: number;
   w: number;
   ts: number;
+  /** Epoch ms of the most recent activation; absent when never activated. */
+  lastUsed?: number;
   pack?: SkillPack;
   langs?: string[];
   triggers?: string[];

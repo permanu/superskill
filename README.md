@@ -32,8 +32,8 @@ superskill-cli setup               # register MCP + instructions in every detect
 ```
 
 1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
-2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/superskill`) for each host that supports them. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
-3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
+2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) for each host that supports them. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
+3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/watchdog [dig|fix]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
 4. Activations write `.superskill/graph.json` (local only).
 
 Want a vault context document too? `superskill-cli init .` prints a draft `context.md`; review it, then save it with `superskill-cli write`.
@@ -159,6 +159,7 @@ Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS
 | `review/architect` | Review / diff / security fix — 18 axes |
 | `pipeline/plan` `tdd` `verify` `investigate` `qa` | Spec, TDD, evidence-before-done, debug, Chrome QA |
 | `devops/cloud` `devops/sre` | Deploy / SLO / incident — the cloud this repo already uses |
+| `watchdog/dig` `watchdog/fix` | Session review + environment optimization — dig for findings, fix what you approve |
 
 skills.sh remains **opt-in install** (`skill install`), not the default catalog.
 
@@ -413,6 +414,56 @@ superskill-cli hygiene --due --sizes                      # each item prints its
 
 Tune the thresholds with `SUPERSKILL_HYGIENE_CACHE_AGE_DAYS`, `SUPERSKILL_HYGIENE_SCRATCH_TTL_HOURS`, `SUPERSKILL_HYGIENE_DOCKER_AGE_DAYS`, and point scratch scanning at your own roots with `SUPERSKILL_SCRATCH_ROOTS` (colon-separated paths, added to `$TMPDIR`, `/tmp`, and `~/.superskill/scratch`).
 
+## Watchdog
+
+Watchdog reviews the coding-agent environment: the session traces your harness writes (prompts, tool calls, failures, retries, token spend, diffs), pinned against the repo itself — its checks, its steering files, its skill graph — and the machine around it (caches, harness stores, plugins). It returns severity-ranked findings, each with evidence and a concrete proposal, and remembers them across digs so recurring problems carry more weight.
+
+The codebase is the source of truth: traces are claims, findings are only shipped after verification against the repo. Everything runs locally; raw prompts are never persisted — dig notes store findings and evidence references, not transcripts.
+
+### The loop
+
+| Step | Command | What happens |
+|---|---|---|
+| **dig** | `watchdog dig` | Read-only analysis of a session, a window of sessions, the machine environment, or all of it. Writes a report note under `projects/<slug>/watchdog/`. |
+| **fix** | `watchdog fix` | Applies what you approved. Dry-run by default. File reclamation is quarantined and reversible. |
+| **status** | `watchdog status` | Past digs, open findings, recurrence counts, and which trace sources were detected. |
+
+Findings are grouped by the part of the environment that failed: **navigation** (thrash, dead pointers), **verification** (edits with no checks run), **tool economy** (error loops, duplicate calls, oversized outputs), **steering** (oversized / duplicated / stale AGENTS.md and CLAUDE.md), **skills** (dead graph nodes, never-selected rules), **plugins** (unused or erroring MCP servers), **prompt** (repeated course corrections), **guardrails** (a repo with no lint/test/CI safety net), and **environment** (leaked temp files, runaway caches, harness store growth).
+
+### Three ways to reach it
+
+- **CLI**
+
+  ```bash
+  superskill-cli watchdog dig                              # latest session in this project
+  superskill-cli watchdog dig --scope window --since 7d     # bulk review across sessions
+  superskill-cli watchdog dig --scope env                   # machine + repo environment
+  superskill-cli watchdog dig --scope all --json            # everything, machine-readable
+  superskill-cli watchdog status
+  superskill-cli watchdog fix --category leaked-tmp         # dry-run preview
+  superskill-cli watchdog fix --category leaked-tmp --apply # quarantined, reversible
+  ```
+
+- **MCP** — the `watchdog` tool (`action: dig | fix | status`) for any connected agent; `dig` returns the rendered report plus per-session digests that are budgeted for the model.
+- **Slash command** — `/watchdog` (installed by `setup`) loads `catalog/watchdog/dig.md` and walks the verify-first flow.
+- **Natural language** — "run a watchdog dig over this week's sessions", "what did the last session waste on?", "clean up the leaked temp files", "review the agent environment". The router picks the `watchdog` pack from the task.
+
+### What watchdog reads
+
+The trace registry mirrors the setup client list: **OpenCode** (session store, messages, parts, diffs — richest), **Claude Code** (JSONL transcripts), **Codex CLI** (rollouts). Harnesses without a dedicated reader still degrade gracefully: SuperSkill's own session notes, graph, and telemetry cover them, so the loop works everywhere and gets deeper per harness as readers land.
+
+### Safety
+
+`watchdog fix` never deletes. Reclamation moves files into `~/.superskill/quarantine/<timestamp>/` next to a manifest that records origin paths and the undo step. Harness session data, vault notes, and user files are report-only — they are never touched by `fix`. Steering and guardrail edits stay agent-applied with one source of truth, checks over rules (see `catalog/watchdog/dig.md`).
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `SUPERSKILL_OPENCODE_DATA` | Override the OpenCode data root (`~/.local/share/opencode`) |
+| `SUPERSKILL_CLAUDE_PROJECTS` | Override the Claude Code projects root (`~/.claude/projects`) |
+| `SUPERSKILL_CODEX_SESSIONS` | Override the Codex sessions root (`~/.codex/sessions`) |
+
 ## CLI reference
 
 All commands work as `superskill-cli <command>`. Many commands accept `-p, --project <slug>`; the project is auto-detected from the current directory when omitted.
@@ -520,6 +571,16 @@ Read-only space report: what is worth reclaiming, what is due, and the exact com
 |---|---|---|
 | `hygiene` | Machine-wide space hygiene report across caches, worktrees, docker, xcode, and agent scratch | `--due`, `--sizes`, `--category <names...>`, `--json` |
 
+### Watchdog
+
+Session review + environment optimization: dig for findings, fix what you approve.
+
+| Command | Purpose | Common flags |
+|---|---|---|
+| `watchdog dig` | Analyze a session, a window of sessions, or the machine environment; writes a `watchdog/` report note | `--session <id>` / `--scope session\|window\|env\|all` / `--since 7d` / `--count <n>` / `--all-projects` / `--tool <harness>` / `--no-persist` / `--json` |
+| `watchdog fix` | Apply approved findings and reclaim leaks; dry-run unless `--apply`, quarantine + manifest undo | `--finding <ids...>` / `--category <names...>` (incl. `leaked-tmp`) / `--dismiss` / `--apply` / `--json` |
+| `watchdog status` | Past digs, open findings, recurrence counts, detected trace sources | `--json` |
+
 ## MCP tools
 
 The MCP server exposes the tools below — the superset of the CLI surface. MCP tool names use underscores; the CLI adds `setup`/`teardown` but lacks `link`, `extract`, `capture`, `template`, `snapshot_repo_state`, `env_facts`, `cred_refs`, and `rollback`.
@@ -576,6 +637,7 @@ The MCP server exposes the tools below — the superset of the CLI surface. MCP 
 | `worktree_gc` | Cache GC: dry-run report by default; quarantine/purge/undo with `confirm: true`. Params: `tool`, `older_than`, `newer_than`, `min_size`, `max_size`, `tier`, `include`, `exclude`, `keep_latest`, `project`, `all`, `worktree`, `purge`, `undo`, `confirm`. |
 | `worktree_uninstall` | Remove hooks/adapters; policy, caches, and quarantine stay unless `purge_local` + `confirm: true`. |
 | `hygiene_report` | Read-only space hygiene report across caches, worktrees, docker, xcode, and agent scratch; every item carries a reason and a remediation command. Never deletes. Params: `sizes`, `categories`. |
+| `watchdog` | Session review + environment optimization. `dig` analyzes a session, window, or machine environment (findings with evidence + proposals, per-session digests, report note in the vault); `fix` applies approved findings and reclaims leaks (dry-run default, quarantine + undo); `status` lists past digs and open findings. Params: `action`, `scope`, `session_id`, `tool`, `since`, `count`, `project`, `all_projects`, `persist`, `finding_ids`, `categories`, `dismiss`, `apply`, `report_path`. |
 
 ## Workflows
 

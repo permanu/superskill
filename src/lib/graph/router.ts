@@ -118,6 +118,9 @@ export function packsToLoad(task: string, phase: ProjectPhase): Set<SkillPack> {
   if (/(deploy|aws|gcp|azure|vps|terraform|kubernetes)/.test(lower)) packs.add("devops");
   if (/(?:\bprune\b|\bonboard\b|\binit\b)/.test(lower)) packs.add("ops");
   if (/(?:\breview\b|\bpr\b|\bdiff\b)/.test(lower)) packs.add("review");
+  if (/(watchdog|\bdig\b|session review|\bretro\b|bloat|stale (skill|rule|plugin)|unused (skill|plugin|mcp)|agent environment|clean ?up)/.test(lower)) {
+    packs.add("watchdog");
+  }
   return packs;
 }
 

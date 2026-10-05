@@ -33,14 +33,14 @@ describe("slash command install", () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it("installs /review /worktree /superskill with marker and args token", () => {
+  it("installs /review /worktree /watchdog /superskill with marker and args token", () => {
     const result = installSlashCommands(opencodeConfig(), { homeDir: home });
-    expect(result.installed.sort()).toEqual(["review", "superskill", "worktree"]);
+    expect(result.installed.sort()).toEqual(["review", "superskill", "watchdog", "worktree"]);
     const review = readFileSync(join(home, ".config/opencode/commands/review.md"), "utf-8");
     expect(review).toContain(SLASH_COMMAND_MARKER);
     expect(review).toContain("$ARGUMENTS");
     expect(review).toContain('skill_id "review/architect"');
-    for (const name of ["worktree", "superskill"]) {
+    for (const name of ["worktree", "superskill", "watchdog"]) {
       expect(existsSync(join(home, `.config/opencode/commands/${name}.md`))).toBe(true);
     }
   });
@@ -60,7 +60,7 @@ describe("slash command install", () => {
 
   it("dry-run writes nothing", () => {
     const result = installSlashCommands(opencodeConfig(), { homeDir: home, dryRun: true });
-    expect(result.installed.length).toBe(3);
+    expect(result.installed.length).toBe(4);
     expect(existsSync(join(home, ".config/opencode/commands/review.md"))).toBe(false);
   });
 
@@ -68,7 +68,7 @@ describe("slash command install", () => {
     installSlashCommands(opencodeConfig(), { homeDir: home });
     await writeFile(join(home, ".config/opencode/commands/extra.md"), "keep me", "utf-8");
     const removed = removeSlashCommands(opencodeConfig(), { homeDir: home });
-    expect(removed.removed.sort()).toEqual(["review", "superskill", "worktree"]);
+    expect(removed.removed.sort()).toEqual(["review", "superskill", "watchdog", "worktree"]);
     expect(existsSync(join(home, ".config/opencode/commands/review.md"))).toBe(false);
     expect(existsSync(join(home, ".config/opencode/commands/extra.md"))).toBe(true);
   });
@@ -87,12 +87,12 @@ describe("slash command install", () => {
     const gemini = CLIENT_REGISTRY.find((c) => c.slug === "gemini")!;
     const geminiConfig = {
       ...gemini,
-      commandPaths: { ...(gemini.commandPaths ?? {}), [currentPlatform()]: "~/.gemini/commands" },
+      commandPaths: { ...plat, [currentPlatform()]: "~/.gemini/commands" },
     };
 
     const result = installSlashCommands(geminiConfig, { homeDir: home });
 
-    expect(result.installed.sort()).toEqual(["review", "superskill", "worktree"]);
+    expect(result.installed.sort()).toEqual(["review", "superskill", "watchdog", "worktree"]);
     const file = join(home, ".gemini/commands/superskill.toml");
     expect(existsSync(file)).toBe(true);
     expect(readFileSync(file, "utf-8")).toContain("{{args}}");

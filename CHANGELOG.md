@@ -5,9 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0] - 2026-10-05
+## [0.9.0] - 2026-10-05
 
 ### Added
+- `superskill-cli register [path] --slug <name>` (and the MCP `register` tool): map a repo to a vault project so vault-backed commands auto-detect without `-p`. `skill init` now registers automatically and reports the mapping.
+- `superskill-cli doctor` (and the MCP `doctor` tool): one-shot health check across runtime, install-vs-running-MCP freshness, vault, project mapping, project graph isolation, rules catalog, compile toolchains, telemetry, and MCP clients.
+- **Watchdog**: session review + environment optimization. `superskill-cli watchdog dig|fix|status` and the `watchdog` MCP tool review harness session traces (OpenCode, Claude Code, Codex; harnesses without a reader fall back to SuperSkill session notes, graph, and telemetry), pin findings against the repo, and produce severity-ranked findings with evidence and proposals. `dig` scopes: one session, a window (`--since`/`--count`), the machine environment, or all; reports persist as `projects/<slug>/watchdog/` notes with machine-readable finding status. `fix` is dry-run by default; file reclamation quarantines into `~/.superskill/quarantine/<timestamp>/` with a manifest for undo. `status` tracks open findings and recurrence across digs.
+- Watchdog findings cover navigation thrash, verification gaps, tool error loops/duplicates, oversized outputs, steering bloat/duplication/staleness, dead skills, unused or erroring MCP servers, repeated prompt corrections, missing repo guardrails, and environment bloat (leaked `.tmp` files, runaway caches, harness store growth).
+- New `watchdog` catalog pack (`catalog/watchdog/dig.md`, `catalog/watchdog/fix.md`) and a `/watchdog` slash command installed by `setup`; the router selects the pack for natural-language requests like "run a watchdog dig" or "clean up the agent environment".
+- Session data quality: `session complete` records the registry's real `started_at`, closes the repo graph session with a mapped outcome and insights, and `learn` increments `learnings_captured` on the matching session note. Graph schema v3 adds `lastUsed` per skill (updated on every activation).
+- Docs: new **Watchdog** README guide (loop, finding categories, CLI/MCP/slash/natural-language access, safety contract, env overrides).
 - **Worktree shared-cache policy**: agents can share cheap caches (package stores, compiler caches, module caches) across git worktrees while keeping per-worktree build state isolated. `worktree activate` writes `.git/superskill/policy.json` and installs a guarded `post-checkout` hook that seeds new worktrees (reflink where available) and always exits 0.
 - Host session adapters for Claude Code, OpenCode, Codex, Cursor, Gemini CLI, and GrokBuild (plus a generic `AGENTS.md` fallback) inject the shared-cache environment at session start; the OpenCode plugin merges `worktree env --json` into every shell.
 - MCP tools `worktree_status`, `worktree_audit`, `worktree_env`, `worktree_activate`, `worktree_apply`, `worktree_gc`, `worktree_uninstall` (mirrored by `superskill-cli worktree …`). `worktree status` / `worktree audit` report per-worktree safety verdicts, cache duplication, seeded-manifest drift, and a `--budget` flag.
@@ -30,12 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `prune` validates the mode before acting.
 - Project-scope commands fail closed when no project slug can be resolved.
 - Session registry, auto-number, and evidence writes are race-safe.
-
-## [0.9.0] - 2026-10-05
-
-### Added
-- `superskill-cli register [path] --slug <name>` (and the MCP `register` tool): map a repo to a vault project so vault-backed commands auto-detect without `-p`. `skill init` now registers automatically and reports the mapping.
-- `superskill-cli doctor` (and the MCP `doctor` tool): one-shot health check across runtime, install-vs-running-MCP freshness, vault, project mapping, project graph isolation, rules catalog, compile toolchains, telemetry, and MCP clients.
 
 ## [0.8.1] - 2026-10-05
 
