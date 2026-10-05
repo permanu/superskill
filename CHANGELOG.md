@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-05
+
+### Fixed
+- `superskill --version` / `--help` (and `-V` / `-h` / `version` / `help`) now print and exit on the MCP binary; previously they exited silently with no output. MCP client launches with no arguments are unchanged.
+
 ## [0.8.0] - 2026-10-05
 
 ### Added
