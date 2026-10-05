@@ -37,6 +37,7 @@ import { worktreeActivateCommand, renderWorktreeActivate } from "./commands/work
 import { worktreeApplyCommand, renderWorktreeApply } from "./commands/worktree/apply.js";
 import { worktreeUninstallCommand, renderWorktreeUninstall } from "./commands/worktree/uninstall.js";
 import { worktreeBootstrapCommand } from "./commands/worktree/bootstrap.js";
+import { hygieneCommand, renderHygieneReport } from "./commands/hygiene.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
@@ -1910,6 +1911,46 @@ export function createProgram(): Command {
           const msg = e instanceof Error ? e.message : String(e);
           console.log(JSON.stringify({ skipped: true, reason: msg, worktreeRoot: process.cwd(), notes: [] }, null, 2));
         }
+      }
+    });
+
+  // ── hygiene ──────────────────────────────────────────
+  program
+    .command("hygiene")
+    .description(
+      "Machine-wide space hygiene report: what is worth reclaiming and what is due across caches, worktrees, docker, xcode, and agent scratch (report only; deletes nothing)"
+    )
+    .option("--json", "Print the full report as JSON")
+    .option("--due", "Only show items that are due")
+    .option("--sizes", "Measure on-disk sizes (slower, more accurate)")
+    .option("--category <names...>", "Limit to categories: caches worktrees docker xcode scratch")
+    .addHelpText(
+      "after",
+      "\nExamples:\n  $ superskill-cli hygiene\n  $ superskill-cli hygiene --due --sizes\n  $ superskill-cli hygiene --category docker xcode --json"
+    )
+    .action(async (opts: { json?: boolean; due?: boolean; sizes?: boolean; category?: string[] }) => {
+      try {
+        const categories = opts.category
+          ?.flatMap((id) => id.split(","))
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0);
+        const report = await hygieneCommand(
+          {
+            due: opts.due,
+            sizes: opts.sizes,
+            categories: categories && categories.length > 0 ? categories : undefined,
+          },
+          await createScopedCtx(),
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(renderHygieneReport(report, { due: opts.due }));
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
       }
     });
 

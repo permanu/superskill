@@ -42,6 +42,8 @@ import { worktreeGcCommand } from "../commands/worktree/gc.js";
 import { worktreeActivateCommand } from "../commands/worktree/activate.js";
 import { worktreeApplyCommand } from "../commands/worktree/apply.js";
 import { worktreeUninstallCommand } from "../commands/worktree/uninstall.js";
+import { hygieneCommand } from "../commands/hygiene.js";
+import { HYGIENE_CATEGORY_ORDER } from "../lib/hygiene/report.js";
 import type { AcceptanceInput } from "../lib/gates/spec.js";
 import type { TicketStatus } from "../lib/gates/tickets.js";
 
@@ -1395,6 +1397,31 @@ export function createRegistry(): CommandRegistry {
       purgeLocal: b(raw.purge_local),
       yes: b(raw.confirm),
       json: b(raw.json),
+    }),
+  });
+
+  r.register("hygiene_report", {
+    handler: hygieneCommand as CommandHandler,
+    toolDef: {
+      name: "hygiene_report",
+      description:
+        "Read-only machine-wide space hygiene report across mapped repos: build caches, git worktrees, docker, xcode, and agent scratch. Marks entries that are DUE for cleanup with reasons and exact remediation commands. Reports only — deletes nothing.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          sizes: { type: "boolean", description: "Measure on-disk sizes (slower, more accurate)" },
+          categories: {
+            type: "array",
+            items: { type: "string", enum: [...HYGIENE_CATEGORY_ORDER] },
+            description: "Limit to these categories (default: all)",
+          },
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      sizes: b(raw.sizes),
+      categories: a(raw.categories) as string[] | undefined,
     }),
   });
 

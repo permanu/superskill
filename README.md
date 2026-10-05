@@ -372,6 +372,47 @@ superskill-cli worktree uninstall
 
 This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill-cli worktree uninstall --purge-local --yes` and undo with `superskill-cli worktree gc --undo <journalId>`.
 
+## Space hygiene
+
+Worktrees, toolchains, Docker, and Xcode all grow quietly until the disk is full. `hygiene` is a read-only report that answers three questions per cache or leftover: **what is it, how big is it, and is it due?** It never deletes anything — every item carries a reason and the exact command to reclaim it, and acting on it is always a separate, explicit step.
+
+Three ways to reach it:
+
+- **CLI** — `superskill-cli hygiene`
+- **MCP** — the `hygiene_report` tool (read-only; agents can call it before heavy builds to warn the user)
+- **Agent prompt** — "run a space hygiene report" routes to the tool in every host
+
+```bash
+superskill-cli hygiene                          # fast report, all probes
+superskill-cli hygiene --due                    # only what is due
+superskill-cli hygiene --due --sizes            # measure real bytes on disk (slower)
+superskill-cli hygiene --category docker xcode  # limit probes
+superskill-cli hygiene --json                   # scripts + agents
+```
+
+| Probe | Looks at | Due when |
+|---|---|---|
+| `caches` | SuperSkill-managed shared caches **and** default locations (`go-build`, `Mozilla.sccache`, pnpm/pip stores, `~/go/pkg/mod`, …) | auto tier past 30d; consent tier ≥ 1 GiB and past 30d |
+| `worktrees` | Prunable registrations and live worktrees across vault-mapped repos | stale registrations; live worktree clean, fully pushed, no ignored files, unlocked, idle ≥ 14d |
+| `docker` | Dangling images, unreferenced volumes, build cache (read-only `docker system df`) | dangling images / build cache ≥ 1 GiB; unreferenced volumes ≥ 1 GiB and ≥ 14d old |
+| `xcode` | DerivedData, legacy iOS DeviceSupport, unavailable simulators | DerivedData ≥ 5 GiB; DeviceSupport older than the newest version; any unavailable simulator |
+| `scratch` | Temp/scratch roots; dirs with a `.superskill-scratch.json` marker are *owned*, everything else is *review-only* | owned scratch idle ≥ 72h |
+
+Each item reports `bytes`, `ageDays`, `tier` (`auto` = regenerable, `consent` = needs an explicit OK, `review` = verify manually), `due`, `reason`, and `plan` — the literal command to reclaim it. Due-ness is conservative: unknown sizes/ages never mark an item due, dirty or unpushed worktrees are blocked, ignored files block worktree removals, and scratch is only ever recommended as due when it carries the ownership marker.
+
+Acting on the report is explicit and reuses the existing safety rails:
+
+```bash
+# Caches: the plan hands off to worktree gc (dry-run default, quarantine, undo)
+superskill-cli worktree gc --all --older-than 30d         # review
+superskill-cli worktree gc --all --older-than 30d --apply # quarantine, reversible
+
+# Docker / Xcode / scratch: review the plan, then run it yourself
+superskill-cli hygiene --due --sizes                      # each item prints its plan
+```
+
+Tune the thresholds with `SUPERSKILL_HYGIENE_CACHE_AGE_DAYS`, `SUPERSKILL_HYGIENE_SCRATCH_TTL_HOURS`, `SUPERSKILL_HYGIENE_DOCKER_AGE_DAYS`, and point scratch scanning at your own roots with `SUPERSKILL_SCRATCH_ROOTS` (colon-separated paths, added to `$TMPDIR`, `/tmp`, and `~/.superskill/scratch`).
+
 ## CLI reference
 
 All commands work as `superskill-cli <command>`. Many commands accept `-p, --project <slug>`; the project is auto-detected from the current directory when omitted.
@@ -471,6 +512,14 @@ Local, opt-in rule-selection telemetry. Off by default; nothing leaves the machi
 
 Set `SUPERSKILL_TELEMETRY=1` (or `0`) to override the persisted setting for one process.
 
+### Hygiene
+
+Read-only space report: what is worth reclaiming, what is due, and the exact command for each item. Deletes nothing.
+
+| Command | Purpose | Common flags |
+|---|---|---|
+| `hygiene` | Machine-wide space hygiene report across caches, worktrees, docker, xcode, and agent scratch | `--due`, `--sizes`, `--category <names...>`, `--json` |
+
 ## MCP tools
 
 The MCP server exposes the tools below — the superset of the CLI surface. MCP tool names use underscores; the CLI adds `setup`/`teardown` but lacks `link`, `extract`, `capture`, `template`, `snapshot_repo_state`, `env_facts`, `cred_refs`, and `rollback`.
@@ -526,6 +575,7 @@ The MCP server exposes the tools below — the superset of the CLI surface. MCP 
 | `worktree_apply` | Apply audit items (policy, hook, seed, prune); plan unless `confirm: true`. Params: `item`, `all_safe`, `confirm`. |
 | `worktree_gc` | Cache GC: dry-run report by default; quarantine/purge/undo with `confirm: true`. Params: `tool`, `older_than`, `newer_than`, `min_size`, `max_size`, `tier`, `include`, `exclude`, `keep_latest`, `project`, `all`, `worktree`, `purge`, `undo`, `confirm`. |
 | `worktree_uninstall` | Remove hooks/adapters; policy, caches, and quarantine stay unless `purge_local` + `confirm: true`. |
+| `hygiene_report` | Read-only space hygiene report across caches, worktrees, docker, xcode, and agent scratch; every item carries a reason and a remediation command. Never deletes. Params: `sizes`, `categories`. |
 
 ## Workflows
 
