@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Graph } from "./schema.js";
-import { matchTask, getPhaseForTask, rankSkills, alwaysOnSkillIds } from "./router.js";
+import { matchTask, getPhaseForTask, rankSkills, alwaysOnSkillIds, packsToLoad } from "./router.js";
 
 function makeProjectNode(stack: string[] = ["ts", "react"]) {
   return {
@@ -154,6 +154,12 @@ describe("getPhaseForTask", () => {
   it("detects review phase from defect/critique wording", () => {
     expect(getPhaseForTask("check for defects across the project")).toBe("review");
     expect(getPhaseForTask("critique the architecture")).toBe("review");
+  });
+
+  it("allows triggered pipeline skills in every phase", () => {
+    for (const phase of ["explore", "implement", "review", "ship"] as const) {
+      expect(packsToLoad("lazy yagni", phase).has("pipeline")).toBe(true);
+    }
   });
 
   it("detects implement phase from build/create keywords", () => {

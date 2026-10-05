@@ -91,6 +91,7 @@ export function buildTriggerIndex(skills: SkillNode[]): Map<string, string[]> {
 
 export function packsToLoad(task: string, phase: ProjectPhase): Set<SkillPack> {
   const packs = new Set<SkillPack>();
+  packs.add("pipeline");
   if (phase === "explore") {
     packs.add("memory");
     packs.add("optimizer");
