@@ -5,7 +5,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildActivationEvent } from "./recorder.js";
-import { buildTelemetryReport, readTelemetryEvents, renderTelemetryReport } from "./report.js";
+import {
+  NEVER_TRIGGERED_MIN_ACTIVATIONS,
+  buildTelemetryReport,
+  readTelemetryEvents,
+  renderTelemetryReport,
+} from "./report.js";
 
 let dir: string;
 
@@ -73,11 +78,21 @@ describe("buildTelemetryReport", () => {
     expect(report.langs.typescript).toBe(1);
   });
 
-  it("renders a readable report", () => {
+  it("renders a readable report and hides weak never-triggered signal", () => {
     const report = buildTelemetryReport([event()], ["rust-a", "rust-b", "rust-z"]);
     const text = renderTelemetryReport(report);
     expect(text).toContain("Telemetry report");
     expect(text).toContain("rust-a");
+    expect(text).toContain("insufficient data");
+    expect(text).not.toContain("rust-z");
+  });
+
+  it("lists never-triggered rules once enough activations exist", () => {
+    const events = Array.from({ length: NEVER_TRIGGERED_MIN_ACTIVATIONS }, (_, i) =>
+      event({ prompt: `implement feature ${i}` })
+    );
+    const report = buildTelemetryReport(events, ["rust-a", "rust-b", "rust-z"]);
+    const text = renderTelemetryReport(report);
     expect(text).toContain("Never triggered");
     expect(text).toContain("rust-z");
   });

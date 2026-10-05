@@ -6,7 +6,7 @@ import type { RulesIndex } from "./index-builder.js";
 import { loadRules } from "./loader.js";
 import { buildPrincipleIndex, loadPrinciples } from "./principles.js";
 import type { ParsedPrinciple, PrinciplesIndex } from "./principles.js";
-import { DEFAULT_BUDGET_TOKENS, route } from "./router.js";
+import { DEFAULT_BUDGET_TOKENS, inferPhase, route } from "./router.js";
 import { estimateRuleTokens } from "./select.js";
 
 const FIXTURE_ROOT = fileURLToPath(new URL("./__fixtures__/rules/", import.meta.url));
@@ -263,5 +263,37 @@ describe("matchGlob", () => {
     expect(matchGlob("src/*.ts", "src/deep/a.ts")).toBe(false);
     expect(matchGlob("src/?.ts", "src/a.ts")).toBe(true);
     expect(matchGlob("src/?.ts", "src/ab.ts")).toBe(false);
+  });
+});
+
+describe("inferPhase", () => {
+  it("routes common task verbs to their phase", () => {
+    expect(inferPhase("fix the retry bug")).toBe("implement");
+    expect(inferPhase("debug a deadlock in the worker")).toBe("implement");
+    expect(inferPhase("add tests for the parser")).toBe("implement");
+    expect(inferPhase("optimize the hot loop")).toBe("implement");
+    expect(inferPhase("migrate the client to the new API")).toBe("implement");
+    expect(inferPhase("verify the migration output")).toBe("review");
+    expect(inferPhase("review the diff")).toBe("review");
+    expect(inferPhase("analyze the logs")).toBe("explore");
+    expect(inferPhase("release v2")).toBe("ship");
+  });
+
+  it("matches inflected forms", () => {
+    expect(inferPhase("fixing the flaky test")).toBe("implement");
+    expect(inferPhase("shipping the integration")).toBe("ship");
+    expect(inferPhase("debugging a hang")).toBe("implement");
+    expect(inferPhase("refactoring the loader")).toBe("review");
+  });
+
+  it("does not match keywords inside unrelated words", () => {
+    expect(inferPhase("stage the fixture")).toBe("explore");
+    expect(inferPhase("the latest gossip")).toBe("explore");
+    expect(inferPhase("address the leftover comment")).toBe("explore");
+  });
+
+  it("falls back to explore", () => {
+    expect(inferPhase("")).toBe("explore");
+    expect(inferPhase("think about the problem")).toBe("explore");
   });
 });

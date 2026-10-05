@@ -127,6 +127,9 @@ function formatCounts(counts: Record<string, number>): string {
   return entries.map(([key, value]) => `${key} ${value}`).join(", ");
 }
 
+/** Below this many activations the never-triggered list is noise, not signal. */
+export const NEVER_TRIGGERED_MIN_ACTIVATIONS = 10;
+
 export function renderTelemetryReport(report: TelemetryReport): string {
   const lines: string[] = [];
   lines.push("Telemetry report — rule selection effectiveness");
@@ -149,9 +152,17 @@ export function renderTelemetryReport(report: TelemetryReport): string {
   if (report.dropped.length === 0) lines.push("  (none)");
   for (const stat of report.dropped.slice(0, 10)) lines.push(`  ${stat.count.toString().padStart(5)}  ${stat.id}`);
   lines.push("");
-  lines.push(`Never triggered (${report.neverSelected.length}) — revisit triggers or retire:`);
-  if (report.neverSelected.length === 0) lines.push("  (none)");
-  for (const id of report.neverSelected.slice(0, 30)) lines.push(`  ${id}`);
-  if (report.neverSelected.length > 30) lines.push(`  … and ${report.neverSelected.length - 30} more`);
+  if (report.activations < NEVER_TRIGGERED_MIN_ACTIVATIONS) {
+    lines.push(
+      `Never triggered (${report.neverSelected.length}) — insufficient data: ` +
+        `${report.activations}/${NEVER_TRIGGERED_MIN_ACTIVATIONS} activation(s) recorded; ` +
+        `collect more before tuning triggers.`
+    );
+  } else {
+    lines.push(`Never triggered (${report.neverSelected.length}) — revisit triggers or retire:`);
+    if (report.neverSelected.length === 0) lines.push("  (none)");
+    for (const id of report.neverSelected.slice(0, 30)) lines.push(`  ${id}`);
+    if (report.neverSelected.length > 30) lines.push(`  … and ${report.neverSelected.length - 30} more`);
+  }
   return lines.join("\n");
 }

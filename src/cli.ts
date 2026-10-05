@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { readCommand, listCommand } from "./commands/read.js";
 import { writeCommand } from "./commands/write.js";
 import { searchCommand } from "./commands/search.js";
@@ -187,12 +189,18 @@ program
 // ── init ──────────────────────────────────────────────
 program
   .command("init <project-path>")
-  .description("Scan a git repo and generate draft context.md")
+  .description("Draft a vault context.md from a repo scan (does not set up skill routing — use `skill init`)")
   .option("-s, --slug <name>", "Project slug (default: directory name)")
   .action(async (projectPath: string, opts: { slug?: string }) => {
     try {
       const result = await initCommand(projectPath, opts.slug);
       process.stdout.write(result.draft_context_md);
+      const graphPath = join(resolve(projectPath), ".superskill", "graph.json");
+      if (!existsSync(graphPath)) {
+        process.stderr.write(
+          "\nTip: run `superskill skill init` to enable stack detection, skill routing, and verified rules for this repo.\n"
+        );
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Error: ${msg}`);

@@ -73,10 +73,67 @@ const PROMPT_TOKEN = /[a-z0-9][a-z0-9._#+-]*/g;
 
 const PHASE_KEYWORDS: ReadonlyArray<{ phase: RulePhase; words: readonly string[] }> = [
   { phase: "ship", words: ["deploy", "release", "ship", "publish", "bump", "tag", "version"] },
-  { phase: "review", words: ["review", "refactor", "audit", "diff"] },
-  { phase: "implement", words: ["add", "build", "create", "implement", "write", "develop", "feature", "integrate"] },
-  { phase: "explore", words: ["brainstorm", "explore", "research", "investigate", "discover", "plan", "design", "prototype", "spike"] },
+  { phase: "review", words: ["review", "refactor", "audit", "diff", "verify", "validate", "check", "inspect"] },
+  {
+    phase: "implement",
+    words: [
+      "add",
+      "build",
+      "create",
+      "implement",
+      "write",
+      "develop",
+      "feature",
+      "integrate",
+      "fix",
+      "debug",
+      "test",
+      "optimize",
+      "migrate",
+      "update",
+      "change",
+      "modify",
+      "remove",
+      "rename",
+      "patch",
+      "improve",
+      "enhance",
+    ],
+  },
+  {
+    phase: "explore",
+    words: [
+      "brainstorm",
+      "explore",
+      "research",
+      "investigate",
+      "discover",
+      "plan",
+      "design",
+      "prototype",
+      "spike",
+      "analyze",
+      "evaluate",
+      "understand",
+      "assess",
+    ],
+  },
 ];
+
+/**
+ * Word-boundary matcher with common inflections (fixed, fixing, fixes...) and
+ * consonant doubling (shipping, debugging). Prevents substring false positives
+ * such as "fixture" matching "fix" or "stage" matching "tag".
+ */
+function phasePattern(word: string): RegExp {
+  const escaped = word.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+  const last = escaped[escaped.length - 1];
+  return new RegExp(`\\b${escaped}(?:${last}(?:ing|ed)|(?:ing|ed|es|s|d))?\\b`);
+}
+
+const PHASE_MATCHERS: ReadonlyArray<{ phase: RulePhase; patterns: readonly RegExp[] }> = PHASE_KEYWORDS.map(
+  ({ phase, words }) => ({ phase, patterns: words.map(phasePattern) })
+);
 
 export interface RouteInput {
   prompt: string;
@@ -130,8 +187,8 @@ function languageScope(stack: readonly string[], prompt: string, files: readonly
 
 export function inferPhase(prompt: string): RulePhase {
   const lower = prompt.toLowerCase();
-  for (const { phase, words } of PHASE_KEYWORDS) {
-    if (words.some((word) => lower.includes(word))) return phase;
+  for (const { phase, patterns } of PHASE_MATCHERS) {
+    if (patterns.some((pattern) => pattern.test(lower))) return phase;
   }
   return "explore";
 }
