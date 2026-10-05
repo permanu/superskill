@@ -1,12 +1,12 @@
 {
   "name": "superskill",
-  "version": "0.5.0",
-  "description": "Runtime intelligence layer for AI agent skills — smart routing, collision resolution, and knowledge vault. Works with skills.sh and any installed SKILL.md files.",
+  "version": "0.8.0",
+  "description": "One-entry orchestrator for coding agents: skill routing, jailed project vault, spec/ticket/evidence gates, and an in-repo catalog of curated packs with 2,245 verified atomic rules.",
   "author": {
     "name": "Permanu (Atharva Pandey)",
     "url": "https://permanu.com"
   },
   "repository": "https://github.com/permanu/superskill",
   "license": "Apache-2.0",
-  "keywords": ["skills", "routing", "knowledge-base", "context", "vault", "skills-sh", "agent-skills", "multi-tool"]
+  "keywords": ["skills", "routing", "knowledge-base", "context", "vault", "rules", "agent-skills", "multi-tool"]
 }

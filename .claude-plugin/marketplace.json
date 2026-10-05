@@ -5,8 +5,8 @@
     "email": "license@permanu.com"
   },
   "metadata": {
-    "description": "Universal skill marketplace + knowledge vault for AI coding agents",
-    "version": "0.2.1"
+    "description": "One-entry orchestrator for coding agents: skill routing, jailed vault, curated packs, and verified atomic rules.",
+    "version": "0.8.0"
   },
   "plugins": [
     {
@@ -15,8 +15,8 @@
         "source": "url",
         "url": "https://github.com/permanu/superskill.git"
       },
-      "description": "Universal skill marketplace + knowledge vault. Auto-detects your stack, resolves skill collisions across 9 repos, loads expert methodologies (TDD, brainstorming, code review, debugging, security, etc.) on demand.",
-      "version": "0.2.1",
+      "description": "One-entry orchestrator for coding agents: routes tasks to curated packs and 2,245 sourced rules, keeps a jailed project vault, and enforces spec/ticket/evidence gates.",
+      "version": "0.8.0",
       "strict": true
     }
   ]

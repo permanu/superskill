@@ -7,10 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-05
+
+### Added
+- **Atomic rules catalog** (`catalog/rules/`): 2,245 source-backed, compile-verified rules across Rust, TypeScript, Python, Go, Swift, Java, C, and C++.
+- **Deterministic rule engine**: pure-function router (stable tie-breaks, Plan/explain), token-budget packing, verified-only injection, and spec → freeze → tickets → evidence gates that block "done" without proof.
+- **Code graph**: tree-sitter extractors for the 8 languages with EXTRACTED/INFERRED confidence, `impact` and `claims` verification.
+- **Compile harnesses** for all 8 languages (`src/rules/harness/`): every Bad/Good snippet compiles with its real toolchain; 18 rules carry documented `compile_exempt` reasons.
+- **Principles layer** (`catalog/principles/`): cross-language axioms between the constitution and atomic rules, wired into planning and activation.
+- **Local, opt-in rule-selection telemetry**: `superskill telemetry status|enable|disable|report|clear` plus the MCP `telemetry` tool — append-only JSONL with hashed prompts and a top-selected / most-dropped / never-triggered report.
+- **Per-language CI compile matrix**: fast schema check plus a toolchain matrix with `--strict` (fails instead of silently skipping a missing toolchain).
+- **Campaign tracker**: batch claim/release/complete, `superseded` status, and `status-cli revise-plan|reconcile` (`workstreams/`).
+
 ### Changed
 - License changed from AGPL-3.0-or-later to Apache-2.0.
 - Catalog playbooks are **project-agnostic** (any repo SuperSkill is used on), not SuperSkill-internal lore.
 - CI no longer publishes to npm. Releases still cut GitHub notes on `v*` tags. Publish with `npm publish` locally.
+- Activation also injects atomic rules and principles, budgeted alongside packs.
+
+### Fixed
+- `skill activate` / `skill status` / the MCP tool now point at `superskill skill init` for setup (previously a different command).
+- Phase inference matches whole words with inflections and recognizes fix/debug/test/optimize/migrate/verify/validate/analyze; no more "fixture" → fix or "stage" → tag false positives.
+- Validator no longer treats C/C++ preprocessor lines as comments; catalog warnings 356 → 18 (all documented `compile_exempt`).
+- `setup --dry-run` reports clients "would be configured".
 
 ## [0.7.1] - 2026-09-21
 
