@@ -26,9 +26,11 @@ import { gateCommand } from "./commands/gate.js";
 import { impactCommand } from "./commands/impact.js";
 import { claimsCommand } from "./commands/claims.js";
 import { telemetryCommand, type TelemetryAction } from "./commands/telemetry.js";
+import { registerCommand } from "./commands/register.js";
+import { doctorCommand, renderDoctor } from "./commands/doctor.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
-import { createScopedCtx } from "./app-context.js";
+import { createScopedCtx, createCtx } from "./app-context.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills } from "./commands/skill/activate.js";
@@ -888,9 +890,10 @@ skillCmd
   .command("init")
   .description("Initialize superskill for the current project")
   .option("--bridge", "Enable native skill bridge (replaces native skill files with superskill redirects)")
-  .action(async (opts: { bridge?: boolean }) => {
+  .option("--slug <name>", "Vault project slug for auto-detection (default: repo directory name)")
+  .action(async (opts: { bridge?: boolean; slug?: string }) => {
     try {
-      const result = await initProject({ bridge: opts.bridge }, await createScopedCtx());
+      const result = await initProject({ bridge: opts.bridge, slug: opts.slug }, await createScopedCtx());
       if (result.success) {
         console.log(`Initialized superskill graph:`);
         console.log(`  Stack: ${result.project_stack.join(", ") || "(none detected)"}`);
@@ -899,6 +902,11 @@ skillCmd
         console.log(`  Discovered: ${result.skills_discovered}`);
         console.log(`  Blocked: ${result.skills_blocked}`);
         console.log(`  Graph: ${result.graph_path}`);
+        if (result.vault_slug !== undefined) {
+          console.log(`  Vault mapping: ${result.vault_slug} (${result.vault_mapping})`);
+        } else if (result.vault_mapping_error !== undefined) {
+          console.log(`  Vault mapping skipped: ${result.vault_mapping_error}`);
+        }
       } else {
         console.error(`Init failed: ${result.error}`);
         process.exit(1);
@@ -1503,6 +1511,49 @@ telemetryCmd
   .description("Delete all local telemetry events")
   .action(async () => {
     await runTelemetry("clear");
+  });
+
+// ── register ─────────────────────────────────────────
+program
+  .command("register [path]")
+  .description("Map a repo to a vault project so commands auto-detect without -p (vault project-map.json)")
+  .option("-s, --slug <name>", "Project slug (default: keep existing mapping or repo directory name)")
+  .action(async (path: string | undefined, opts: { slug?: string }) => {
+    try {
+      const result = await registerCommand({ path, slug: opts.slug }, await createCtx());
+      console.log(`Registered ${result.key} -> ${result.slug}${result.changed ? "" : " (unchanged)"}`);
+      if (result.previous !== null && result.previous !== result.slug) {
+        console.log(`  previous: ${result.previous}`);
+      }
+      console.log(`  map: ${result.map_path}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── doctor ───────────────────────────────────────────
+program
+  .command("doctor")
+  .description(
+    "Health check: install vs running MCP servers, vault + mapping, project graph isolation, catalog, toolchains, telemetry, clients"
+  )
+  .option("--json", "machine-readable output")
+  .action(async (opts: { json?: boolean }) => {
+    try {
+      const result = await doctorCommand({}, await createCtx());
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(renderDoctor(result));
+      }
+      if (!result.healthy) process.exitCode = 1;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
   });
 
 // ── setup / teardown ─────────────────────────────────

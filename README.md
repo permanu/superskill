@@ -31,12 +31,14 @@ superskill-cli skill init          # detect stack, index the in-repo catalog, bu
 superskill-cli setup               # register MCP + instructions in every detected AI client
 ```
 
-1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
+1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
 2. `setup` finds installed clients and writes the MCP entry (plus an instruction file where the client supports one) for each. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
 3. Describe the task. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff tasks (and security bugs) also get the vault brief plus a caller protocol.
 4. Activations write `.superskill/graph.json` (local only).
 
 Want a vault context document too? `superskill-cli init .` prints a draft `context.md`; review it, then save it with `superskill-cli write`.
+
+Verify any time with `superskill-cli doctor`: install vs running MCP servers, vault + project mapping, project graph isolation (fails if `.superskill/` is tracked), catalog validation, compile toolchains, telemetry, and MCP clients.
 
 ### MCP configuration
 
@@ -243,6 +245,8 @@ All commands work as `superskill-cli <command>`. Many commands accept `-p, --pro
 |---|---|---|
 | `setup` | Auto-configure detected AI clients | `--all`, `--clients`, `--dry-run`, `--force`, `--vault-path` |
 | `teardown` | Remove SuperSkill configuration | `--clients`, `--dry-run`, `--silent` |
+| `register [path]` | Map a repo to a vault project so commands auto-detect without `-p` (also done by `skill init`) | `-s, --slug <name>` |
+| `doctor` | Health check: install vs running MCP servers, vault, mapping, graph isolation, catalog, toolchains, telemetry, clients | `--json` |
 
 ### Telemetry
 
@@ -281,6 +285,8 @@ The MCP server exposes the tools below. The CLI covers the same surface plus `se
 | `init` | Initialize SuperSkill for the current project (stack, catalog, graph). |
 | `status` | Knowledge graph state: skills, weights, recent sessions. |
 | `telemetry` | Local, opt-in rule-selection telemetry: `status`/`enable`/`disable`/`report`/`clear`. |
+| `doctor` | One-shot health check across install, running MCP servers, vault, mapping, graph isolation, catalog, toolchains, and clients. |
+| `register` | Map a repo to a vault project so vault commands auto-detect without `-p`. |
 | `skill_install` | Install skills from a GitHub repo. |
 | `skill_list_installed` | List locally installed skills. |
 | `skill_remove` | Remove an installed skill by name. |

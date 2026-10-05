@@ -54,6 +54,8 @@ const UNSCOPED_TOOLS = new Set([
   "skill_list_installed",
   "skill_remove",
   "template",
+  "register",
+  "doctor",
 ]);
 
 export async function createScopedCtx(

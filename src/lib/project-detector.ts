@@ -90,7 +90,7 @@ function stripWorktreeSuffix(cwd: string): string {
 /**
  * Try to detect git root of current directory (async, non-blocking).
  */
-async function getGitRoot(cwd: string): Promise<string | null> {
+export async function getGitRoot(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd,

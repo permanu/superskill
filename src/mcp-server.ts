@@ -35,7 +35,7 @@ const WRITE_TOOLS = new Set([
   "write", "decide", "task", "learn", "brainstorm", "session",
   "prune", "deprecate", "init", "skill_install", "skill_remove",
   "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
-  "rollback", "capture",
+  "rollback", "capture", "register",
 ]);
 
 function checkRateLimit(toolName: string): void {

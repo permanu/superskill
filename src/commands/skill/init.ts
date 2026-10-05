@@ -16,6 +16,7 @@ import {
 import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
 import { auditIsBlocked } from "../../lib/security-gate.js";
 import { loadCatalog } from "../../lib/catalog.js";
+import { registerProject } from "../../lib/project-map.js";
 import type {
   Graph,
   ProjectNode,
@@ -33,6 +34,12 @@ export interface InitResult {
   skills_discovered: number;
   skills_blocked: number;
   graph_path: string;
+  /** Vault project slug registered for auto-detection. */
+  vault_slug?: string;
+  /** Path of the written vault project map. */
+  vault_mapping?: string;
+  /** Why vault registration was skipped (non-fatal). */
+  vault_mapping_error?: string;
   error?: string;
 }
 
@@ -156,7 +163,7 @@ async function parseNativeSkillFile(filePath: string): Promise<{
 }
 
 export async function initProject(
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
   ctx: CommandContext,
 ): Promise<InitResult> {
   const projectDir = process.cwd();
@@ -285,6 +292,21 @@ export async function initProject(
 
     await appendToInstructionFile(projectDir);
 
+    let vaultSlug: string | undefined;
+    let vaultMapping: string | undefined;
+    let vaultMappingError: string | undefined;
+    try {
+      const registration = await registerProject(
+        ctx.config.vaultPath,
+        projectDir,
+        typeof args.slug === "string" && args.slug.trim() !== "" ? args.slug : undefined,
+      );
+      vaultSlug = registration.slug;
+      vaultMapping = registration.map_path;
+    } catch (e) {
+      vaultMappingError = e instanceof Error ? e.message : String(e);
+    }
+
     return {
       success: true,
       project_stack: projectStack,
@@ -293,6 +315,9 @@ export async function initProject(
       skills_discovered: catalog.length,
       skills_blocked: skillsBlocked,
       graph_path: join(superskillDir, "graph.json"),
+      vault_slug: vaultSlug,
+      vault_mapping: vaultMapping,
+      vault_mapping_error: vaultMappingError,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

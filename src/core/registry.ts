@@ -33,6 +33,8 @@ import { gateCommand } from "../commands/gate.js";
 import { impactCommand } from "../commands/impact.js";
 import { claimsCommand } from "../commands/claims.js";
 import { telemetryCommand, type TelemetryAction } from "../commands/telemetry.js";
+import { registerCommand } from "../commands/register.js";
+import { doctorCommand } from "../commands/doctor.js";
 import type { AcceptanceInput } from "../lib/gates/spec.js";
 import type { TicketStatus } from "../lib/gates/tickets.js";
 
@@ -450,16 +452,17 @@ export function createRegistry(): CommandRegistry {
     handler: initProject as CommandHandler,
     toolDef: {
       name: "init",
-      description: "Initialize superskill for the current project. Detects stack, indexes the in-repo catalog, builds the knowledge graph. Does not scrape skills.sh.",
+      description: "Initialize superskill for the current project. Detects stack, indexes the in-repo catalog, builds the project-local knowledge graph, and registers the repo in the vault map for auto-detection. Does not scrape skills.sh.",
       inputSchema: {
         type: "object" as const,
         properties: {
           bridge: { type: "boolean", description: "Enable native skill bridge (replaces native skill files with superskill redirects)" },
+          slug: { type: "string", description: "Vault project slug for auto-detection (default: repo directory name)" },
         },
       },
       annotations: { destructiveHint: true },
     },
-    adaptArgs: (raw) => ({ bridge: b(raw.bridge) }),
+    adaptArgs: (raw) => ({ bridge: b(raw.bridge), slug: s(raw.slug) }),
   });
 
   r.register("status", {
@@ -499,6 +502,39 @@ export function createRegistry(): CommandRegistry {
       action: (typeof raw.action === "string" ? raw.action : "status") as TelemetryAction,
       top: n(raw.top),
     }),
+  });
+
+  r.register("register", {
+    handler: registerCommand as CommandHandler,
+    toolDef: {
+      name: "register",
+      description:
+        "Map a repo to a vault project so vault-backed commands auto-detect the slug (writes the vault project-map.json locator; project knowledge stays jailed under projects/<slug>/).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "Directory to map (default: cwd). Git roots are used as the key." },
+          slug: { type: "string", description: "Explicit project slug (default: keep existing mapping or derive from directory name)" },
+        },
+      },
+      annotations: { readOnlyHint: false },
+    },
+    adaptArgs: (raw) => ({ path: s(raw.path), slug: s(raw.slug) }),
+  });
+
+  r.register("doctor", {
+    handler: doctorCommand as CommandHandler,
+    toolDef: {
+      name: "doctor",
+      description:
+        "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, telemetry, MCP clients.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: () => ({}),
   });
 
   r.register("superskill", {
