@@ -45,7 +45,7 @@ export async function statusCommand(
   if (graph.nodes.length === 0) {
     return {
       initialized: false,
-      message: "No knowledge graph found. Run `superskill init` first to initialize this project.",
+      message: "No knowledge graph found. Run `superskill skill init` first to initialize this project.",
       project: null,
       skills: [],
       sessions: [],

@@ -107,7 +107,9 @@ export function registerSetupCommands(program: Command): void {
         }
       }
 
-      console.log(`\nDone! ${configured} client(s) configured.\n`);
+      console.log(
+        `\nDone! ${configured} client(s) ${opts.dryRun ? "would be configured" : "configured"}.\n`
+      );
 
       const targetSlugs = new Set(targets.map((t) => t.config.slug));
       const unconfigured = CLIENT_REGISTRY.filter((c) => !targetSlugs.has(c.slug));

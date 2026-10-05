@@ -165,7 +165,7 @@ export async function activateSkills(
       return {
         success: false,
         skills_loaded: [],
-        content: "No knowledge graph found. Run `superskill init` first.",
+        content: "No knowledge graph found. Run `superskill skill init` first.",
         matched_skill_ids: [],
         total_tokens: 0,
         usedTokens: 0,
@@ -174,7 +174,7 @@ export async function activateSkills(
         warnings: [],
         rules_plan: emptyRulesPlan(),
         principles_plan: emptyPrinciplesPlan(),
-        error: "Graph not initialized. Run `superskill init` first.",
+        error: "Graph not initialized. Run `superskill skill init` first.",
       };
     }
 
