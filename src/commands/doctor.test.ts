@@ -30,7 +30,7 @@ describe("parseMcpProcesses", () => {
       [
         "too short",
         "Mon Oct  5 09:58:02 2026 111 node /usr/bin/other-tool",
-        "Nope Oct  5 09:58:02 2026 222 node /usr/bin/superskill",
+        "13 45 99 25:61:61 2026 222 node /usr/bin/superskill",
         "Mon Oct  5 09:58:02 2026 333 node /Users/x/superskill",
       ].join("\n"),
     );

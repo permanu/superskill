@@ -145,7 +145,7 @@ describe("teardownClient", () => {
     vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
 
     for (const slug of ["claude-code", "cursor", "opencode"]) {
-      const result = teardownClient({ ...makeDetected(slug), instructionPath: null });
+      const result = teardownClient({ ...makeDetected(slug), instructionPath: undefined });
       expect(result.instructionRemoved).toBe(false);
     }
   });

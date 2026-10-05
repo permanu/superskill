@@ -6,7 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuleLanguage, ValidationIssue } from "./types.js";
-import { validateAll, validateFile, validatePack } from "./validate.js";
+import {
+  validateAll,
+  validateFile,
+  validatePack,
+  type FileValidationResult,
+  type ValidateOptions,
+} from "./validate.js";
 
 const FIXTURES = fileURLToPath(new URL("./__fixtures__/contract/", import.meta.url));
 const KNOWN_OK = new Set(["rust-err-result", "rust-api-result-context"]);
@@ -490,4 +496,325 @@ describe("compilation harness integration", () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe("frontmatter and body edge cases", () => {
+  const DEFAULT_BODY = [
+    "",
+    "> Use the rule under test.",
+    "",
+    "## Why",
+    "",
+    "Because it matters.",
+    "",
+    "## Bad",
+    "",
+    "```rust",
+    "fn bad() {}",
+    "```",
+    "",
+    "## Good",
+    "",
+    "```rust",
+    "fn good() {}",
+    "```",
+    "",
+  ].join("\n");
+
+  function fmLines(
+    overrides: Record<string, string | undefined> = {},
+    sources: string[] = ["sources:", "  - title: Example source", "    url: https://example.com/spec"],
+  ): string[] {
+    const base: Record<string, string | undefined> = {
+      id: "rust-err-edge",
+      lang: "rust",
+      prefix: "err",
+      title: "An edge case rule",
+      severity: "must",
+      enforce: "review",
+      baseline: "latest",
+      status: "draft",
+    };
+    const merged = { ...base, ...overrides };
+    const lines = Object.entries(merged)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}: ${value}`);
+    return [...lines, ...sources];
+  }
+
+  async function validateRaw(
+    fileName: string,
+    frontmatter: string[],
+    body = DEFAULT_BODY,
+    options: ValidateOptions = { compile: false, knownIds: new Set() },
+    dirName = "rust",
+  ): Promise<FileValidationResult> {
+    const dir = await mkdtemp(join(tmpdir(), "rules-edge-"));
+    const packDir = join(dir, dirName);
+    await mkdir(packDir, { recursive: true });
+    const file = join(packDir, fileName);
+    await writeFile(file, ["---", ...frontmatter, "---", body].join("\n"), "utf-8");
+    try {
+      return await validateFile(file, options);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("collects required-field, enum, and field-type issues together", async () => {
+    const result = await validateRaw("err-edge.md", [
+      "id: rust-err-edge",
+      "lang: rust",
+      "prefix: err",
+      "title: T",
+      "severity: sometimes",
+      "enforce: nope",
+      "baseline: latest",
+      "status: live",
+      "tool: []",
+      "compile_exempt: []",
+      "triggers: nope",
+      "related: nope",
+      "sources:",
+      "  - title: S",
+      "    url: https://example.com/x",
+    ]);
+
+    const list = codes(result.issues);
+    expect(list.filter((code) => code === "enum")).toHaveLength(3);
+    expect(list.filter((code) => code === "field-type")).toHaveLength(4);
+    expect(result.rule).toBeNull();
+  });
+
+  it("requires a tool id for tool enforcement and validates trigger shapes", async () => {
+    const result = await validateRaw("err-edge.md", [
+      ...fmLines({ enforce: "tool" }),
+      'triggers: { keywords: "x", files: [1] }',
+    ]);
+
+    const list = codes(result.issues);
+    expect(list).toContain("tool-required");
+    expect(list.filter((code) => code === "field-type")).toHaveLength(2);
+  });
+
+  it("accepts well-formed triggers and resolves published sibling ids", async () => {
+    const result = await validateRaw(
+      "err-edge.md",
+      [
+        ...fmLines(),
+        'triggers: { keywords: [retry], files: ["*.ts"], symbols: [Foo] }',
+        "related: [rust-other]",
+      ],
+      DEFAULT_BODY,
+      { compile: false, knownIds: new Set(["rust-other"]) },
+    );
+
+    const list = codes(result.issues);
+    expect(list).not.toContain("field-type");
+    expect(list).not.toContain("related-unresolved");
+    expect(result.rule?.related).toEqual(["rust-other"]);
+    expect(result.rule?.triggers).toEqual({
+      keywords: ["retry"],
+      files: ["*.ts"],
+      symbols: ["Foo"],
+    });
+  });
+
+  it("reports malformed sources entries and missing sources", async () => {
+    const notMapping = await validateRaw("err-edge.md", fmLines({}, ["sources: [42]"]));
+    expect(codes(notMapping.issues)).toContain("source-title");
+
+    const missingTitle = await validateRaw("err-edge.md", [
+      ...fmLines({}, ["sources: [{url: https://example.com/x}]"]),
+    ]);
+    expect(codes(missingTitle.issues)).toContain("source-title");
+
+    const badTypes = await validateRaw("err-edge.md", [
+      ...fmLines({}, ["sources: [{title: 42, url: 42}]"]),
+    ]);
+    expect(codes(badTypes.issues)).toContain("source-title");
+    expect(codes(badTypes.issues)).toContain("source-url");
+
+    const empty = await validateRaw("err-edge.md", fmLines({}, ["sources: []"]));
+    expect(codes(empty.issues)).toContain("source-missing");
+  });
+
+  it("flags a lang that does not match the directory", async () => {
+    const result = await validateRaw(
+      "err-edge.md",
+      fmLines({ lang: "go", id: "go-err-edge" }),
+      DEFAULT_BODY,
+      { compile: false, knownIds: new Set() },
+      "rust",
+    );
+
+    expect(codes(result.issues)).toContain("lang-dir-mismatch");
+  });
+
+  it("returns read-failed for an unreadable rule path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-unreadable-"));
+    const packDir = join(dir, "rust");
+    await mkdir(packDir, { recursive: true });
+    try {
+      const result = await validateFile(packDir, { compile: false });
+      expect(codes(result.issues)).toContain("read-failed");
+      expect(result.rule).toBeNull();
+      expect(result.compile).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing summary and dangling fences", async () => {
+    const noSummary = await validateRaw("err-edge.md", fmLines(), "\n\nOnly prose without a summary.\n");
+    expect(codes(noSummary.issues)).toContain("summary-missing");
+
+    const dangling = await validateRaw(
+      "err-edge.md",
+      fmLines(),
+      ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```rust", "fn bad() {}", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n"),
+    );
+    expect(codes(dangling.issues)).toContain("fence-count");
+  });
+
+  it("warns on long snippets and untagged fences", async () => {
+    const longBad = Array.from({ length: 26 }, (_, index) => `fn bad${index}() {}`).join("\n");
+    const longBody = ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```rust", longBad, "```", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n");
+    const long = await validateRaw("err-edge.md", fmLines(), longBody);
+    const tooLong = long.issues.filter((entry) => entry.code === "snippet-too-long");
+    expect(tooLong).toHaveLength(1);
+    expect(tooLong[0].severity).toBe("warning");
+
+    const untaggedBody = ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```", "fn bad() {}", "```", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n");
+    const untagged = await validateRaw("err-edge.md", fmLines(), untaggedBody);
+    const fenceIssue = untagged.issues.find((entry) => entry.code === "fence-language");
+    expect(fenceIssue?.message).toContain("no tag");
+  });
+
+  it("dedupes forbidden tokens and hedging words across the body", async () => {
+    const hedgedBody = ["", "> ok", "", "## Why", "", "TODO todo consider consider this.", "", "## Bad", "", "```rust", "fn bad() {}", "```", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n");
+    const result = await validateRaw("err-edge.md", fmLines(), hedgedBody);
+    const tokens = result.issues.filter((entry) => entry.code === "forbidden-token");
+    const hedges = result.issues.filter((entry) => entry.code === "hedging");
+    expect(tokens).toHaveLength(1);
+    expect(hedges).toHaveLength(1);
+  });
+
+  it("flags 'as needed' at the first and last body lines", async () => {
+    const firstBody = ["> Call as needed.", "", "## Why", "", "text", "", "## Bad", "", "```rust", "fn bad() {}", "```", "", "## Good", "", "```rust", "fn good() {}", "```"].join("\n");
+    const first = await validateRaw("err-edge.md", fmLines(), firstBody);
+    expect(first.issues.filter((entry) => entry.code === "vague-condition")).toHaveLength(1);
+
+    const lastBody = ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```rust", "fn bad() {}", "```", "", "## Good", "", "```rust", "fn good() {}", "```", "Call as needed."].join("\n");
+    const last = await validateRaw("err-edge.md", fmLines(), lastBody);
+    expect(last.issues.filter((entry) => entry.code === "vague-condition")).toHaveLength(1);
+  });
+
+  it("warns on elisions inside single-line and multi-line block comments", async () => {
+    const singleBody = ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```rust", "/* ... */", "```", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n");
+    const single = await validateRaw("err-edge.md", fmLines(), singleBody);
+    expect(single.issues.filter((entry) => entry.code === "comment-elision")).toHaveLength(1);
+
+    const multiBody = ["", "> ok", "", "## Why", "", "text", "", "## Bad", "", "```rust", "/* start", "... end */", "```", "", "## Good", "", "```rust", "fn good() {}", "```", ""].join("\n");
+    const multi = await validateRaw("err-edge.md", fmLines(), multiBody);
+    expect(multi.issues.filter((entry) => entry.code === "comment-elision")).toHaveLength(1);
+  });
+});
+
+describe("pack and catalog edge cases", () => {
+  it("reports INDEX.md read failures and bad link targets", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-index-"));
+    const packDir = join(dir, "rust");
+    await mkdir(join(packDir, "INDEX.md"), { recursive: true });
+    await writeFile(join(packDir, "err-edge.md"), inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}"), "utf-8");
+    try {
+      const failed = await validatePack(packDir, { compile: false });
+      expect(codes(failed.errors)).toContain("read-failed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    const dir2 = await mkdtemp(join(tmpdir(), "rules-index-links-"));
+    const packDir2 = join(dir2, "rust");
+    await mkdir(packDir2, { recursive: true });
+    await writeFile(join(packDir2, "err-edge.md"), inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}"), "utf-8");
+    await writeFile(
+      join(packDir2, "INDEX.md"),
+      [
+        "# Rust Rules Index",
+        "",
+        "- [edge](err-edge.md)",
+        "- [image](image.png)",
+        "- [nested](sub/rule.md)",
+        "- [web](https://example.com/x)",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    try {
+      const report = await validatePack(packDir2, { compile: false });
+      const extras = report.errors.filter((entry) => entry.code === "index-extra");
+      expect(extras).toHaveLength(2);
+      expect(extras.map((entry) => entry.message).join(" ")).toContain("image.png");
+      expect(extras.map((entry) => entry.message).join(" ")).toContain("sub/rule.md");
+    } finally {
+      await rm(dir2, { recursive: true, force: true });
+    }
+  });
+
+  it("reports read failures when pack and catalog roots are files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-file-root-"));
+    const file = join(dir, "not-a-directory.md");
+    await writeFile(file, "x\n", "utf-8");
+    try {
+      const pack = await validatePack(file, { compile: false });
+      expect(codes(pack.errors)).toContain("read-failed");
+      expect(pack.ruleCount).toBe(0);
+
+      const all = await validateAll(file, { compile: false });
+      expect(codes(all.errors)).toContain("read-failed");
+      expect(all.ruleCount).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers sibling ids and falls back for unreadable catalog entries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-known-"));
+    const packDir = join(dir, "rust");
+    await mkdir(join(packDir, "broken.md"), { recursive: true });
+    await writeFile(join(packDir, "other.md"), inlineRuleContent("rust", "other", "fn bad() {}", "fn good() {}"), "utf-8");
+    await writeFile(
+      join(packDir, "err-edge.md"),
+      inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}", ["related: [rust-other]"]),
+      "utf-8",
+    );
+    try {
+      const direct = await validateFile(join(packDir, "err-edge.md"), { compile: false });
+      expect(codes(direct.issues)).not.toContain("related-unresolved");
+
+      const report = await validatePack(packDir, { compile: false });
+      expect(codes(report.errors)).not.toContain("related-unresolved");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to pack-local ids when the parent has no language dirs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-parent-"));
+    const packDir = join(dir, "mypack");
+    await mkdir(packDir, { recursive: true });
+    await writeFile(
+      join(packDir, "err-edge.md"),
+      inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}", ["related: [rust-other]"]),
+      "utf-8",
+    );
+    await writeFile(join(packDir, "INDEX.md"), "# Index\n\n- [err-edge](err-edge.md)\n", "utf-8");
+    try {
+      const report = await validatePack(packDir, { compile: false });
+      expect(codes(report.errors)).toContain("related-unresolved");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

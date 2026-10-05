@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { moduleNodeId } from "./extractors/common.js";
 import { fixturePath } from "./__fixtures__/paths.js";
-import { scanRepo } from "./scan.js";
-import type { CodeGraph } from "./types.js";
+import { resolveSpecifier, scanRepo, type FileIndex } from "./scan.js";
+import type { CodeGraph, LanguageId } from "./types.js";
 
 interface Case {
   language: string;
@@ -107,5 +107,99 @@ describe("scanRepo", () => {
 
   it("throws a clear error when the root does not exist", async () => {
     await expect(scanRepo(join(tmpdir(), `codegraph-missing-${Date.now()}`))).rejects.toThrow(/not a directory/);
+  });
+});
+
+describe("resolveSpecifier", () => {
+  function indexOf(...files: string[]): FileIndex {
+    const set = new Set(files);
+    const byBasename = new Map<string, string[]>();
+    for (const rel of [...files].sort()) {
+      const base = rel.split("/").pop() ?? rel;
+      const list = byBasename.get(base);
+      if (list) list.push(rel);
+      else byBasename.set(base, [rel]);
+    }
+    return { files: set, byBasename };
+  }
+
+  const index = indexOf(
+    "src/parse.ts",
+    "src/util.ts",
+    "src/util2/index.ts",
+    "src/util2/index.tsx",
+    "app.py",
+    "util.py",
+    "pkg/util.py",
+    "pkg/util/__init__.py",
+    "pkg/sub/app.py",
+    "other/standalone.go",
+    "main.go",
+    "util/util.go",
+    "pkg/util.go",
+    "lib.rs",
+    "util.rs",
+    "src/lib.rs",
+    "src/util.rs",
+    "src/deep/mod.rs",
+    "Reporter.java",
+    "Util.java",
+    "src/com/example/Util.java",
+    "reporter.c",
+    "util.h",
+    "include/util.h",
+    "main.swift",
+  );
+
+  it("resolves TypeScript relative specifiers and rejects bare ones", () => {
+    expect(resolveSpecifier("typescript", "src/parse.ts", "./util.js", index)).toBe("src/util.ts");
+    expect(resolveSpecifier("typescript", "src/parse.ts", "./util2", index)).toBe("src/util2/index.ts");
+    expect(resolveSpecifier("typescript", "src/parse.ts", "pkg", index)).toBeNull();
+    expect(resolveSpecifier("typescript", "src/parse.ts", "./gone", index)).toBeNull();
+  });
+
+  it("resolves Python relative and absolute imports with a basename fallback", () => {
+    expect(resolveSpecifier("python", "app.py", ".util", index)).toBe("util.py");
+    expect(resolveSpecifier("python", "pkg/sub/app.py", "..util", index)).toBe("pkg/util.py");
+    expect(resolveSpecifier("python", "pkg/sub/app.py", "...util", index)).toBe("util.py");
+    expect(resolveSpecifier("python", "app.py", "pkg.util", index)).toBe("pkg/util.py");
+    expect(resolveSpecifier("python", "app.py", "other.util", index)).toBe("pkg/util.py");
+    expect(resolveSpecifier("python", "app.py", "pkg.util.utility", index)).toBeNull();
+  });
+
+  it("resolves Go package specifiers by directory segment and falls back to basenames", () => {
+    expect(resolveSpecifier("go", "main.go", "example.com/mod/util", index)).toBe("util/util.go");
+    expect(resolveSpecifier("go", "main.go", "/", index)).toBeNull();
+    expect(resolveSpecifier("go", "main.go", "", index)).toBeNull();
+    expect(resolveSpecifier("go", "main.go", "example.com/standalone", index)).toBe("other/standalone.go");
+    expect(resolveSpecifier("go", "main.go", "example.com/none", index)).toBeNull();
+  });
+
+  it("resolves Rust crate, self, and super paths", () => {
+    expect(resolveSpecifier("rust", "lib.rs", "crate::util", index)).toBe("util.rs");
+    expect(resolveSpecifier("rust", "src/deep/mod.rs", "crate::util", index)).toBe("src/util.rs");
+    expect(resolveSpecifier("rust", "src/main.rs", "self::util", index)).toBe("src/util.rs");
+    expect(resolveSpecifier("rust", "src/deep/mod.rs", "super::util", index)).toBe("src/util.rs");
+    expect(resolveSpecifier("rust", "lib.rs", "std::x", index)).toBeNull();
+    expect(resolveSpecifier("rust", "lib.rs", "crate", index)).toBeNull();
+    expect(resolveSpecifier("rust", "lib.rs", "crate::gone", index)).toBeNull();
+  });
+
+  it("resolves Java classes by basename and rejects wildcard imports", () => {
+    expect(resolveSpecifier("java", "Reporter.java", "com.example.Util", index)).toBe("Util.java");
+    expect(resolveSpecifier("java", "Reporter.java", "com.example.*", index)).toBeNull();
+    expect(resolveSpecifier("java", "Reporter.java", "", index)).toBeNull();
+  });
+
+  it("resolves C includes, skips system headers, and falls back to basenames", () => {
+    expect(resolveSpecifier("c", "reporter.c", "util.h", index)).toBe("util.h");
+    expect(resolveSpecifier("c", "src/reporter.c", "include/util.h", index)).toBe("include/util.h");
+    expect(resolveSpecifier("c", "reporter.c", "<stdio.h>", index)).toBeNull();
+    expect(resolveSpecifier("c", "reporter.c", "missing.h", index)).toBeNull();
+  });
+
+  it("returns null for unsupported languages", () => {
+    expect(resolveSpecifier("swift", "main.swift", "./x", index)).toBeNull();
+    expect(resolveSpecifier("kotlin" as LanguageId, "x.kt", "./x", index)).toBeNull();
   });
 });

@@ -12,6 +12,7 @@ export default defineConfig({
       exclude: [
         'src/**/*.test.ts',
         'dist/**',
+        'src/**/__fixtures__/**',
         'src/cli.ts',
         'src/mcp-server.ts',
         'src/commands/init.ts',
@@ -21,6 +22,10 @@ export default defineConfig({
         'src/setup/index.ts',
         'src/setup/postinstall.ts',
         'src/setup/preuninstall.ts',
+        'src/rules/plan.ts',
+        'src/telemetry/types.ts',
+        'src/lib/hygiene/types.ts',
+        'src/lib/worktree/host-adapters/types.ts',
       ],
       thresholds: {
         lines: 80,
