@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-05
+
 ### Added
 - `superskill-cli register [path] --slug <name>` (and the MCP `register` tool): map a repo to a vault project so vault-backed commands auto-detect without `-p`. `skill init` now registers automatically and reports the mapping.
 - `superskill-cli doctor` (and the MCP `doctor` tool): one-shot health check across runtime, install-vs-running-MCP freshness, vault, project mapping, project graph isolation, rules catalog, compile toolchains, telemetry, and MCP clients.
