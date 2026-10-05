@@ -21,3 +21,5 @@ Name complexity. Prefer the faster algorithm when it is not more code. HLD/LLD o
 **Do not skip:** validation at trust boundaries, authz, secrets staying out of git/vault, a test (or harness QA click) for a new branch, **algorithmic correctness**, anything the user named. Ponytail is too lazy on those; SuperSkill is not.
 
 If unsure whether a stage is needed: one sentence why you skipped it, then skip. If unsure whether a security check is needed: **run it**.
+
+Deep dives, loaded when the task calls them: `optimizer/adhd` (full output contract, phrase bans, intensity) and `pipeline/lazy-build` (full ladder, hard floors, `ponytail:` tradeoff markers).

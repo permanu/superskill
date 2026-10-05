@@ -153,6 +153,7 @@ Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS
 |------|------|
 | `pipeline/delivery` + `norms` | Always. Diagnose, then load a combination — not a 10-step ritual |
 | `optimizer/algorithm` | Always. Invariant, O(…), HLD/LLD that pay rent |
+| `optimizer/adhd` `pipeline/lazy-build` | Output contract (terse, action-first) and build ladder (reuse → minimal) — deep dives under the always-on norms |
 | `memory/graph` | Always (tiny). This project's vault only |
 | `security/index` | Tiny always-on. Full `compliance` on audit / OWASP / security bugs |
 | `code/<lang>` | This repo's stack, or the task names a language |

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Slash-command installer**: `setup` writes `/review`, `/worktree`, and `/superskill` command files for every host that supports them (markdown for most hosts, TOML for Gemini CLI); installs are idempotent and marker-guarded, and `teardown` removes them.
 - `doctor` now includes worktree checks (shared policy present, guarded post-checkout hook installed) alongside runtime, install, MCP freshness, vault, graph isolation, catalog, toolchains, telemetry, and clients.
 - Pre-commit hook runs `gate check` only when `SUPERSKILL_GATE_TARGET` is set; without a target it is a silent no-op.
+- Deep contracts adopted from community skills, alongside the pstack-derived `catalog/principles/*`: `optimizer/adhd` (action-first replies, banned preamble/recap/closer patterns, ≤5 grouped lists, evidence labels, auto-clarity escapes, intensity levels) and `pipeline/lazy-build` (reuse → stdlib → platform → minimal ladder, root-cause rule, hard safety floors, `ponytail:` tradeoff markers), referenced from the always-on `pipeline/norms`.
 
 ### Fixed
 - CLI bin symlinks (`superskill`, `superskill-cli`) execute correctly when invoked through `node_modules/.bin`.
