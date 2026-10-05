@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import matter from "gray-matter";
 
 export interface Frontmatter {
@@ -23,7 +23,7 @@ const KNOWN_TYPES = [
 
 const VALID_STATUSES = [
   "active", "resolved", "deprecated", "draft", "published",
-  "backlog", "in-progress", "blocked", "done", "cancelled", "completed",
+  "backlog", "in-progress", "blocked", "done", "cancelled", "completed", "approved", "frozen",
 ];
 
 /**
@@ -31,7 +31,7 @@ const VALID_STATUSES = [
  */
 export function parseFrontmatter(content: string): { data: Frontmatter; content: string } {
   try {
-    const parsed = matter(content);
+    const parsed = matter(content, {});
     return { data: parsed.data as Frontmatter, content: parsed.content };
   } catch {
     // Malformed YAML — return empty frontmatter and raw content

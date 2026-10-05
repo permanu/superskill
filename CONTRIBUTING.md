@@ -113,6 +113,24 @@ chore: bump version to 0.3.0
 
 Include `Fixes #N` or `Closes #N` to auto-close issues.
 
+### Rule packs and the campaign tracker
+
+Atomic rule packs live in `catalog/rules/<lang>/` and are governed by `docs/authoring/CONTRACT.md`. Validate before pushing:
+
+```bash
+npm run build
+npm run validate:rules                                  # schema + compile, all languages
+node dist/rules/cli.js validate --lang rust --strict    # one pack; fails if the toolchain is missing
+```
+
+Campaign state is tracked in `workstreams/` (`plan.json`, `state.json`, `STATUS.md`). Batches are claimed and completed through the queue in `src/rules/queue.ts`; to reconcile the tracker with what the catalog actually delivers:
+
+```bash
+node dist/rules/status-cli.js revise-plan   # append delivered prefixes, reset targets to delivered counts
+node dist/rules/status-cli.js reconcile     # derive done/superseded batch state from the catalog
+node dist/rules/status-cli.js generate      # rewrite workstreams/STATUS.md
+```
+
 ## Release Process
 
 ### Release Discipline
@@ -211,7 +229,7 @@ src/
 
 - TypeScript strict mode
 - No AI attribution in commits or code
-- SPDX license headers on all source files: `// SPDX-License-Identifier: AGPL-3.0-or-later`
+- SPDX license headers on all source files: `// SPDX-License-Identifier: Apache-2.0`
 - Prefer explicit types over `any`
 - Keep functions focused — if it's doing two things, split it
 
@@ -230,7 +248,7 @@ If you're modifying `web-discovery.ts`, ensure security scan tests pass and cove
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's [AGPL-3.0-or-later](LICENSE) license.
+By contributing, you agree that your contributions will be licensed under the project's [Apache-2.0](LICENSE) license.
 
 ## Questions?
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 import { readFile, appendFile, access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -39,9 +39,11 @@ export interface InitResult {
 const SUPER_SKILL_APPEND = `
 
 ## SuperSkill
-This project uses superskill for skill routing. Before creative work,
-new features, debugging, or code review — call the \`superskill\` tool
-with your task description.
+This project uses superskill for skill routing and rules.
+- Call the \`superskill\` tool with your task before creative work, debugging, or review.
+- No "done" without \`gate check\` evidence.
+- Only verified rules are injected by default.
+- Constitution: catalog/constitution.md in the superskill package (always applies).
 `;
 
 async function appendToInstructionFile(projectDir: string): Promise<void> {

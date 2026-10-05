@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 import type { ProjectPhase } from "./graph/schema.js";
 import { estimateTokens } from "./token-estimator.js";
@@ -33,26 +33,47 @@ export function getSkillBudget(contextWindow = DEFAULT_CONTEXT_WINDOW): BudgetRe
   return { totalBudget, contextWindow };
 }
 
-export function fitSkillsToBudget(
-  contents: string[],
-  budget: number
-): { included: number[]; excluded: number[]; usedTokens: number } {
-  const included: number[] = [];
-  const excluded: number[] = [];
+export interface BudgetItem {
+  id: string;
+  content: string;
+}
+
+export interface FittedItem {
+  id: string;
+  content: string;
+  tokens: number;
+}
+
+export interface DroppedItem {
+  id: string;
+  reason: string;
+  tokens: number;
+}
+
+export interface FitResult {
+  items: FittedItem[];
+  dropped: DroppedItem[];
+  usedTokens: number;
+}
+
+export function fitSkillsToBudget(items: BudgetItem[], budget: number): FitResult {
+  const fitted: FittedItem[] = [];
+  const dropped: DroppedItem[] = [];
   let usedTokens = 0;
 
-  for (let i = 0; i < contents.length; i++) {
-    const tokens = estimateTokens(contents[i]);
+  for (const item of items) {
+    const tokens = estimateTokens(item.content);
     if (usedTokens + tokens <= budget) {
-      included.push(i);
+      fitted.push({ id: item.id, content: item.content, tokens });
       usedTokens += tokens;
-    } else {
-      for (let j = i; j < contents.length; j++) {
-        excluded.push(j);
-      }
-      break;
+      continue;
     }
+    const remaining = budget - usedTokens;
+    const reason = tokens > budget
+      ? `exceeds total budget (${tokens} > ${budget} tokens)`
+      : `exceeds remaining budget (${tokens} > ${remaining} tokens)`;
+    dropped.push({ id: item.id, reason, tokens });
   }
 
-  return { included, excluded, usedTokens };
+  return { items: fitted, dropped, usedTokens };
 }

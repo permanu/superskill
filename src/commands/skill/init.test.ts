@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
@@ -151,6 +151,21 @@ describe("initProject", () => {
 
     const content = await readFile(agentsMd, "utf-8");
     expect(content).toContain("## SuperSkill");
+    expect(content).toContain("gate check");
+    expect(content).toContain("Only verified rules are injected by default");
+    expect(content).toContain("catalog/constitution.md");
+  });
+
+  it("appends superskill instructions to CLAUDE.md when present", async () => {
+    const claudeMd = join(projectDir, "CLAUDE.md");
+    await writeFile(claudeMd, "# Claude\n");
+
+    const ctx = createMockCtx(projectDir);
+    await initProject({}, ctx);
+
+    const content = await readFile(claudeMd, "utf-8");
+    expect(content).toContain("## SuperSkill");
+    expect(content).toContain("catalog/constitution.md");
   });
 
   it("does not duplicate superskill instructions in AGENTS.md", async () => {
@@ -158,6 +173,7 @@ describe("initProject", () => {
     await writeFile(agentsMd, "# Project\n\n## SuperSkill\nThis project uses superskill");
 
     const ctx = createMockCtx(projectDir);
+    await initProject({}, ctx);
     await initProject({}, ctx);
 
     const content = await readFile(agentsMd, "utf-8");

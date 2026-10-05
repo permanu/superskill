@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { MARKER_START_TOML, MARKER_END_TOML } from "./types.js";
 
 export function insertTomlBlock(

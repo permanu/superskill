@@ -1,0 +1,178 @@
+# Swift - Sources
+
+Baseline: latest
+Last verified: 2026-10-05
+
+## Primary
+
+- [The Swift Programming Language - Error Handling](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/errorhandling/) - err, api: throwing, catching, typed throws, `try?`/`try!`, defer cleanup, NSError interop.
+- [The Swift Programming Language - Concurrency](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/) - async, conc, err: async/await, task groups, cooperative cancellation.
+- [The Swift Programming Language - The Basics](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/thebasics/) - err, anti, type: optionals, assertions and preconditions versus recoverable errors.
+- [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/) - api, style, doc: naming, argument labels, documentation conventions.
+- [Swift Evolution SE-0413 - Typed throws](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0413-typed-throws.md) - err: when to use typed throws, error substitution, `Result` versus `throws`.
+- [Swift Evolution SE-0235 - Add Result to the Standard Library](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0235-add-result.md) - err, api: manual propagation, delayed handling, asynchronous adapters.
+- [The Swift Concurrency Migration Guide](https://www.swift.org/migration/documentation/migrationguide) - conc, async, proj: strict concurrency adoption, isolation, Sendable.
+- [Handling Cocoa Errors in Swift](https://developer.apple.com/documentation/swift/handling-cocoa-errors-in-swift) - err, ffi: typed `CocoaError` catches, NSError bridging, custom domains.
+- [LocalizedError](https://developer.apple.com/documentation/foundation/localizederror) - err, ui: user-presentable error descriptions.
+- [Logger](https://developer.apple.com/documentation/os/logger) - obs, err: unified logging, levels, subsystem/category, privacy redaction.
+- [Task.checkCancellation()](https://developer.apple.com/documentation/swift/task/checkcancellation()) - conc, err: cancellation checkpoints that throw `CancellationError`.
+- [withTaskCancellationHandler(operation:onCancel:isolation:)](https://developer.apple.com/documentation/swift/withtaskcancellationhandler(operation:oncancel:isolation:)) - conc, err: immediate cancellation cleanup and its concurrency rules.
+
+## Further reading
+
+- [SwiftUI](https://developer.apple.com/documentation/swiftui) - ui, perf: view, state, and data-flow model for the `ui` category.
+- [Observation](https://developer.apple.com/documentation/observation) - ui, conc: `@Observable` change tracking for the `ui` and `conc` categories.
+- [Swift Testing](https://developer.apple.com/documentation/testing) - test: `@Test`, `#expect`, parameterized and async tests.
+- [Foundation](https://developer.apple.com/documentation/foundation) - data, io, net, sec, ffi: platform base layer referenced by framework-specific rules.
+- [SwiftLint Rule Directory](https://realm.github.io/SwiftLint/rule-directory.html) - lint, style, err: tool-enforced rules such as `force_try`.
+- [swift-format](https://github.com/swiftlang/swift-format) - style, lint: formatter and linter backing the `style` and `lint` categories.
+- [Result](https://developer.apple.com/documentation/swift/result) - err: standard library `Result` API surface.
+- [The Swift Programming Language - Automatic Reference Counting](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/automaticreferencecounting/) - arc, mem: strong/weak/unowned references and reference cycles.
+- [The Swift Programming Language - Memory Safety](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/memorysafety/) - mem, perf: exclusive access, in-out conflicts, long-term accesses.
+- [The Swift Programming Language - Structures and Classes](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/classesandstructures/) - type, mem: value semantics, copy-on-write, struct versus class.
+- [The Swift Programming Language - Macros](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/macros/) - macro: macro roles, expansion, declaration rules.
+- [Swift Evolution SE-0304 - Structured concurrency](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md) - conc: child tasks, task groups, cancellation, context inheritance.
+- [Swift Evolution SE-0306 - Actors](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0306-actors.md) - conc: actor isolation, reentrancy, cross-actor references.
+- [Swift Evolution SE-0311 - Task Local Values](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0311-task-locals.md) - conc: task-local binding and child-task inheritance.
+- [Swift Evolution SE-0316 - Global actors](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0316-global-actors.md) - conc: custom global actors, main actor semantics.
+- [Swift Evolution SE-0461 - Run nonisolated async functions on the caller's actor by default](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md) - conc: `@concurrent`, `nonisolated(nonsending)`, executor switching.
+- [Swift Evolution SE-0185 - Synthesizing Equatable and Hashable conformance](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0185-synthesize-equatable-hashable.md) - type: synthesized memberwise equality and hashing.
+- [Swift Evolution SE-0335 - Introduce existential any](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0335-existential-any.md) - type: explicit existential spelling and its costs.
+- [MainActor](https://developer.apple.com/documentation/swift/mainactor) - conc: the main actor's executor and isolation APIs.
+- [Sendable](https://developer.apple.com/documentation/swift/sendable) - conc: sendability requirements for values, classes, and closures.
+- [CheckedContinuation](https://developer.apple.com/documentation/swift/checkedcontinuation) - conc: the resume-exactly-once contract.
+- [Mutex](https://developer.apple.com/documentation/synchronization/mutex) - conc: synchronous mutual exclusion with `withLock`.
+- [The Swift Programming Language - Closures](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/closures/) - arc: capture semantics and capture lists.
+- [The Swift Programming Language - Deinitialization](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/deinitialization/) - arc: deinit and resource cleanup.
+- [The Swift Programming Language - Attributes](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/) - api: `@available` deprecation and declaration attributes.
+- [Swift Evolution SE-0366 - consume operator to end the lifetime of a variable binding](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0366-move-function.md) - arc: forwarding ownership at the last use.
+- [Swift Evolution SE-0377 - borrowing and consuming parameter ownership modifiers](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0377-parameter-ownership-modifiers.md) - arc: parameter ownership conventions.
+- [Swift Evolution SE-0390 - Noncopyable structs and enums](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0390-noncopyable-structs-and-enums.md) - arc: unique ownership for resources.
+- [Unmanaged](https://developer.apple.com/documentation/swift/unmanaged) - arc: manual retain/release balance at C boundaries.
+- [Keychain services](https://developer.apple.com/documentation/security/keychain-services) - sec: encrypted storage for small secrets.
+- [Keychain items](https://developer.apple.com/documentation/security/keychain-items) - sec: item classes and attributes.
+- [Restricting keychain item accessibility](https://developer.apple.com/documentation/security/restricting-keychain-item-accessibility) - sec: accessibility policy and device-bound items.
+- [Apple CryptoKit](https://developer.apple.com/documentation/cryptokit) - sec: hashing, ciphers, key agreement, Secure Enclave keys.
+- [SystemRandomNumberGenerator](https://developer.apple.com/documentation/swift/systemrandomnumbergenerator) - sec: the default cryptographically secure random source.
+- [Local Authentication](https://developer.apple.com/documentation/localauthentication) - sec: biometric and device-owner authentication.
+- [URLComponents](https://developer.apple.com/documentation/foundation/urlcomponents) - sec: RFC 3986 URL construction and encoding.
+- [FileProtectionType](https://developer.apple.com/documentation/foundation/fileprotectiontype) - sec: encryption-at-rest levels for files.
+- [SecureEnclave](https://developer.apple.com/documentation/cryptokit/secureenclave) - sec: hardware-backed key management.
+- [NSAppTransportSecurity](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity) - sec: transport security requirements and exceptions.
+- [URLSessionConfiguration](https://developer.apple.com/documentation/foundation/urlsessionconfiguration) - sec: ephemeral sessions and TLS policy.
+- [Storing CryptoKit Keys in the Keychain](https://developer.apple.com/documentation/cryptokit/storing-cryptokit-keys-in-the-keychain) - sec: persisting cryptographic keys.
+- [OSSignposter](https://developer.apple.com/documentation/os/ossignposter) - obs: intervals, events, and Instruments timelines.
+- [MetricKit](https://developer.apple.com/documentation/metrickit) - obs: field metric and diagnostic reports.
+- [SwiftUI - Performance analysis](https://developer.apple.com/documentation/swiftui/performance-analysis) - obs: hangs, hitches, and view body updates.
+- [The Swift Programming Language - Access Control](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/accesscontrol/) - proj: package access and module boundaries.
+- [The Swift Programming Language - Properties](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/properties/) - mem: lazy stored properties and their initialization semantics.
+- [The Swift Programming Language - Strings and Characters](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/stringsandcharacters/) - mem: substring storage and value-type copies.
+- [The Swift Programming Language - Statements](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/statements/) - proj: conditional compilation blocks and their conditions.
+- [Swift Evolution SE-0409 - Access-level modifiers on import declarations](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0409-access-level-on-imports.md) - proj: scoping dependencies at file, module, and package level.
+- [UnsafePointer](https://developer.apple.com/documentation/swift/unsafepointer) - mem: pointer lifetimes and implicit bridging.
+- [UnsafeMutablePointer](https://developer.apple.com/documentation/swift/unsafemutablepointer) - mem: memory states, initialization, and deallocation.
+- [unsafeBitCast(_:to:)](https://developer.apple.com/documentation/swift/unsafebitcast(_:to:)) - mem: why bit-casting references is undefined behavior.
+- [reserveCapacity(_:)](https://developer.apple.com/documentation/swift/array/reservecapacity(_:)) - mem: allocation strategy for growing arrays.
+- [NSCache](https://developer.apple.com/documentation/foundation/nscache) - mem: evictable caches under memory pressure.
+- [ContiguousArray](https://developer.apple.com/documentation/swift/contiguousarray) - mem: guaranteed contiguous element storage.
+- [ManagedBuffer](https://developer.apple.com/documentation/swift/managedbuffer) - mem: header and raw element storage for custom containers.
+- [ArraySlice](https://developer.apple.com/documentation/swift/arrayslice) - mem: slice lifetime and index semantics.
+- [The Swift Programming Language - Control Flow](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/controlflow/) - style: guard early exits, where clauses, and for-case patterns.
+- [The Swift Programming Language - Optional Chaining](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/optionalchaining/) - style: chaining as the alternative to forced unwrapping.
+- [The Swift Programming Language - Basic Operators](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/basicoperators/) - style: nil-coalescing, ternary, and range operators.
+- [The Swift Programming Language - Enumerations](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/enumerations/) - style: switch exhaustiveness over enumeration cases.
+- [Swift Evolution SE-0380 - if and switch expressions](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0380-if-switch-expressions.md) - style: branch expressions and dropped return ceremony.
+- [Swift Evolution SE-0345 - if let shorthand](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0345-if-let-shorthand.md) - style: shorthand optional binding that shadows the same name.
+- [SwiftLint - missing_docs](https://realm.github.io/SwiftLint/missing_docs.html) - doc: flagging undocumented public declarations.
+- [SwiftLint - orphaned_doc_comment](https://realm.github.io/SwiftLint/orphaned_doc_comment.html) - doc: doc comments detached from a declaration.
+- [SwiftLint - local_doc_comment](https://realm.github.io/SwiftLint/local_doc_comment.html) - doc: doc comments used in local scopes.
+- [Swift Evolution SE-0296 - Async/await](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0296-async-await.md) - async: completion handlers, suspension points, overloads, protocol requirements.
+- [Swift Evolution SE-0298 - AsyncSequence](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0298-asyncsequence.md) - async: repeated values over time and their iteration.
+- [Swift Evolution SE-0314 - AsyncStream and AsyncThrowingStream](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0314-async-stream.md) - async: bridging multi-value callbacks, buffering, and termination.
+- [Task.sleep(for:tolerance:clock:)](https://developer.apple.com/documentation/swift/task/sleep(for:tolerance:clock:)) - async: suspending a task without blocking the thread.
+- [SwiftLint - first_where](https://realm.github.io/SwiftLint/first_where.html) - perf: `first(where:)` over `filter { }.first`.
+- [SwiftLint - last_where](https://realm.github.io/SwiftLint/last_where.html) - perf: `last(where:)` over `filter { }.last`.
+- [SwiftLint - contains_over_filter_count](https://realm.github.io/SwiftLint/contains_over_filter_count.html) - perf: `contains` over `filter { }.count`.
+- [SwiftLint - contains_over_filter_is_empty](https://realm.github.io/SwiftLint/contains_over_filter_is_empty.html) - perf: `contains` over `filter { }.isEmpty`.
+- [SwiftLint - sorted_first_last](https://realm.github.io/SwiftLint/sorted_first_last.html) - perf: `min()`/`max()` over `sorted().first`/`.last`.
+- [SwiftLint - flatmap_over_map_reduce](https://realm.github.io/SwiftLint/flatmap_over_map_reduce.html) - perf: `flatMap` over `map` plus `reduce([], +)`.
+- [SwiftLint - empty_count](https://realm.github.io/SwiftLint/empty_count.html) - perf: `isEmpty` over `count == 0`.
+- [SwiftLint - empty_collection_literal](https://realm.github.io/SwiftLint/empty_collection_literal.html) - perf: `isEmpty` over comparison to `[]` or `[:]`.
+- [Collection.isEmpty](https://developer.apple.com/documentation/swift/collection/isempty) - perf: the O(1) emptiness test.
+- [Array.lazy](https://developer.apple.com/documentation/swift/array/lazy) - perf: lazy `map` and `filter`.
+- [Array.reduce(into:_:)](https://developer.apple.com/documentation/swift/array/reduce(into:_:)) - perf: in-place accumulation for copy-on-write results.
+- [Array.removeFirst(_:)](https://developer.apple.com/documentation/swift/array/removefirst(_:)) - perf: O(n) removal from the front of an array.
+- [Set](https://developer.apple.com/documentation/swift/set) - perf: efficient membership tests.
+- [Dictionary](https://developer.apple.com/documentation/swift/dictionary) - perf: hash-table access by key.
+- [SwiftLint - README](https://github.com/realm/SwiftLint) - lint: configuration, strict mode, baselines, custom rules, analyzer runs.
+- [SwiftLint - blanket_disable_command](https://realm.github.io/SwiftLint/blanket_disable_command.html) - lint: scoping disable commands to lines or regions.
+- [SwiftLint - superfluous_disable_command](https://realm.github.io/SwiftLint/superfluous_disable_command.html) - lint: stale suppressions and documented disable commands.
+- [SwiftLint - force_cast](https://realm.github.io/SwiftLint/force_cast.html) - anti: force casts.
+- [SwiftLint - implicitly_unwrapped_optional](https://realm.github.io/SwiftLint/implicitly_unwrapped_optional.html) - anti: implicitly unwrapped optionals outside outlets.
+- [SwiftLint - class_delegate_protocol](https://realm.github.io/SwiftLint/class_delegate_protocol.html) - anti: class-bound delegate protocols.
+- [SwiftLint - discouraged_optional_boolean](https://realm.github.io/SwiftLint/discouraged_optional_boolean.html) - anti: optional booleans.
+- [SwiftLint - discouraged_optional_collection](https://realm.github.io/SwiftLint/discouraged_optional_collection.html) - anti: optional collections.
+- [SwiftLint - legacy_constructor](https://realm.github.io/SwiftLint/legacy_constructor.html) - anti: legacy `Make` convenience functions.
+- [SwiftLint - identical_operands](https://realm.github.io/SwiftLint/identical_operands.html) - anti: expressions compared with themselves.
+- [SwiftLint - superfluous_else](https://realm.github.io/SwiftLint/superfluous_else.html) - anti: else branches after an exiting if.
+- [Swift Evolution SE-0412 - Strict concurrency for global variables](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md) - anti: the `nonisolated(unsafe)` opt-out.
+- [Swift Evolution SE-0302 - Sendable and @Sendable closures](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0302-concurrent-value-and-concurrent-closures.md) - anti: unchecked sendability.
+- [Encoding and Decoding Custom Types](https://developer.apple.com/documentation/foundation/encoding-and-decoding-custom-types) - data: Codable adoption, coding keys, manual coding, direction.
+- [JSONDecoder.KeyDecodingStrategy](https://developer.apple.com/documentation/foundation/jsondecoder/keydecodingstrategy-swift.enum) - data: mapping foreign key styles.
+- [JSONDecoder.DateDecodingStrategy](https://developer.apple.com/documentation/foundation/jsondecoder/datedecodingstrategy-swift.enum) - data: date formats on the wire.
+- [Data.WritingOptions.atomic](https://developer.apple.com/documentation/foundation/nsdata/writingoptions/atomic) - data: atomic file replacement.
+- [Using the file system effectively](https://developer.apple.com/documentation/foundation/using-the-file-system-effectively) - data: choosing the right directory for each file.
+- [PropertyListEncoder](https://developer.apple.com/documentation/foundation/propertylistencoder) - data: property list encoding from Codable types.
+- [JSONEncoder.OutputFormatting.sortedKeys](https://developer.apple.com/documentation/foundation/jsonencoder/outputformatting-swift.struct/sortedkeys) - data: stable JSON key order.
+- [FileManager.url(for:in:appropriateFor:create:)](https://developer.apple.com/documentation/foundation/filemanager/url(for:in:appropriateFor:create:)) - data: resolving system directories.
+- [The Swift Programming Language - Advanced Operators](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/advancedoperators/) - num: overflow operators and bit manipulation.
+- [Decimal](https://developer.apple.com/documentation/foundation/decimal) - num: base-10 arithmetic.
+- [FloatingPoint](https://developer.apple.com/documentation/swift/floatingpoint) - num: radix-2 representation and NaN behavior.
+- [Swift Evolution SE-0202 - Random Unification](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0202-random-unification.md) - num: modulo bias and range-based random values.
+- [BinaryInteger.isMultiple(of:)](https://developer.apple.com/documentation/swift/binaryinteger/ismultiple(of:)) - num: divisibility tests and their edge cases.
+- [Swift Evolution SE-0337 - Incremental migration to concurrency checking](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0337-support-incremental-migration-to-concurrency-checking.md) - conv: `@preconcurrency` imports and declarations.
+- [SwiftLint - convenience_type](https://realm.github.io/SwiftLint/convenience_type.html) - const: caseless enums for static-only types.
+- [SwiftLint - legacy_constant](https://realm.github.io/SwiftLint/legacy_constant.html) - const: type-scoped constants over legacy globals.
+- [OptionSet](https://developer.apple.com/documentation/swift/optionset) - const: combinable flags with set operations.
+- [FileHandle.read(upToCount:)](https://developer.apple.com/documentation/foundation/filehandle/read(uptocount:)) - io: streaming a file in chunks.
+- [FileHandle](https://developer.apple.com/documentation/foundation/filehandle) - io: the file descriptor wrapper.
+- [NSData.ReadingOptions.mappedIfSafe](https://developer.apple.com/documentation/foundation/nsdata/readingoptions/mappedifsafe) - io: mapping a file into virtual memory.
+- [Data.ReadingOptions](https://developer.apple.com/documentation/foundation/data/readingoptions) - io: the options that control reads.
+- [URLResourceValues.fileSize](https://developer.apple.com/documentation/foundation/urlresourcevalues/filesize) - io: file size without reading contents.
+- [URL.resourceValues(forKeys:)](https://developer.apple.com/documentation/foundation/url/resourcevalues(forkeys:)) - io: fetching file metadata.
+- [URLResourceValues.isExcludedFromBackup](https://developer.apple.com/documentation/foundation/urlresourcevalues/isexcludedfrombackup) - io: excluding recreatable files from backup.
+- [NSFileCoordinator](https://developer.apple.com/documentation/foundation/nsfilecoordinator) - io: coordinating reads and writes across processes.
+- [FileManager.copyItem(at:to:)](https://developer.apple.com/documentation/foundation/filemanager/copyitem(at:to:)) - io: whole-file copies with metadata.
+- [FileManager.createDirectory(at:withIntermediateDirectories:attributes:)](https://developer.apple.com/documentation/foundation/filemanager/createdirectory(at:withintermediatedirectories:attributes:)) - io: creating directory paths.
+- [URLSession.data(from:)](https://developer.apple.com/documentation/foundation/urlsession/data(from:)) - net: async whole-body loads.
+- [URLSessionConfiguration.timeoutIntervalForRequest](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/timeoutintervalforrequest) - net: request timeouts.
+- [URLSessionConfiguration.waitsForConnectivity](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/waitsforconnectivity) - net: waiting for connectivity.
+- [URLSessionConfiguration.background(withIdentifier:)](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/background(withidentifier:)) - net: transfers that continue in the background.
+- [URLSession.invalidateAndCancel()](https://developer.apple.com/documentation/foundation/urlsession/invalidateandcancel()) - net: session lifecycle.
+- [URLSession.upload(for:fromFile:)](https://developer.apple.com/documentation/foundation/urlsession/upload(for:fromfile:)) - net: file-backed uploads.
+- [URLSession.bytes(for:delegate:)](https://developer.apple.com/documentation/foundation/urlsession/bytes(for:delegate:)) - net: streaming response bytes.
+- [URLSessionTaskMetrics](https://developer.apple.com/documentation/foundation/urlsessiontaskmetrics) - net: per-task latency and redirect metrics.
+- [URLSessionTaskDelegate.urlSession(_:task:didFinishCollecting:)](https://developer.apple.com/documentation/foundation/urlsessiontaskdelegate/urlsession(_:task:didfinishcollecting:)) - net: the callback that delivers metrics.
+- [State](https://developer.apple.com/documentation/swiftui/state) - ui: view state ownership and sharing.
+- [Binding](https://developer.apple.com/documentation/swiftui/binding) - ui: reading and writing a value owned by a source of truth.
+- [Observable()](https://developer.apple.com/documentation/observation/observable()) - ui: the observation macro for model types.
+- [ForEach](https://developer.apple.com/documentation/swiftui/foreach) - ui: identified data and constant view counts.
+- [View.task(name:priority:file:line:_:)](https://developer.apple.com/documentation/swiftui/view/task(name:priority:file:line:_:)) - ui: view-lifetime async work.
+- [Environment](https://developer.apple.com/documentation/swiftui/environment) - ui: reading values from the view hierarchy.
+- [NavigationStack](https://developer.apple.com/documentation/swiftui/navigationstack) - ui: root-and-stack navigation.
+- [Migrating to new navigation types](https://developer.apple.com/documentation/swiftui/migrating-to-new-navigation-types) - ui: replacing navigation views with stacks.
+- [LazyVStack](https://developer.apple.com/documentation/swiftui/lazyvstack) - ui: lazily created children.
+- [withAnimation(_:_:)](https://developer.apple.com/documentation/swiftui/withanimation(_:_:)) - ui: animated transactions.
+- [View.animation(_:value:)](https://developer.apple.com/documentation/swiftui/view/animation(_:value:)) - ui: value-scoped animation.
+- [View.animation(_:)](https://developer.apple.com/documentation/swiftui/view/animation(_:)) - ui: view-scoped animation.
+- [Font](https://developer.apple.com/documentation/swiftui/font) - ui: environment-dependent fonts.
+- [Color](https://developer.apple.com/documentation/swiftui/color) - ui: context-adapting colors.
+- [View.accessibilityLabel(_:)](https://developer.apple.com/documentation/swiftui/view/accessibilitylabel(_:)) - ui: labels for views without text.
+- [View.accessibilityHidden(_:)](https://developer.apple.com/documentation/swiftui/view/accessibilityhidden(_:)) - ui: hiding views from accessibility.
+- [AppStorage](https://developer.apple.com/documentation/swiftui/appstorage) - ui: values reflected from user defaults.
+- [View.transition(_:)](https://developer.apple.com/documentation/swiftui/view/transition(_:)) - ui: insertion and removal transitions.
+- [String.init(cString:) - UnsafePointer<CChar>](https://developer.apple.com/documentation/swift/string/init(cstring:)-2p84k) - ffi: copying null-terminated UTF-8 data.
+- [String.init(cString:) - UnsafePointer<UInt8>](https://developer.apple.com/documentation/swift/string/init(cstring:)-6kr8s) - ffi: the unsigned-byte variant.
+- [OpaquePointer](https://developer.apple.com/documentation/swift/opaquepointer) - ffi: wrapping opaque C pointers.
+- [NSSecureCoding](https://developer.apple.com/documentation/foundation/nssecurecoding) - ffi: archive decoding robust against object substitution.
+- [Migrating a test from XCTest](https://developer.apple.com/documentation/testing/migratingfromxctest) - test: converting XCTest cases, assertions, and setup.

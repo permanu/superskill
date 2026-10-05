@@ -7,6 +7,6 @@
     "url": "https://permanu.com"
   },
   "repository": "https://github.com/permanu/superskill",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "keywords": ["skills", "routing", "knowledge-base", "context", "vault", "skills-sh", "agent-skills", "multi-tool"]
 }

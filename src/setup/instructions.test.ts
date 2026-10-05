@@ -6,6 +6,7 @@ import {
   writeMdcInstruction,
   removeMdcInstruction,
 } from "./instructions.js";
+import { INSTRUCTION_TEXT } from "./types.js";
 
 vi.mock("fs", () => ({
   readFileSync: vi.fn(),
@@ -22,6 +23,15 @@ const mockUnlink = vi.mocked(unlinkSync);
 
 beforeEach(() => vi.resetAllMocks());
 
+describe("INSTRUCTION_TEXT", () => {
+  it("states the minimal harness rules", () => {
+    expect(INSTRUCTION_TEXT).toContain("superskill` tool with your task");
+    expect(INSTRUCTION_TEXT).toContain("gate check");
+    expect(INSTRUCTION_TEXT).toContain("Only verified rules are injected by default");
+    expect(INSTRUCTION_TEXT).toContain("catalog/constitution.md");
+  });
+});
+
 describe("writeMarkdownInstruction", () => {
   it("creates new file with markers when file does not exist", () => {
     mockExists.mockReturnValue(false);
@@ -30,7 +40,8 @@ describe("writeMarkdownInstruction", () => {
     const written = mockWrite.mock.calls[0][1] as string;
     expect(written).toContain("<!-- superskill:start -->");
     expect(written).toContain("<!-- superskill:end -->");
-    expect(written).toContain("project_context");
+    expect(written).toContain("gate check");
+    expect(written).toContain("catalog/constitution.md");
   });
 
   it("appends to existing file", () => {
@@ -82,7 +93,8 @@ describe("writeMdcInstruction", () => {
     const written = mockWrite.mock.calls[0][1] as string;
     expect(written).toContain("description: SuperSkill knowledge base integration");
     expect(written).toContain("alwaysApply: true");
-    expect(written).toContain("project_context");
+    expect(written).toContain("gate check");
+    expect(written).toContain("catalog/constitution.md");
   });
 });
 

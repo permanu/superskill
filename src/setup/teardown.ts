@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js";
 import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";

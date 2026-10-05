@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 // Operations on .superskill/ use raw fs (not VaultFS) because .superskill/ is
 // project-local, not inside the vault. VaultFS enforces vault-specific security policies.
@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { GRAPH_SCHEMA_VERSION } from "./schema.js";
 import type {
   Graph,
   Node,
@@ -19,7 +20,7 @@ import type {
 const GRAPH_FILE = ".superskill/graph.json";
 
 export function createEmptyGraph(): Graph {
-  return { nodes: [], edges: [] };
+  return { version: GRAPH_SCHEMA_VERSION, nodes: [], edges: [] };
 }
 
 const GITIGNORE_ENTRY = ".superskill/";
@@ -53,11 +54,20 @@ export async function ensureSuperskillDir(projectDir: string): Promise<string> {
   return dir;
 }
 
+function migrateGraph(parsed: Partial<Graph>): Graph {
+  return {
+    version: GRAPH_SCHEMA_VERSION,
+    nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
+    edges: Array.isArray(parsed.edges) ? parsed.edges : [],
+  };
+}
+
 export async function loadGraph(projectDir: string): Promise<Graph> {
   const path = join(projectDir, GRAPH_FILE);
   try {
     const raw = await readFile(path, "utf-8");
-    return JSON.parse(raw) as Graph;
+    const parsed = JSON.parse(raw) as Partial<Graph>;
+    return migrateGraph(parsed);
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -78,8 +88,9 @@ export async function writeGraph(projectDir: string, graph: Graph): Promise<void
     tmpdir(),
     `graph-${randomUUID()}.json`,
   );
+  const persisted: Graph = { ...graph, version: GRAPH_SCHEMA_VERSION };
   try {
-    await writeFile(tmpPath, JSON.stringify(graph, null, 2), "utf-8");
+    await writeFile(tmpPath, JSON.stringify(persisted, null, 2), "utf-8");
     await rename(tmpPath, targetPath);
   } catch (err) {
     console.error("[graph-store] failed to write graph:", (err as Error).message);
@@ -161,7 +172,7 @@ export function pruneSessions(graph: Graph, keepLast: number): Graph {
     }
     return true;
   });
-  return { nodes: [...otherNodes, ...kept], edges: keptEdges };
+  return { ...graph, nodes: [...otherNodes, ...kept], edges: keptEdges };
 }
 
 export function decayWeights(

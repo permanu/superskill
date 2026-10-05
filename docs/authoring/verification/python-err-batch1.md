@@ -1,0 +1,54 @@
+# Verification Report - Python `err` Batch 1
+
+- Verifier: independent adversarial subagent (fresh context; did not author these rules)
+- Date: 2026-10-04
+- Scope: `catalog/rules/python/err-*.md` (16 rules; all entered as `status: draft`)
+- Toolchain: CPython 3.14.6 (`/opt/homebrew/bin/python3`), macOS
+- Scratch: `/private/var/folders/jy/hhmjp4yx34x0g_nptcvchp180000gn/T/opencode/verify-python-err` (inputs, caches, probes)
+
+## Method
+
+- Fetched every cited URL (21 distinct) and captured supporting quotes.
+- Extracted both snippets from each rule (32 files) and compiled them with `python3 -m py_compile` on CPython 3.14.6.
+- Ran 43 behavioral probes for behavioral claims in the scratch dir: no network, no filesystem writes, no signals to real processes, no long sleeps (the two 5 s deadline runs in `err-asyncio-timeout` are bounded by the rule's own values). Literal runs were replaced by safe equivalents where the snippet itself would be unsafe (noted per rule).
+- Cross-checked: frontmatter validity, id/path match, `related` and `## See Also` link resolution, body section order, exactly one `Bad`/`Good` fence each, snippet line counts, summary word counts, version-token and hedge-word scans, duplicate/near-duplicate review within the pack, and the three Ruff rule ids against official docs.
+
+## Verdicts
+
+| rule id | verdict | evidence |
+|---|---|---|
+| python-err-no-bare-except | verified | Sources: tutorial "good practice to be as specific as possible ... allow any unexpected exceptions to propagate"; exceptions.html KeyboardInterrupt "inherits from BaseException so as to not be accidentally caught by code that catches Exception"; pyguide "catch-all except: will really catch everything including ... Ctrl+C"; Ruff BLE001 exists and exempts re-raise/`logging.exception` exactly as the Why states. Compile OK. Run: bare `except` swallowed `KeyboardInterrupt`; narrow handler propagated it; Good raises `TypeError` for a non-object payload. |
+| python-err-context-manager-cleanup | verified | Source: tutorial "After the statement is executed, the file f is always closed, even if a problem was encountered"; contextlib documents `contextmanager`/`closing` for non-context-manager resources. Compile OK. Literal not run (writes a file; FS-write restriction); safe `Tracked` object probe: `with` closed on a raising body, manual acquire/release skipped close. |
+| python-err-exception-group | verified | Sources: PEP 654 "each except* clause ... executes at most once ... each exception is either handled by exactly one clause ... or is reraised" and "Unmatched Exceptions: the remaining part of the group is propagated on"; tutorial has the same example; asyncio TaskGroup docs confirm the `ExceptionGroup` raise. Compile OK (incl. `except*`). Run: `JobFailed` subgroup matched, unmatched `ValueError` propagated as `ExceptionGroup`; plain `except Exception` sees only the wrapper. |
+| python-err-retry-idempotent | verified | Source: RFC 9110 §9.2.2 "Idempotent Methods" incl. "a client SHOULD NOT automatically retry a request with a non-idempotent method unless ... some means to detect that the original request was never applied". Compile OK. Run: Bad still looping after 1 s (4,594,140 attempts); Good succeeded on attempt 3 and re-raised after exactly 3 attempts when always failing (`urlopen` stubbed; no network). |
+| python-err-logging-exception | verified | Source: logging docs `Logger.exception`: "Exception info is added to the logging message. This method should only be called from an exception handler." Compile OK. Run: Good log contains "Traceback (most recent call last)" and `OSError: connection reset`; Bad log contains only the formatted message, no traceback. |
+| python-err-asyncio-cancel | verified | Sources: asyncio-task "In case asyncio.CancelledError is explicitly caught, it should generally be propagated when clean-up is complete" and "might misbehave if a coroutine swallows asyncio.CancelledError"; asyncio-exceptions "In almost all situations the exception must be re-raised" and it "is now a subclass of BaseException rather than Exception". Compile OK. Run: Bad returned `b""` with `task.cancelled()=False`; Good propagated `CancelledError` with `task.cancelled()=True`; `issubclass(CancelledError, BaseException) and not Exception` confirmed. |
+| python-err-chain-translate | verified | Sources: tutorial "the raise statement allows an optional from clause ... transforming exceptions"; PEP 3134 "`__cause__` attribute for explicitly chained exceptions"; Ruff B904 exists ("raise statements in exception handlers that lack a from clause"). Compile OK. Run (`/nonexistent` path): Bad `__cause__=None`, `__context__=FileNotFoundError`; Good `__cause__=FileNotFoundError`. |
+| python-err-suppress-narrow | verified | Source: contextlib.suppress "should be used only to cover very specific errors where silently continuing with program execution is known to be the right thing to do" (docs example suppresses `FileNotFoundError`). Compile OK. Literal not run (`os.kill` would signal real processes); semantics probe: `suppress(Exception)` swallowed an unexpected `ValueError`, `suppress(ProcessLookupError)` propagated it. Note: docs also show `suppress(Exception)` for an explicit ignore-all mode; the rule's stricter stance is consistent with the cited guidance. |
+| python-err-chain-suppress | verified | Source: exceptions.html "Setting `__cause__` also implicitly sets the `__suppress_context__` attribute to True, so that using `raise new_exc from None` effectively replaces the old exception ... (e.g. converting KeyError to AttributeError), while leaving the old exception available in `__context__`"; tutorial documents "the from None idiom". Compile OK. Run: both snippets `__suppress_context__=True` with original in `__context__`; the printed traceback hides the original. |
+| python-err-finally-no-control-flow | verified | Sources: tutorial "If the finally clause executes a break, continue or return statement, exceptions are not re-raised ... discouraged ... From version 3.14 the compiler emits a SyntaxWarning"; PEP 765; Ruff B012 exists. Compile emits exactly the expected PEP 765 SyntaxWarning. Run: Bad `parse('12')=0` (finally overrides the try return) and `parse('abc')=0` (ValueError swallowed); Good returns 12 / 0. |
+| python-err-warnings-vs-errors | verified | Source: warnings docs "alert the user of some condition ... where that condition (normally) doesn't warrant raising an exception and terminating the program"; filter action "error" turns warnings into exceptions. Compile OK. Run: Bad raises `RuntimeError`; Good emits one `DeprecationWarning` and returns. |
+| python-err-eafp-attempt | verified | Source: glossary EAFP and LBYL "can risk introducing a race condition between 'the looking' and 'the leaping' ... `if key in mapping: return mapping[key]` can fail if another thread removes key from mapping after the test, but before the lookup". Compile OK. Run skipped: the claim is a TOCTOU race that needs interleaved external mutation; the snippets are deterministic and no-FS-write/no-signal constraints rule out a faithful run. Note: the second citation (tutorial Predefined Clean-up Actions) does not discuss EAFP; the glossary is the supporting primary source. |
+| python-err-reraise-bare | verified | Sources: tutorial documents the bare re-raise ("a simpler form of the raise statement allows you to re-raise the exception"); PEP 654 states the forms "are not equivalent because a reraise does not add the current frame to the stack" and shows the traceback diff. Compile OK. Run: `raise exc` frames `['bad_reraise', 'bad_reraise', 'upload']` vs bare raise `['good_reraise', 'upload']` (module wrapper frame present in both); the extra frame is the only difference. |
+| python-err-custom-hierarchy | verified | Sources: tutorial "Exceptions should typically be derived from the Exception class"; exceptions.html "encouraged to derive new exceptions from the Exception class or one of its subclasses, and not from BaseException"; pyguide "must inherit from an existing exception class". Compile OK. Run: Bad raises bare `Exception`; Good raises `InsufficientFunds(PaymentsError)` carrying `balance`/`amount` and uses `ValueError` for invalid input. Note: pyguide/PEP 8 prefer an `Error` suffix; `InsufficientFunds` deviates but is a common, defensible convention; the rule's decision itself holds. |
+| python-err-asyncio-timeout | verified | Source: asyncio-task "the context manager will cancel the current task and handle the resulting asyncio.CancelledError internally, transforming it into a TimeoutError ... the TimeoutError can only be caught outside of the context manager". Compile OK. Run literal snippets: Bad raised `TimeoutError` past its inner handler after 5.0 s; Good returned `b""` after 5.0 s. |
+| python-err-boundary-errors | verified | Sources: exceptions.html TypeError "inappropriate type" and "passing arguments with the wrong value ... should result in a ValueError"; pyguide "Make use of built-in exception classes when it makes sense. For example, raise a ValueError to indicate a programming mistake ... such as may happen when validating function arguments". Compile OK. Run: Good returns 8080, raises `TypeError` for `{"port": "8080"}`, `ValueError` for `{"port": 70000}` and for bad JSON (chained); Bad leaks `KeyError`. |
+
+## Cross-cutting checks
+
+- Compile: 32/32 snippets pass `python3 -m py_compile`; only expected stderr is the PEP 765 `SyntaxWarning` on `err-finally-no-control-flow` Bad.
+- Formatting: all 16 follow the contract body order; exactly one `## Bad` and one `## Good` fence each (python); snippets ≤ 25 lines (max 20); summaries ≤ 30 words (max 16); Why 2-5 sentences; `baseline: latest`; no version tokens or `consider/might/often/TODO` tokens in rule prose; `triggers.keywords` 2-8; `files: ["**/*.py"]`.
+- Links/ids: all 16 ids match paths; all `related` ids resolve within the pack; all `## See Also` links resolve; INDEX.md file list matches the directory exactly (16 entries).
+- Duplicates: no duplicate or near-duplicate pairs; the overlapping pairs (`no-bare-except`/`suppress-narrow`, `chain-translate`/`chain-suppress`, `logging-exception`/`reraise-bare`, `asyncio-cancel`/`asyncio-timeout`, `context-manager-cleanup`/`finally-no-control-flow`) state distinct decisions and cross-reference each other.
+- Ruff ids (official docs): `BLE001` blind-except, `B904` raise-without-from-inside-except, `B012` jump-statement-in-finally all exist and match the rules' claims.
+
+## Notes / follow-ups (outside verifier ownership)
+
+- `INDEX.md` still says `verified: 0` and `categories.md` says all `err` rules are draft; both are stale after these flips and should be updated by their owners.
+- `err-eafp-attempt`'s tutorial citation is loose (see above); not blocking.
+
+## Counts
+
+- Verified: 16/16
+- Rejected: 0
+- Blockers: none

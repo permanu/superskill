@@ -7,6 +7,7 @@ import {
   startSession,
   recordActivation,
   endSession,
+  findOrCreateSession,
 } from "./learner.js";
 
 function makeProjectNode() {
@@ -254,6 +255,80 @@ describe("recordActivation", () => {
     const graph = makeBaseGraph("skill-a", 0.5);
     const updated = recordActivation(graph, "nonexistent", "skill-a", []);
     expect(updated.nodes).toHaveLength(2);
+  });
+});
+
+describe("findOrCreateSession", () => {
+  it("reuses a recent open session", () => {
+    const graph: Graph = {
+      nodes: [
+        makeProjectNode(),
+        makeSkillNode("skill-a", 0.5),
+        {
+          type: "session",
+          id: "s_recent",
+          intent: "old work",
+          skills: ["skill-a"],
+          files: [],
+          outcome: null,
+          insights: [],
+          ts: Date.now() - 10 * 60 * 1000,
+        },
+      ],
+      edges: [],
+    };
+    const { graph: updated, sessionId } = findOrCreateSession(graph, "new work");
+    expect(sessionId).toBe("s_recent");
+    expect(updated.nodes.filter((n) => n.type === "session")).toHaveLength(1);
+  });
+
+  it("closes stale open sessions as partial and decays weights deterministically", () => {
+    const graph: Graph = {
+      nodes: [
+        makeProjectNode(),
+        makeSkillNode("skill-a", 0.8),
+        makeSkillNode("skill-b", 0.6),
+        {
+          type: "session",
+          id: "s_stale",
+          intent: "abandoned work",
+          skills: ["skill-a"],
+          files: [],
+          outcome: null,
+          insights: [],
+          ts: Date.now() - 2 * 60 * 60 * 1000,
+        },
+      ],
+      edges: [
+        { type: "project_skill", from: "project", to: "skill-a", w: 0.8, activations: 10 },
+        { type: "project_skill", from: "project", to: "skill-b", w: 0.6, activations: 5 },
+      ],
+    };
+    const { graph: updated, sessionId } = findOrCreateSession(graph, "new work");
+
+    const stale = updated.nodes.find(
+      (n) => n.type === "session" && n.id === "s_stale",
+    ) as SessionNode;
+    expect(stale.outcome).toBe("partial");
+
+    const edgeA = updated.edges.find(
+      (e) => e.type === "project_skill" && e.to === "skill-a",
+    ) as ProjectSkillEdge;
+    const edgeB = updated.edges.find(
+      (e) => e.type === "project_skill" && e.to === "skill-b",
+    ) as ProjectSkillEdge;
+    expect(edgeA.w).toBe(0.8);
+    expect(edgeB.w).toBeCloseTo(0.57);
+
+    expect(sessionId).not.toBe("s_stale");
+    expect(updated.nodes.filter((n) => n.type === "session")).toHaveLength(2);
+  });
+
+  it("starts a new session when none are open", () => {
+    const graph = makeBaseGraph("skill-a", 0.5);
+    const { graph: updated, sessionId } = findOrCreateSession(graph, "fresh");
+    expect(sessionId).toMatch(/^s_/);
+    expect(updated.nodes.filter((n) => n.type === "session")).toHaveLength(1);
   });
 });
 

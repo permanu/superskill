@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 import type {
   Graph,
@@ -44,7 +44,7 @@ export function findOrCreateSession(
   const stale = sessions.filter((s) => s.outcome === null && now - s.ts >= SESSION_WINDOW_MS);
   for (const s of stale) {
     updated = updateNode(updated, "session", s.id, {
-      outcome: "success",
+      outcome: "partial",
     } as Partial<SessionNode>);
   }
   if (stale.length > 0) {

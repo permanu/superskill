@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import type { CommandContext, CommandHandler, CommandRegistration, MCPToolDefinition } from "./types.js";
 import { readCommand, listCommand } from "../commands/read.js";
 import { writeCommand } from "../commands/write.js";
@@ -26,6 +26,15 @@ import { snapshotRepoState, envFactsCommand, credRefsCommand, rollbackCommand } 
 import { captureCommand } from "../commands/capture.js";
 import { listTemplates, applyTemplate } from "../lib/templates.js";
 import { installSkills, listInstalledSkills, removeSkill } from "../lib/skill-installer.js";
+import { specCommand, type SpecAction } from "../commands/spec.js";
+import { ticketsCommand, type TicketInput } from "../commands/tickets.js";
+import { evidenceCommand } from "../commands/evidence.js";
+import { gateCommand } from "../commands/gate.js";
+import { impactCommand } from "../commands/impact.js";
+import { claimsCommand } from "../commands/claims.js";
+import { telemetryCommand, type TelemetryAction } from "../commands/telemetry.js";
+import type { AcceptanceInput } from "../lib/gates/spec.js";
+import type { TicketStatus } from "../lib/gates/tickets.js";
 
 export type { CommandRegistration } from "./types.js";
 
@@ -467,21 +476,48 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: () => ({}),
   });
 
+  r.register("telemetry", {
+    handler: telemetryCommand as CommandHandler,
+    toolDef: {
+      name: "telemetry",
+      description:
+        "Local, opt-in rule-selection telemetry: status/enable/disable/report/clear. Events never leave the machine; prompts are stored only as truncated hashes.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string",
+            enum: ["status", "enable", "disable", "report", "clear"],
+            description: "What to do; defaults to status.",
+          },
+          top: { type: "number", description: "Rows per selection/drop list for action=report (default 20)." },
+        },
+      },
+      annotations: { readOnlyHint: false },
+    },
+    adaptArgs: (raw) => ({
+      action: (typeof raw.action === "string" ? raw.action : "status") as TelemetryAction,
+      top: n(raw.top),
+    }),
+  });
+
   r.register("superskill", {
-    handler: (async (args: { task?: string; skill_id?: string }, ctx: CommandContext) => {
+    handler: (async (args: { task?: string; skill_id?: string; files?: string[] }, ctx: CommandContext) => {
       return activateSkills({
         task: args.task,
         skill_id: args.skill_id,
+        files: args.files,
       }, ctx);
     }) as CommandHandler,
     toolDef: {
       name: "superskill",
-      description: "Route a task to curated in-repo packs (code/review/security/ops/devops). Lazy: only matching language + phase. Does not scrape skills.sh.",
+      description: "Route a task to curated in-repo packs (code/review/security/ops/devops) and deterministic verified rules selected by language, file hints, and phase. Lazy: only matching language + phase. Does not scrape skills.sh.",
       inputSchema: {
         type: "object" as const,
         properties: {
           task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it." },
           skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'vercel-labs/agent-skills@react-best-practices')" },
+          files: { type: "array", items: { type: "string" }, description: "Repo-relative file paths being worked on — selects file-triggered rules deterministically" },
         },
       },
       annotations: { readOnlyHint: true },
@@ -489,6 +525,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       task: s(raw.task),
       skill_id: s(raw.skill_id),
+      files: a(raw.files) as string[] | undefined,
     }),
   });
 
@@ -866,6 +903,255 @@ export function createRegistry(): CommandRegistry {
       type: s(raw.type),
       variables: typeof raw.variables === "object" && raw.variables !== null
         ? raw.variables as Record<string, string> : undefined,
+    }),
+  });
+
+  r.register("spec", {
+    handler: specCommand as CommandHandler,
+    toolDef: {
+      name: "spec",
+      description: "Manage deterministic plan specs. Actions: create, status, approve, freeze, list. Specs use a fixed skeleton (goal, non-goals, constraints, context, files, acceptance, risks, rollback). Approve requires zero gaps; freeze pins a content hash and makes the spec immutable.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["create", "status", "approve", "freeze", "list"], description: "Spec action" },
+          title: { type: "string", description: "Spec title (required for create)" },
+          goal: { type: "string", description: "What this work must achieve" },
+          non_goals: { type: "array", items: { type: "string" }, description: "Explicitly out of scope" },
+          constraints: { type: "array", items: { type: "string" }, description: "Hard constraints" },
+          context: { type: "string", description: "Background context" },
+          allowed_files: { type: "array", items: { type: "string" }, description: "Globs this work may touch" },
+          forbidden_files: { type: "array", items: { type: "string" }, description: "Globs this work must not touch" },
+          acceptance: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "Acceptance id (auto-assigned A1..An if omitted)" },
+                text: { type: "string", description: "What must be true" },
+                command: { type: "string", description: "Executable command that proves it" },
+                manual: { type: "string", description: "Reason it can only be checked manually" },
+              },
+              required: ["text"],
+            },
+            description: "Acceptance criteria; each item needs a command or a manual reason",
+          },
+          risks: { type: "array", items: { type: "string" }, description: "Known risks" },
+          rollback: { type: "string", description: "How to undo this work" },
+          spec: { type: "string", description: "Spec reference for status/approve/freeze (NNN, NNN-slug, or path)" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as SpecAction,
+      title: s(raw.title),
+      goal: s(raw.goal),
+      nonGoals: a(raw.non_goals) as string[] | undefined,
+      constraints: a(raw.constraints) as string[] | undefined,
+      context: s(raw.context),
+      allowedFiles: a(raw.allowed_files) as string[] | undefined,
+      forbiddenFiles: a(raw.forbidden_files) as string[] | undefined,
+      acceptance: a(raw.acceptance) as AcceptanceInput[] | undefined,
+      risks: a(raw.risks) as string[] | undefined,
+      rollback: s(raw.rollback),
+      spec: s(raw.spec),
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("tickets", {
+    handler: ticketsCommand as CommandHandler,
+    toolDef: {
+      name: "tickets",
+      description: "Manage tickets derived from a frozen spec. Actions: create, list, board, ready, update. Tickets carry acceptance criteria, blocked_by, a requires_review flag, and an evidence slot. ready returns unblocked tickets in deterministic topological order.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["create", "list", "board", "ready", "update"], description: "Ticket action" },
+          spec: { type: "string", description: "Frozen spec reference (required for create)" },
+          tickets: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Ticket title" },
+                acceptance: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      text: { type: "string" },
+                      command: { type: "string" },
+                      manual: { type: "string" },
+                    },
+                    required: ["text"],
+                  },
+                  description: "Acceptance criteria; each item needs a command or a manual reason",
+                },
+                blocked_by: { type: "array", items: { type: "string" }, description: "Ticket ids that must be done first" },
+                requires_review: { type: "boolean", description: "Require a review evidence entry before the gate passes" },
+              },
+              required: ["title"],
+            },
+            description: "Tickets to create (required for create)",
+          },
+          ticket_id: { type: "string", description: "Ticket id e.g. ticket-001 (required for update)" },
+          status: { type: "string", enum: ["backlog", "in-progress", "blocked", "done", "cancelled"], description: "New ticket status (for update)" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as "create" | "list" | "board" | "ready" | "update",
+      spec: s(raw.spec),
+      tickets: a(raw.tickets)?.map((item) => {
+        const obj = (item ?? {}) as Record<string, unknown>;
+        return {
+          title: s(obj.title) ?? "",
+          acceptance: a(obj.acceptance) as AcceptanceInput[] | undefined,
+          blockedBy: a(obj.blocked_by) as string[] | undefined,
+          requiresReview: obj.requires_review === true,
+        } satisfies TicketInput;
+      }),
+      ticketId: s(raw.ticket_id),
+      status: s(raw.status) as TicketStatus | undefined,
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("evidence", {
+    handler: evidenceCommand as CommandHandler,
+    toolDef: {
+      name: "evidence",
+      description: "Record and read ticket evidence. Actions: add, list. Evidence is appended to projects/<slug>/evidence/<ticket>.jsonl with command, exit code, truncated output, commit, and timestamp.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["add", "list"], description: "Evidence action" },
+          ticket: { type: "string", description: "Ticket id e.g. ticket-001" },
+          command: { type: "string", description: "Command that was run (required for add)" },
+          exit: { type: "number", description: "Exit code (default 0)" },
+          output: { type: "string", description: "Command output (truncated when stored)" },
+          commit: { type: "string", description: "Commit the evidence applies to (default: git HEAD of cwd)" },
+          ts: { type: "string", description: "ISO timestamp (default: now)" },
+          cwd: { type: "string", description: "Directory used for the git HEAD lookup" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+        },
+        required: ["action", "ticket"],
+      },
+      annotations: { destructiveHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: raw.action as "add" | "list",
+      ticket: s(raw.ticket),
+      command: s(raw.command),
+      exit: n(raw.exit),
+      output: s(raw.output),
+      commit: s(raw.commit),
+      ts: s(raw.ts),
+      cwd: s(raw.cwd),
+      project: s(raw.project),
+    }),
+  });
+
+  r.register("gate", {
+    handler: gateCommand as CommandHandler,
+    toolDef: {
+      name: "gate",
+      description: "Deterministic evidence gate. Checks a spec (fields complete, frozen, hash intact) or a ticket (acceptance present, spec frozen and unchanged, evidence recorded at HEAD, review evidence when required). Returns pass/fail with the missing items.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          target: { type: "string", description: "Spec reference (NNN, NNN-slug, path) or ticket id (ticket-NNN)" },
+          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
+          head: { type: "string", description: "Override HEAD commit for the evidence check" },
+          cwd: { type: "string", description: "Directory used for the git HEAD lookup" },
+        },
+        required: ["target"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      target: raw.target as string,
+      project: s(raw.project),
+      head: s(raw.head),
+      cwd: s(raw.cwd),
+    }),
+  });
+
+  r.register("impact", {
+    handler: impactCommand as CommandHandler,
+    toolDef: {
+      name: "impact",
+      description: "Deterministic code-graph impact for a file or symbol: EXTRACTED definitions, importers, INFERRED callers, and the shortest graph path to a second target. Read-only; no LLM.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          target: { type: "string", description: "Repo-relative file path, file:<path> id, or symbol name" },
+          to: { type: "string", description: "Optional second file/symbol target; when given, include the shortest path between both" },
+          root: { type: "string", description: "Scan root (default: cwd)" },
+        },
+        required: ["target"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      target: raw.target as string,
+      to: s(raw.to),
+      root: s(raw.root),
+    }),
+  });
+
+  r.register("claims", {
+    handler: claimsCommand as CommandHandler,
+    toolDef: {
+      name: "claims",
+      description: "Verify structured claims against a deterministic code-graph scan of a root (default cwd). Kinds: file-exists {path}, symbol-exists {name,file?}, symbol-exported {name,file}, import-resolves {from,specifier}, no-other-importers {file}, no-other-callers {symbol,file?}. Returns verified|refuted|unverifiable with node ids and edge confidence; hard verdicts require EXTRACTED facts.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          claims: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                kind: {
+                  type: "string",
+                  enum: [
+                    "file-exists",
+                    "symbol-exists",
+                    "symbol-exported",
+                    "import-resolves",
+                    "no-other-importers",
+                    "no-other-callers",
+                  ],
+                  description: "Claim kind",
+                },
+                path: { type: "string", description: "file-exists: repo-relative file path" },
+                name: { type: "string", description: "symbol-exists/symbol-exported: symbol name" },
+                file: { type: "string", description: "symbol-exists/symbol-exported/no-other-callers: repo-relative file path" },
+                from: { type: "string", description: "import-resolves: importing file" },
+                specifier: { type: "string", description: "import-resolves: import specifier" },
+                symbol: { type: "string", description: "no-other-callers: symbol name" },
+              },
+              required: ["kind"],
+            },
+            description: "Claims to verify",
+          },
+          root: { type: "string", description: "Scan root (default: cwd)" },
+        },
+        required: ["claims"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      claims: raw.claims,
+      root: s(raw.root),
     }),
   });
 

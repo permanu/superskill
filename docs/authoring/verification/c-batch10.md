@@ -1,0 +1,82 @@
+# Verification Report - C Batch 10 (`conc` + `data`)
+
+- Verifier: independent adversarial subagent (fresh context; did not author these rules)
+- Date: 2026-10-05
+- Scope: `catalog/rules/c/conc-*.md` (12) and `data-*.md` (12) = 24 rules; all entered as `status: draft`
+- Toolchain: Apple clang 21.0.0 (clang-2100.3.34.2), macOS 26.6.1 arm64; TSan/ASan/UBSan supported and used
+- Scratch: `/private/var/folders/jy/hhmjp4yx34x0g_nptcvchp180000gn/T/opencode/batch10`
+- Ownership: flipped `status` to `verified` on the 21 passing rules; 3 left `draft` with reasons below. No other edits; no git. Batch 9 (`ffi`/`lint`) untouched.
+
+## Method
+
+- Fetched all 24 distinct cited URLs live. 23/24 return HTTP 200. The `conc-lock-order` citation (`.../recommendations/concurrency-con/con35-c/`) returns HTTP 404; the page moved to `.../rules/concurrency-con/con35-c/` (HTTP 200) and supports the claim there. Confirmed the exact supporting sentences on every other page (verbatim or faithful paraphrase; quotes below).
+- Extracted all 48 snippets and ran `clang -fsyntax-only -std=c23 -Wall`: 48/48 compile with zero diagnostics. The deterministic validator (`node dist/rules/cli.js validate --lang c --no-compile`) reports exactly one error in the batch (`conc-lock-order` related id) and none for the other 23.
+- Ran bounded, offline harnesses under TSan, ASan and UBSan where they sharpen the claim (results inline in the table). The `conc-mutex-relock` Bad is a self-deadlock demo and was compiled only, per batch policy; `conc-thread-join` Bad (resource leak) is not observable in a bounded process and was compiled only.
+- Cross-checked frontmatter, ids, `baseline: latest`, section order, one `c` fence per Bad/Good, summary word limits, hedging, elisions/placeholders, `related` resolution, See Also targets, title collisions, and near-duplicates against the whole C pack.
+
+## Verdicts
+
+| rule id | verdict | evidence |
+|---|---|---|
+| c-conc-atomic-shared | verified | cppreference atomic: "Objects of atomic types are the only objects that are free from data races"; per-object modification order. TSan: Bad plain `int` write/read -> data race; Good `atomic_fetch_add`/`atomic_load` clean. Compile 2/2. |
+| c-conc-volatile-not-sync | verified | cppreference volatile: "volatile variables are not suitable for communication between threads; they do not offer atomicity, synchronization, or memory ordering". TSan: Bad volatile flag -> data race; Good atomic store/load clean. Kept separate from `conc-atomic-shared` (see notes). |
+| c-conc-memory-order | verified | cppreference memory_order: relaxed imposes "no synchronization or ordering constraints"; release/acquire pair; "The default behavior of all atomic operations ... provides for sequentially consistent ordering". TSan: relaxed store/load -> data race on the payload (no happens-before); release/acquire clean. |
+| c-conc-cv-loop | verified | POSIX: "Spurious wakeups ... may occur. Since the return ... does not imply anything about the value of this predicate, the predicate should be re-evaluated upon such return." man: condition variable "must always be associated with a mutex"; example uses `while`. Probe: `if` returned with predicate false (`returned_ready=0`); `while` returned `returned_ready=1`. |
+| c-conc-thread-join | verified | man pthread_create: joinable thread's "resources [are] released back to the system" only when joined; detached threads auto-release; join fetches exit status. Good run: `join_rc=0 ran=1`. Bad compile-only (leak not observable in a bounded process). |
+| c-conc-mutex-relock | verified | man pthread_mutex_lock: fast-kind relock "suspends the calling thread until the mutex is unlocked, thus effectively causing the calling thread to deadlock"; recursive kind succeeds. Compile 2/2; Bad self-deadlock demo deliberately not executed. |
+| c-conc-once | verified | man pthread_once: "initialization code is executed at most once"; control initialized to `PTHREAD_ONCE_INIT`. Run: 8 threads -> `init_count=1 value=7`, TSan clean; hand-rolled Bad -> TSan data race. |
+| c-conc-reentrant-functions | verified | man strtok: "uses a static buffer while parsing, so it's not thread safe. Use strtok_r(3)". Deterministic interleave: second `strtok(NULL)` on stream A returned `x` from stream B; threaded probe `strtok mismatches=124` vs `strtok_r mismatches=0`; TSan warning on Bad. |
+| c-conc-sigaction | verified | man sigaction(2): the documented call for changing a signal action; `sa_mask`/`sa_flags`/`SA_RESETHAND` give explicit control. Run: handler persists across two deliveries (`count=2`). Bad `signal()` also persisted on macOS (BSD semantics), consistent with implementation dependence. See note on the unsourced `signal()` sentence. |
+| c-conc-signal-shared | verified | CERT SIG31-C verbatim: "The two exceptions ... are the ability to read from and write to lock-free atomic objects and variables of type volatile sig_atomic_t. Accessing any other type of object from a signal handler is undefined behavior." signal-safety(7): stdio buffer/interruption paragraph. Compile 2/2; flag pattern exercised in the sigaction probe. |
+| c-conc-thread-args | verified | man pthread_create: "arg is passed as the sole argument of start_routine"; a thread calling `exit(3)` terminates the whole process; join bounds the lifetime. ASan: Bad stack-local argument -> `stack-use-after-return` in worker; Good `value=7` clean. |
+| c-data-memcpy-shallow | verified | cppreference memcpy: "Copies count characters ... interpreted as arrays of unsigned char"; UB beyond dest. ASan: Bad duplicates the pointer (`same_pointer=1`) -> `double-free`; Good deep copy clean (`same_pointer=0 equal_text=1`). |
+| c-data-strncmp-vs-memcmp | verified | cppreference strncmp: "Characters following the null character are not compared." Run: keys sharing a prefix through an embedded NUL -> `strncmp_equal=1 memcmp_equal=0`. |
+| c-data-bsearch-sorted | verified | cppreference bsearch: array "must be partitioned with respect to key"; "The behavior is undefined if the array is not already partitioned ... according to the same criterion that comp uses." Run: sort by index + search by value -> `found=no` for an existing key; same comparator -> `found=yes values=[1,2,3]`. |
+| c-data-scaled-pointer | verified | CERT ARR39-C: "Adding or subtracting a scaled integer value to or from a pointer is invalid"; sizeof/offsetof are byte counts. Run: pointer size 8, array 16 bytes -> Bad offset 32 bytes, Good offset 16 bytes. |
+| c-data-qsort-comparator | verified | cppreference qsort: comparator "must return consistent results when called for the same objects"; equivalent elements unspecified. UBSan: `INT_MAX - INT_MIN` -> "signed integer overflow"; Bad leaves `INT_MAX` first, Good sorts correctly. |
+| c-data-qsort-stability | verified | cppreference qsort: "If comp indicates two elements as equivalent, their order in the resulting sorted array is unspecified." Run: rank-only comparator yields different equal-rank order for forward vs reversed input (`bad_same_output=0`); id tie-breaker yields identical output (`good_same_output=1`). |
+| c-data-hash-unsigned | verified | cppreference arithmetic operators: "Unsigned integer arithmetic is always performed modulo 2^n"; signed overflow "behavior is undefined". UBSan: Bad `int` mixing overflows; Good `uint32_t` wraps defined (`2913582592`), no diagnostic. |
+| c-data-array-bounds-library | verified | CERT ARR38-C: arguments "might cause the function to form a pointer that does not point into or just past the end of the object, resulting in undefined behavior"; Annex J UB quote. ASan: Bad `dst + offset` + n > cap -> `heap-buffer-overflow`; Good returns `-1`. Adjacent to `unsafe-copy-bounds` but distinct (see notes). |
+| c-data-static-const-table | verified | cppreference const: "Objects declared with const-qualified types may be placed in read-only memory"; "Any attempt to modify ... results in undefined behavior." `otool -l`: Bad table in `__DATA`, Good table in `__TEXT,__const`. |
+| c-data-iterator-invalidation | verified | cppreference realloc: "The original pointer ptr is invalidated and any access to it is undefined behavior (even if reallocation was in-place)." ASan: Bad cached pointer -> `heap-use-after-free`; Good reacquires -> clean (`rc=0 first=1`). |
+| c-conc-lock-order | **rejected** | (1) Cited URL HTTP 404 (`/recommendations/.../con35-c/`); the page now lives at `/rules/concurrency-con/con35-c/` and supports the claim there. (2) Validator error: `related` id `c-conc-mutex-unlock` does not resolve (typo; See Also correctly targets `conc-mutex-relock.md`). Compile 2/2 and content otherwise fine. Fix both and re-verify. |
+| c-data-array-zero-init | **rejected** | Bad snippet is false as written: `int table[8];` at file scope is a tentative definition with static storage duration, zero-initialized (C11/C23 6.9.2). Probe: `file_scope_first=0`; no indeterminate read occurs, and the Why's "`int table[8];` leaves them indeterminate" is wrong in context. Fix: place the array inside a function (automatic storage). Good idiom (`= {0}`/`= {}`) is source-supported. |
+| c-data-pointer-iteration | **rejected** | Cited cppreference "Pointer declaration" page contains no one-past-the-end formation/dereference rule (0 occurrences of "past"); only the element-comparison sentence is present. The rule's central invariant is unsourced. Fix: cite CERT ARR30-C (as `ptr-bounds-arith` does) or the cppreference pointer-arithmetic page. Compile 2/2; Bad deref of the sentinel is ASan-confirmed UB, so the decision itself is sound. |
+
+## Cross-cutting checks
+
+- Sources: 24/24 distinct URLs fetched; 23 resolve, 1 dead (moved). Every verified rule's central claim was located in the fetched text. All rules cite at least one primary source; POSIX/man-pages citations follow pack precedent (`sources.md` items 5-6, used by verified `err`/`io` rules).
+- Compile: 48/48 snippets pass `clang -fsyntax-only -std=c23 -Wall` with zero diagnostics; the validator's C harness tries the raw snippet first (so file-scope declarations are compiled as such), matching this check.
+- Sanitizers: TSan (atomics, volatile, memory order, once, reentrant), ASan (thread args, memcpy, pointer iteration, array bounds, realloc), UBSan (qsort comparator, hash) all produced the expected outcomes; no flaky or hanging runs (probes are bounded; lock-order and self-deadlock demos not executed).
+- Formatting/links: ids match paths; `baseline: latest`; section order and fences correct; summaries <= 30 words with no hedging; no elisions/placeholders; all See Also targets exist. The only link defect is `conc-lock-order`'s `related` id. Title collision scan over the whole C pack: none.
+- Duplicates: no exact title/summary collisions. Near-candidates reviewed and judged distinct: `conc-atomic-shared` vs `conc-volatile-not-sync` vs `conc-memory-order` (see notes); `conc-signal-shared` vs verified `obs-signal-handler` (which objects a handler may touch vs logging safety; cross-linked); `data-array-zero-init` vs verified `mem-zero-init` (array initializer idiom vs write-before-read); `data-qsort-comparator` vs `data-qsort-stability` (overflow-safe sign vs tie-breaker); `data-scaled-pointer` vs `ptr-bounds-arith` (byte-vs-element scaling vs bounds); `data-array-bounds-library` vs `unsafe-copy-bounds` (see notes).
+
+## Non-blocking notes
+
+- **Atomic/volatile/memory-order trio:** do not fold `conc-volatile-not-sync` into `conc-atomic-shared`. The falsifiable decisions differ (a plain object is a race vs `volatile` is not a synchronization primitive), the Bad constructs differ, and CERT keeps a dedicated rule for the volatile misuse (CON02-C, "Do not use volatile as a synchronization primitive"). The Good snippets are near-identical, so this is the closest pair in the batch; if the pack ever prefers fewer rules, folding the volatile trap into `conc-atomic-shared`'s Why would lose a distinct router trigger (`volatile`).
+- **`data-array-bounds-library` vs `unsafe-copy-bounds`:** distinct. `unsafe-copy-bounds` (verified) validates `src_len <= cap` on `memcpy(dst, src, src_len)`; this rule validates the pointer+size pair after an offset (`offset <= cap && n <= cap - offset`) per ARR38, i.e. the formed pointer range, not the copy length. The offset dimension is the distinction.
+- **POSIX-flavored rules:** `conc-cv-loop` (man + POSIX.1-2024), `conc-sigaction`, `conc-thread-join`, `conc-thread-args`, `conc-mutex-relock`, `conc-once`, `conc-reentrant-functions` (man7) and `conc-signal-shared` (signal-safety(7)) follow the same source pattern as verified `err`/`io` rules.
+- **`conc-sigaction`:** the Why sentence that `signal()` has implementation-dependent semantics (including handler reset) is not stated on the cited sigaction(2) page (0 hits for `signal()`); the central claims (sigaction, `sa_mask`, `sa_flags`, `SA_RESETHAND`) are documented there, so this is a citation-completeness nit. Consider adding `signal(2)`/`signal(7)` to the sources.
+- **`data-qsort-stability`:** "the output changes between runs" is an overstatement for a deterministic implementation; the verbatim-sourced claim (equivalent elements' order is unspecified) carries the decision, and the probe shows the Bad's equal-rank order depends on input order while the Good's does not.
+- **`data-qsort-comparator`:** the "consistent results" requirement is on the qsort page; the signed-overflow UB sentence comes from the arithmetic-operator rules (verified `num-signed-overflow`), not the qsort page. Acceptable; adding the arithmetic page would tighten it.
+- **`INDEX.md`:** its header (`Rules: 242 (verified: 194)`) and the batch-10 status line are stale after these flips; updating the index is outside verifier ownership.
+- The C pack grew concurrently during this verification (265 rules now; `api`/`const`/`net`/`perf`/`test`/`type` landed). None of that was touched.
+
+## Counts
+
+- Verified: 21/24 (11 `conc` + 10 `data`)
+- Rejected: 3 (`c-conc-lock-order`, `c-data-array-zero-init`, `c-data-pointer-iteration`)
+- Blockers: none for the 21 verified; the 3 rejections have actionable fixes (URL/related-id; automatic-storage Bad; correct one-past citation).
+
+## Addendum - re-verification of the three rejected rules (2026-10-05)
+
+Fixes landed after the original report; all three re-checked independently from the updated files and flipped to `verified`. The deterministic validator now reports the whole C pack clean: `Rules: 265 (clean: 265)`, 0 errors, 0 warnings.
+
+| rule id | verdict | evidence |
+|---|---|---|
+| c-conc-lock-order | verified | Corrected URL `.../rules/concurrency-con/con35-c/` returns HTTP 200 and supports the claim verbatim: "One simple solution is to lock the mutexes in a predefined order, which prevents circular wait." `related: [c-conc-mutex-relock, c-conc-cv-loop]` both resolve; a catalog-wide grep finds no remaining `c-conc-mutex-unlock` (only the historical rejection row in this report). Snippets compile 2/2 with zero `-Wall` diagnostics; deadlock demo deliberately not executed (compile-only, same policy as `conc-mutex-relock`). |
+| c-data-array-zero-init | verified | Both snippets are now function-local automatic arrays, so the Bad genuinely reads an uninitialized object. MSan is unsupported on arm64 macOS, so the bounded probe used `-ftrivial-auto-var-init=pattern`: Bad `first()` returns `-1431655766` (0xAAAAAAAA pattern) vs Good `0`. Why now correctly distinguishes automatic (indeterminate) from static storage (empty-initialized, per the cited page); `= {0}`/`= {}` zero-fill claim remains source-supported. Compile 2/2, zero diagnostics. |
+| c-data-pointer-iteration | verified | Source is now CERT ARR30-C (`/rules/arrays-arr/arr30-c/`, HTTP 200), which states the invariant: "This excludes the array's TOOFAR index, which is one past the final element; this behavior is well-defined in C11", and lists "Dereferencing Past the End Pointer" as undefined behavior (UB 44). Re-ran the ASan harness: Bad `sum_while` -> `heap-buffer-overflow` at the sentinel dereference; Good `sum_range` -> `total=10`, rc 0. Compile 2/2, zero diagnostics. The comparison-ordering sentence is standard C rather than ARR30's focus, but the central formation/dereference rule is now verbatim sourced. |
+
+- Addendum counts: verified 3/3 re-checked; batch total now 24/24 verified, 0 rejected.
+- `INDEX.md` remains stale (outside verifier ownership), now covering 24 more verified rules than its header records.

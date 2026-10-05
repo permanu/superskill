@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // In-harness browser QA (system Chrome via playwright-core). Not a plugin.
 
 import { existsSync } from "node:fs";

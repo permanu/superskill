@@ -1,0 +1,2312 @@
+{
+  "version": 1,
+  "generated": "2026-10-04",
+  "contract": "docs/authoring/CONTRACT.md",
+  "targetTotal": 2282,
+  "languages": [
+    {
+      "lang": "rust",
+      "baseline": "latest",
+      "target": 262,
+      "batches": 26,
+      "note": "Upstream rust-skills 26-category pack; exact targets.",
+      "extensions": [
+        "own",
+        "unsafe",
+        "opt",
+        "trait",
+        "serde",
+        "clo",
+        "coll",
+        "name"
+      ]
+    },
+    {
+      "lang": "typescript",
+      "baseline": "latest",
+      "target": 259,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "gen",
+        "ts",
+        "node"
+      ]
+    },
+    {
+      "lang": "python",
+      "baseline": "latest",
+      "target": 287,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "py",
+        "typing",
+        "pack"
+      ]
+    },
+    {
+      "lang": "go",
+      "baseline": "latest",
+      "target": 264,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "chan",
+        "iface",
+        "mod"
+      ]
+    },
+    {
+      "lang": "swift",
+      "baseline": "latest",
+      "target": 279,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "proto",
+        "swiftui",
+        "interop"
+      ]
+    },
+    {
+      "lang": "java",
+      "baseline": "latest",
+      "target": 303,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "stream",
+        "gen",
+        "jvm"
+      ]
+    },
+    {
+      "lang": "c",
+      "baseline": "latest",
+      "target": 265,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "ptr",
+        "ub",
+        "pre"
+      ]
+    },
+    {
+      "lang": "cpp",
+      "baseline": "latest",
+      "target": 326,
+      "batches": 28,
+      "note": "Provisional shared-taxonomy plan plus declared extension prefixes; refine in catalog/rules/<lang>/categories.md.",
+      "extensions": [
+        "raii",
+        "tmpl",
+        "move"
+      ]
+    }
+  ],
+  "batches": [
+    {
+      "id": "rust/own",
+      "lang": "rust",
+      "prefix": "own",
+      "title": "Ownership",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/err",
+      "lang": "rust",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/mem",
+      "lang": "rust",
+      "prefix": "mem",
+      "title": "Memory",
+      "target": 17,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/unsafe",
+      "lang": "rust",
+      "prefix": "unsafe",
+      "title": "Unsafe",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/api",
+      "lang": "rust",
+      "prefix": "api",
+      "title": "API design",
+      "target": 17,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/async",
+      "lang": "rust",
+      "prefix": "async",
+      "title": "Async",
+      "target": 18,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/conc",
+      "lang": "rust",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/opt",
+      "lang": "rust",
+      "prefix": "opt",
+      "title": "Optimization",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/num",
+      "lang": "rust",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/type",
+      "lang": "rust",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 13,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/trait",
+      "lang": "rust",
+      "prefix": "trait",
+      "title": "Traits",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/conv",
+      "lang": "rust",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 3,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/const",
+      "lang": "rust",
+      "prefix": "const",
+      "title": "Const",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/serde",
+      "lang": "rust",
+      "prefix": "serde",
+      "title": "Serde",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/pat",
+      "lang": "rust",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/macro",
+      "lang": "rust",
+      "prefix": "macro",
+      "title": "Macros",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/clo",
+      "lang": "rust",
+      "prefix": "clo",
+      "title": "Closures",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/coll",
+      "lang": "rust",
+      "prefix": "coll",
+      "title": "Collections",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/name",
+      "lang": "rust",
+      "prefix": "name",
+      "title": "Naming",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/test",
+      "lang": "rust",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/doc",
+      "lang": "rust",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/obs",
+      "lang": "rust",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/perf",
+      "lang": "rust",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 13,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/proj",
+      "lang": "rust",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/lint",
+      "lang": "rust",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 13,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/anti",
+      "lang": "rust",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/type",
+      "lang": "typescript",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/err",
+      "lang": "typescript",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/mem",
+      "lang": "typescript",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/api",
+      "lang": "typescript",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/async",
+      "lang": "typescript",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/conc",
+      "lang": "typescript",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/perf",
+      "lang": "typescript",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/test",
+      "lang": "typescript",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/doc",
+      "lang": "typescript",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/obs",
+      "lang": "typescript",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/sec",
+      "lang": "typescript",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/style",
+      "lang": "typescript",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/proj",
+      "lang": "typescript",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/lint",
+      "lang": "typescript",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/anti",
+      "lang": "typescript",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/data",
+      "lang": "typescript",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/num",
+      "lang": "typescript",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/conv",
+      "lang": "typescript",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/pat",
+      "lang": "typescript",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/macro",
+      "lang": "typescript",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/const",
+      "lang": "typescript",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/io",
+      "lang": "typescript",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/net",
+      "lang": "typescript",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/ui",
+      "lang": "typescript",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/ffi",
+      "lang": "typescript",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/gen",
+      "lang": "typescript",
+      "prefix": "gen",
+      "title": "Generics & type-level programming",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/ts",
+      "lang": "typescript",
+      "prefix": "ts",
+      "title": "Strictness & tsconfig",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/node",
+      "lang": "typescript",
+      "prefix": "node",
+      "title": "Node.js runtime patterns",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/type",
+      "lang": "python",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/err",
+      "lang": "python",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/mem",
+      "lang": "python",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/api",
+      "lang": "python",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/async",
+      "lang": "python",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/conc",
+      "lang": "python",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/perf",
+      "lang": "python",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/test",
+      "lang": "python",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/doc",
+      "lang": "python",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/obs",
+      "lang": "python",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/sec",
+      "lang": "python",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/style",
+      "lang": "python",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/proj",
+      "lang": "python",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/lint",
+      "lang": "python",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/anti",
+      "lang": "python",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/data",
+      "lang": "python",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/num",
+      "lang": "python",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/conv",
+      "lang": "python",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/pat",
+      "lang": "python",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/macro",
+      "lang": "python",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/const",
+      "lang": "python",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/io",
+      "lang": "python",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/net",
+      "lang": "python",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/ui",
+      "lang": "python",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/ffi",
+      "lang": "python",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/py",
+      "lang": "python",
+      "prefix": "py",
+      "title": "Pythonic idioms",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/typing",
+      "lang": "python",
+      "prefix": "typing",
+      "title": "Type hints & typing",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/pack",
+      "lang": "python",
+      "prefix": "pack",
+      "title": "Packaging & tooling",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/type",
+      "lang": "go",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/err",
+      "lang": "go",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/mem",
+      "lang": "go",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/api",
+      "lang": "go",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/async",
+      "lang": "go",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/conc",
+      "lang": "go",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/perf",
+      "lang": "go",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/test",
+      "lang": "go",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/doc",
+      "lang": "go",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/obs",
+      "lang": "go",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/sec",
+      "lang": "go",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/style",
+      "lang": "go",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/proj",
+      "lang": "go",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/lint",
+      "lang": "go",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/anti",
+      "lang": "go",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/data",
+      "lang": "go",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/num",
+      "lang": "go",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/conv",
+      "lang": "go",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/pat",
+      "lang": "go",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/macro",
+      "lang": "go",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/const",
+      "lang": "go",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/io",
+      "lang": "go",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/net",
+      "lang": "go",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/ui",
+      "lang": "go",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/ffi",
+      "lang": "go",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/chan",
+      "lang": "go",
+      "prefix": "chan",
+      "title": "Channels & select",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/iface",
+      "lang": "go",
+      "prefix": "iface",
+      "title": "Interfaces & embedding",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/mod",
+      "lang": "go",
+      "prefix": "mod",
+      "title": "Modules & toolchain",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/type",
+      "lang": "swift",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/err",
+      "lang": "swift",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/mem",
+      "lang": "swift",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/api",
+      "lang": "swift",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/async",
+      "lang": "swift",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/conc",
+      "lang": "swift",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/perf",
+      "lang": "swift",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/test",
+      "lang": "swift",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/doc",
+      "lang": "swift",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/obs",
+      "lang": "swift",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/sec",
+      "lang": "swift",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/style",
+      "lang": "swift",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/proj",
+      "lang": "swift",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/lint",
+      "lang": "swift",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/anti",
+      "lang": "swift",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/data",
+      "lang": "swift",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/num",
+      "lang": "swift",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/conv",
+      "lang": "swift",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/pat",
+      "lang": "swift",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/macro",
+      "lang": "swift",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/const",
+      "lang": "swift",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/io",
+      "lang": "swift",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/net",
+      "lang": "swift",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/ui",
+      "lang": "swift",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/ffi",
+      "lang": "swift",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/proto",
+      "lang": "swift",
+      "prefix": "proto",
+      "title": "Protocols & generics",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/swiftui",
+      "lang": "swift",
+      "prefix": "swiftui",
+      "title": "SwiftUI & view composition",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/interop",
+      "lang": "swift",
+      "prefix": "interop",
+      "title": "C/Objective-C interop",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/type",
+      "lang": "java",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/err",
+      "lang": "java",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/mem",
+      "lang": "java",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/api",
+      "lang": "java",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/async",
+      "lang": "java",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/conc",
+      "lang": "java",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/perf",
+      "lang": "java",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/test",
+      "lang": "java",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/doc",
+      "lang": "java",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/obs",
+      "lang": "java",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/sec",
+      "lang": "java",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/style",
+      "lang": "java",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/proj",
+      "lang": "java",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/lint",
+      "lang": "java",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/anti",
+      "lang": "java",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/data",
+      "lang": "java",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/num",
+      "lang": "java",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/conv",
+      "lang": "java",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/pat",
+      "lang": "java",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/macro",
+      "lang": "java",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/const",
+      "lang": "java",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/io",
+      "lang": "java",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/net",
+      "lang": "java",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/ui",
+      "lang": "java",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/ffi",
+      "lang": "java",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/stream",
+      "lang": "java",
+      "prefix": "stream",
+      "title": "Streams & functional style",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/gen",
+      "lang": "java",
+      "prefix": "gen",
+      "title": "Generics & wildcards",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/jvm",
+      "lang": "java",
+      "prefix": "jvm",
+      "title": "JVM semantics & performance",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/type",
+      "lang": "c",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/err",
+      "lang": "c",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/mem",
+      "lang": "c",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/api",
+      "lang": "c",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/async",
+      "lang": "c",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/conc",
+      "lang": "c",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/perf",
+      "lang": "c",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/test",
+      "lang": "c",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/doc",
+      "lang": "c",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/obs",
+      "lang": "c",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/sec",
+      "lang": "c",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/style",
+      "lang": "c",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/proj",
+      "lang": "c",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/lint",
+      "lang": "c",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/anti",
+      "lang": "c",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/data",
+      "lang": "c",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/num",
+      "lang": "c",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/conv",
+      "lang": "c",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/pat",
+      "lang": "c",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/macro",
+      "lang": "c",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/const",
+      "lang": "c",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/io",
+      "lang": "c",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/net",
+      "lang": "c",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/ui",
+      "lang": "c",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/ffi",
+      "lang": "c",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/ptr",
+      "lang": "c",
+      "prefix": "ptr",
+      "title": "Pointers & aliasing",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/ub",
+      "lang": "c",
+      "prefix": "ub",
+      "title": "Undefined behavior",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/pre",
+      "lang": "c",
+      "prefix": "pre",
+      "title": "Preprocessor & build",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/type",
+      "lang": "cpp",
+      "prefix": "type",
+      "title": "Type system",
+      "target": 14,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/err",
+      "lang": "cpp",
+      "prefix": "err",
+      "title": "Error handling",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/mem",
+      "lang": "cpp",
+      "prefix": "mem",
+      "title": "Memory & resources",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/api",
+      "lang": "cpp",
+      "prefix": "api",
+      "title": "API design",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/async",
+      "lang": "cpp",
+      "prefix": "async",
+      "title": "Async",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/conc",
+      "lang": "cpp",
+      "prefix": "conc",
+      "title": "Concurrency",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/perf",
+      "lang": "cpp",
+      "prefix": "perf",
+      "title": "Performance",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/test",
+      "lang": "cpp",
+      "prefix": "test",
+      "title": "Testing",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/doc",
+      "lang": "cpp",
+      "prefix": "doc",
+      "title": "Documentation",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/obs",
+      "lang": "cpp",
+      "prefix": "obs",
+      "title": "Observability",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/sec",
+      "lang": "cpp",
+      "prefix": "sec",
+      "title": "Security",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/style",
+      "lang": "cpp",
+      "prefix": "style",
+      "title": "Style & formatting",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/proj",
+      "lang": "cpp",
+      "prefix": "proj",
+      "title": "Project structure",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/lint",
+      "lang": "cpp",
+      "prefix": "lint",
+      "title": "Linting",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/anti",
+      "lang": "cpp",
+      "prefix": "anti",
+      "title": "Anti-patterns",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/data",
+      "lang": "cpp",
+      "prefix": "data",
+      "title": "Data & serialization",
+      "target": 8,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/num",
+      "lang": "cpp",
+      "prefix": "num",
+      "title": "Numerics",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/conv",
+      "lang": "cpp",
+      "prefix": "conv",
+      "title": "Conversions",
+      "target": 7,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/pat",
+      "lang": "cpp",
+      "prefix": "pat",
+      "title": "Patterns",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/macro",
+      "lang": "cpp",
+      "prefix": "macro",
+      "title": "Macros & metaprogramming",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/const",
+      "lang": "cpp",
+      "prefix": "const",
+      "title": "Constants & immutability",
+      "target": 4,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/io",
+      "lang": "cpp",
+      "prefix": "io",
+      "title": "IO & filesystem",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/net",
+      "lang": "cpp",
+      "prefix": "net",
+      "title": "Networking",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/ui",
+      "lang": "cpp",
+      "prefix": "ui",
+      "title": "UI & presentation",
+      "target": 6,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/ffi",
+      "lang": "cpp",
+      "prefix": "ffi",
+      "title": "FFI & interop",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/raii",
+      "lang": "cpp",
+      "prefix": "raii",
+      "title": "RAII & special members",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/tmpl",
+      "lang": "cpp",
+      "prefix": "tmpl",
+      "title": "Templates & concepts",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/move",
+      "lang": "cpp",
+      "prefix": "move",
+      "title": "Move semantics & value categories",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "c/unsafe",
+      "lang": "c",
+      "prefix": "unsafe",
+      "title": "Undefined behavior and portability",
+      "target": 16,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/coll",
+      "lang": "cpp",
+      "prefix": "coll",
+      "title": "Containers and algorithms",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/init",
+      "lang": "cpp",
+      "prefix": "init",
+      "title": "Initialization and construction",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/ptr",
+      "lang": "cpp",
+      "prefix": "ptr",
+      "title": "Smart pointers and pointer discipline",
+      "target": 10,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/str",
+      "lang": "cpp",
+      "prefix": "str",
+      "title": "Strings and text",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/trait",
+      "lang": "cpp",
+      "prefix": "trait",
+      "title": "Concepts and type traits",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "cpp/unsafe",
+      "lang": "cpp",
+      "prefix": "unsafe",
+      "title": "Undefined behavior and dangerous constructs",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "go/gen",
+      "lang": "go",
+      "prefix": "gen",
+      "title": "Generics",
+      "target": 9,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/ann",
+      "lang": "java",
+      "prefix": "ann",
+      "title": "Annotations and reflection",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/coll",
+      "lang": "java",
+      "prefix": "coll",
+      "title": "Collections",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "java/opt",
+      "lang": "java",
+      "prefix": "opt",
+      "title": "Optional and null safety",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "python/pkg",
+      "lang": "python",
+      "prefix": "pkg",
+      "title": "Packaging, dependencies, environments",
+      "target": 15,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "rust/closure",
+      "lang": "rust",
+      "prefix": "closure",
+      "title": "Closures",
+      "target": 5,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "swift/arc",
+      "lang": "swift",
+      "prefix": "arc",
+      "title": "ARC and ownership",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "typescript/mod",
+      "lang": "typescript",
+      "prefix": "mod",
+      "title": "Modules and packages",
+      "target": 12,
+      "status": "pending",
+      "updated": null
+    }
+  ],
+  "nonContent": [
+    {
+      "id": "engine/determinism-repairs",
+      "title": "Deterministic engine repairs",
+      "description": "Fix determinism defects in rule loading and selection surfaced by validation.",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "engine/rules-selector",
+      "title": "Rules selector",
+      "description": "Deterministic per-task rule selection (trigger matching, scoring, budget).",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "engine/integration",
+      "title": "Engine integration",
+      "description": "Wire the rules engine into CLI/MCP surfaces with tests.",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "graph/codegraph",
+      "title": "Code graph integration",
+      "description": "Feed rule selection from the code graph (symbols, files, stack).",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "gates/spec-tickets-evidence",
+      "title": "Spec/ticket/evidence gates",
+      "description": "Gate rule promotion on spec, ticket and evidence artifacts.",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "harness/bootstrap",
+      "title": "Harness bootstrap",
+      "description": "Authoring/validation harness bootstrap (templates, scaffolding).",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "harness/ci",
+      "title": "Harness CI",
+      "description": "CI jobs for validator + compile checks across all language toolchains.",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "telemetry",
+      "title": "Telemetry",
+      "description": "Local, opt-in usage telemetry for rule selection effectiveness.",
+      "status": "pending",
+      "updated": null
+    },
+    {
+      "id": "docs/readme-usage-guide",
+      "title": "README usage guide",
+      "description": "Full usage guide in README, written at the end of the campaign.",
+      "status": "pending",
+      "updated": null
+    }
+  ],
+  "revision": 2,
+  "revised": "2026-10-05T05:36:25.723Z",
+  "revision_note": "Batches reconciled to the delivered catalog; per-language targets reset to delivered verified counts."
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Graph, SkillNode, SessionNode } from "./schema.js";
@@ -190,6 +190,19 @@ describe("loadNeighborhood", () => {
     expect(result.coActivatedSkills).toHaveLength(0);
     expect(result.recentSessions).toHaveLength(0);
   });
+
+  it("preserves caller id order and dedups by id", () => {
+    const graph: Graph = {
+      nodes: [
+        makeSkillNode("c@z", 0.4),
+        makeSkillNode("a@x", 0.5),
+        makeSkillNode("b@y", 0.3),
+      ],
+      edges: [],
+    };
+    const result = loadNeighborhood(graph, ["a@x", "c@z", "a@x", "missing/id", "b@y"]);
+    expect(result.matchedSkills.map((s) => s.id)).toEqual(["a@x", "c@z", "b@y"]);
+  });
 });
 
 describe("formatSystemBrief", () => {
@@ -247,6 +260,43 @@ describe("loadContent", () => {
     const result = await loadContent(testDir, ["owner/repo@my-skill"]);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].content).toContain("Local Content");
+    expect(result.skills[0].stale).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("serves stale skill-cache content with a stale marker and warning", async () => {
+    const localCacheDir = join(testDir, ".superskill", "skill-cache", "owner", "repo", "old-skill");
+    await mkdir(localCacheDir, { recursive: true });
+    const file = join(localCacheDir, "SKILL.md");
+    await writeFile(file, "# Old Content", "utf-8");
+    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await utimes(file, old, old);
+
+    const result = await loadContent(testDir, ["owner/repo@old-skill"]);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].content).toContain("Old Content");
+    expect(result.skills[0].stale).toBe(true);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("stale");
+  });
+
+  it("preserves requested order, skips missing entries, and dedups", async () => {
+    for (const name of ["first", "second"]) {
+      const dir = join(testDir, ".superskill", "skill-cache", "owner", "repo", name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "SKILL.md"), `# ${name}`, "utf-8");
+    }
+
+    const result = await loadContent(testDir, [
+      "owner/repo@second",
+      "owner/repo@missing",
+      "owner/repo@first",
+      "owner/repo@second",
+    ]);
+    expect(result.skills.map((s) => s.id)).toEqual([
+      "owner/repo@second",
+      "owner/repo@first",
+    ]);
   });
 
   it("compresses long code blocks in local cache", async () => {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { platform, homedir } from "os";
 import { join } from "path";
 
@@ -59,12 +59,11 @@ export interface TeardownResult {
   error?: string;
 }
 
-export const INSTRUCTION_TEXT = `You have a SuperSkill knowledge base available via MCP (superskill).
-Always check it at the start of every session:
-1. Use project_context to load context for the current project
-2. Use search to find relevant decisions, learnings, and tasks
-3. Use session to register your session for coordination
-Treat the vault as your persistent memory across sessions.`;
+export const INSTRUCTION_TEXT = `SuperSkill knowledge base + rules (MCP server: superskill).
+- Call the \`superskill\` tool with your task before creative work, debugging, or review.
+- No "done" without \`gate check\` evidence.
+- Only verified rules are injected by default.
+- Constitution: catalog/constitution.md in the superskill package (always applies).`;
 
 export const MARKER_START_HTML = "<!-- superskill:start -->";
 export const MARKER_END_HTML = "<!-- superskill:end -->";

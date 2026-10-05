@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -96,17 +96,25 @@ export function loadNeighborhood(
   skillIds: string[],
 ): NeighborhoodResult {
   const skillSet = new Set(skillIds);
-  const allSkills = findNodes<SkillNode>(graph, "skill");
-  const matchedSkills = allSkills
-    .filter((s) => skillSet.has(s.id))
-    .map((s) => ({
-      id: s.id,
-      source: s.source,
-      audits: s.audits,
-      w: s.w,
-      installs: s.installs,
-      stars: s.stars,
-    }));
+  const skillById = new Map(
+    findNodes<SkillNode>(graph, "skill").map((s) => [s.id, s]),
+  );
+  const matchedSkills: NeighborhoodResult["matchedSkills"] = [];
+  const matchedIds = new Set<string>();
+  for (const id of skillIds) {
+    if (matchedIds.has(id)) continue;
+    matchedIds.add(id);
+    const skill = skillById.get(id);
+    if (!skill) continue;
+    matchedSkills.push({
+      id: skill.id,
+      source: skill.source,
+      audits: skill.audits,
+      w: skill.w,
+      installs: skill.installs,
+      stars: skill.stars,
+    });
+  }
 
   const coActivatedSkills: Array<{ id: string; w: number }> = [];
   const seen = new Set<string>();
@@ -149,9 +157,14 @@ export async function loadContent(
   skillIds: string[],
 ): Promise<ContentResult> {
   const skills: ContentResult["skills"] = [];
+  const warnings: string[] = [];
+  const seen = new Set<string>();
 
   for (const skillId of skillIds) {
+    if (seen.has(skillId)) continue;
+    seen.add(skillId);
     let content: string | null = null;
+    let stale = false;
 
     if (!skillId.includes("@") && skillId.includes("/")) {
       try {
@@ -193,11 +206,12 @@ export async function loadContent(
 
       try {
         const fileStat = await stat(localPath);
-        if (Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS) {
-          console.error(`[graph-loader] stale cache for skill: ${skillId} (${localPath})`);
-        } else {
-          const raw = await readFile(localPath, "utf-8");
-          content = compressContent(raw);
+        stale = Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS;
+        const raw = await readFile(localPath, "utf-8");
+        content = compressContent(raw);
+        if (stale) {
+          console.error(`[graph-loader] serving stale cache for skill: ${skillId} (${localPath})`);
+          warnings.push(`WARN: ${skillId} — stale skill-cache (>7 days); served cached content`);
         }
       } catch {
         console.error(`[graph-loader] content not found for skill: ${skillId}`);
@@ -205,11 +219,11 @@ export async function loadContent(
     }
 
     if (content !== null) {
-      skills.push({ id: skillId, content });
+      skills.push(stale ? { id: skillId, content, stale: true } : { id: skillId, content });
     }
   }
 
-  return { skills };
+  return { skills, warnings };
 }
 
 function compressContent(content: string): string {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
 import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
 import { serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";

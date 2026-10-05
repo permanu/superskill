@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 // Single SuperSkill entry: diagnose, then name specialists. Host stays one agent;
 // packs are the specialists. Sequence is not a waterfall.
 
@@ -15,7 +15,7 @@ export interface Orchestration {
   loop: boolean;
 }
 
-const DEFAULTS = ["adhd-output", "careful-minimal", "algorithm-correct", "systems-thinking", "human-in-the-loop"];
+const DEFAULTS = ["pipeline/norms", "pipeline/systems", "optimizer/algorithm", "security/index"];
 
 type Rule = {
   agent: string;

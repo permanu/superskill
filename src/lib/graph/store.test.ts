@@ -73,6 +73,11 @@ describe("createEmptyGraph", () => {
     expect(graph.nodes).toEqual([]);
     expect(graph.edges).toEqual([]);
   });
+
+  it("stamps the current schema version", () => {
+    const graph = createEmptyGraph();
+    expect(graph.version).toBe(2);
+  });
 });
 
 describe("loadGraph", () => {
@@ -103,6 +108,50 @@ describe("loadGraph", () => {
     expect(loaded.nodes).toHaveLength(1);
     expect(loaded.nodes[0].type).toBe("project");
   });
+
+  it("migrates versionless v1 graphs to v2 without data loss", async () => {
+    const v1Graph = {
+      nodes: [makeProjectNode(), makeSkillNode("own/repo@skill-a", { w: 0.8 })],
+      edges: [
+        {
+          type: "project_skill",
+          from: "project",
+          to: "own/repo@skill-a",
+          w: 0.8,
+          activations: 3,
+        },
+      ],
+    };
+    await mkdir(join(testDir, ".superskill"), { recursive: true });
+    await writeFile(
+      join(testDir, ".superskill", "graph.json"),
+      JSON.stringify(v1Graph),
+      "utf-8",
+    );
+
+    const loaded = await loadGraph(testDir);
+    expect(loaded.version).toBe(2);
+    expect(loaded.nodes).toEqual(v1Graph.nodes);
+    expect(loaded.edges).toEqual(v1Graph.edges);
+  });
+
+  it("migrates a v1-versioned graph in place without data loss", async () => {
+    const v1Graph = {
+      version: 1,
+      nodes: [makeSkillNode("own/repo@skill-a")],
+      edges: [],
+    };
+    await mkdir(join(testDir, ".superskill"), { recursive: true });
+    await writeFile(
+      join(testDir, ".superskill", "graph.json"),
+      JSON.stringify(v1Graph),
+      "utf-8",
+    );
+
+    const loaded = await loadGraph(testDir);
+    expect(loaded.version).toBe(2);
+    expect(loaded.nodes).toHaveLength(1);
+  });
 });
 
 describe("writeGraph", () => {
@@ -122,6 +171,12 @@ describe("writeGraph", () => {
     await writeGraph(testDir, graph);
     const raw = await readFile(join(testDir, ".superskill", "graph.json"), "utf-8");
     expect(JSON.parse(raw)).toEqual(graph);
+  });
+
+  it("always writes the v2 schema version", async () => {
+    await writeGraph(testDir, { nodes: [makeProjectNode()], edges: [] });
+    const raw = await readFile(join(testDir, ".superskill", "graph.json"), "utf-8");
+    expect(JSON.parse(raw).version).toBe(2);
   });
 
   it("overwrites existing graph.json", async () => {

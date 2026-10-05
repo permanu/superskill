@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import type { CommandContext, Logger } from "../core/types.js";
 import { VaultFS, VaultError } from "../lib/vault-fs.js";
 import { resolveProject } from "../config.js";

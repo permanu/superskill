@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { readFile, writeFile, mkdir, unlink, stat, open } from "fs/promises";
 import { resolve, dirname } from "path";
 import { randomBytes } from "crypto";

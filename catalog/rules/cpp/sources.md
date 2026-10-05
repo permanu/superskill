@@ -1,0 +1,203 @@
+# C++ - Sources
+
+Baseline: latest
+Last verified: 2026-10-04
+
+Compiler support currently shown by the cited tracker pages (traceability only, not pinned):
+`std::expected` - GCC 12, Clang 16, Apple Clang 15.0.0, MSVC 19.33; monadic operations - GCC 13, Clang 17, Apple Clang 15.0.0, MSVC 19.36.
+
+## Primary
+
+- [cppreference - std::expected](https://en.cppreference.com/w/cpp/utility/expected) - err; never-empty value-or-error type, observers, monadic operations
+- [cppreference - std::optional](https://en.cppreference.com/w/cpp/utility/optional) - err, str; absence-only vocabulary type, monadic operations
+- [cppreference - noexcept specifier](https://en.cppreference.com/w/cpp/language/noexcept_spec) - err, api; non-throwing functions, implicit noexcept of destructors, terminate on escape
+- [cppreference - std::error_code](https://en.cppreference.com/w/cpp/error/error_code) - err, io; value plus category, per-call error transport
+- [cppreference - std::throw_with_nested](https://en.cppreference.com/w/cpp/error/throw_with_nested) - err; preserving the original cause when translating
+- [cppreference - try block](https://en.cppreference.com/w/cpp/language/try) - err; function-try-blocks, handler matching, control flow
+- [cppreference - Compiler support trackers](https://en.cppreference.com/w/cpp/compiler_support) - proj; which standard library features the baseline compilers implement
+- [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) - all prefixes; error handling E.1-E.31, resource management R.1-R.24, classes C.2-C.164, interfaces I.4/I.13, expressions ES.46, concurrency CP.20, standard library SL.str.2
+- [isocpp.org FAQ - Exceptions and Error Handling](https://isocpp.org/wiki/faq/exceptions) - err; throw/catch discipline, constructor failure, destructor failure, RAII
+- [GNU libstdc++ manual - Exceptions](https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_exceptions.html) - err, ffi; exception neutrality, `catch(...)` discipline, unwinding through C frames
+- [WG21 P0323R12 - std::expected](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p0323r12.html) - err; motivation and design of expected vs optional vs exceptions
+- [Clang - C++ Status](https://clang.llvm.org/cxx_status.html) - proj; language feature support used when choosing the default surface
+- [cppreference - RAII](https://en.cppreference.com/w/cpp/language/raii) - raii; resource lifetime bound to object lifetime, acquisition/release contract
+- [cppreference - The rule of three/five/zero](https://en.cppreference.com/w/cpp/language/rule_of_three) - raii; when special member functions must be declared as a set
+- [cppreference - std::unique_ptr](https://en.cppreference.com/w/cpp/memory/unique_ptr) - raii; exclusive ownership, make_unique, custom deleters
+- [cppreference - std::shared_ptr](https://en.cppreference.com/w/cpp/memory/shared_ptr) - raii; shared ownership, control block, make_shared
+- [cppreference - std::weak_ptr](https://en.cppreference.com/w/cpp/memory/weak_ptr) - raii; non-owning reference, breaking shared_ptr cycles
+- [cppreference - std::lock_guard](https://en.cppreference.com/w/cpp/thread/lock_guard) - raii, conc; scoped mutex ownership
+- [cppreference - std::span](https://en.cppreference.com/w/cpp/container/span) - type; non-owning contiguous sequence view
+- [cppreference - std::basic_string_view](https://en.cppreference.com/w/cpp/string/basic_string_view) - type, str; non-owning character sequence view
+- [cppreference - std::variant](https://en.cppreference.com/w/cpp/utility/variant) - type; type-safe union with visitation
+- [cppreference - Enumeration declaration](https://en.cppreference.com/w/cpp/language/enum) - type; scoped vs unscoped enumerations, conversion rules
+- [cppreference - explicit specifier](https://en.cppreference.com/w/cpp/language/explicit) - type; preventing implicit conversions from constructors and conversion functions
+- [cppreference - Move constructors](https://en.cppreference.com/w/cpp/language/move_constructor) - raii; moved-from state, implicit move suppression
+- [cppreference - nodiscard attribute](https://en.cppreference.com/w/cpp/language/attributes/nodiscard) - api; warning on discarded results
+- [cppreference - PImpl](https://en.cppreference.com/w/cpp/language/pimpl) - api; opaque implementation pointer, ABI and recompilation firewall
+- [cppreference - std::tuple](https://en.cppreference.com/w/cpp/utility/tuple) - api; heterogeneous aggregates for multiple return values
+- [cppreference - std::atomic](https://en.cppreference.com/w/cpp/atomic/atomic) - conc; atomic types, memory ordering, read-modify-write operations
+- [cppreference - std::jthread](https://en.cppreference.com/w/cpp/thread/jthread) - conc; automatic joining and stop-state ownership
+- [cppreference - std::condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable) - conc; waiting with predicates, notification protocol
+- [cppreference - std::memory_order](https://en.cppreference.com/w/cpp/atomic/memory_order) - conc; ordering guarantees from relaxed to sequentially consistent
+- [cppreference - std::stop_token](https://en.cppreference.com/w/cpp/thread/stop_token) - conc; cooperative cancellation state
+- [cppreference - constexpr specifier](https://en.cppreference.com/w/cpp/language/constexpr) - perf, const; compile-time evaluation of values and functions
+- [cppreference - Copy elision](https://en.cppreference.com/w/cpp/language/copy_elision) - perf; NRVO, guaranteed elision, move fallback
+- [cppreference - std::vector](https://en.cppreference.com/w/cpp/container/vector) - perf, coll; contiguous storage, reserve, reallocation cost
+- [cppreference - std::endl](https://en.cppreference.com/w/cpp/io/manip/endl) - perf, io; newline plus flush, output performance
+- [clang-tidy - performance-inefficient-vector-operation](https://clang.llvm.org/extra/clang-tidy/checks/performance/inefficient-vector-operation.html) - perf; vector growth without reserve
+- [clang-tidy - performance-for-range-copy](https://clang.llvm.org/extra/clang-tidy/checks/performance/for-range-copy.html) - perf; range-for variables copied per iteration
+- [GoogleTest Primer](https://google.github.io/googletest/primer.html) - test; independent repeatable tests, fixtures, failure information, portability
+- [GoogleTest Assertions Reference](https://google.github.io/googletest/reference/assertions.html) - test; EXPECT vs ASSERT, comparison, exception, death assertions
+- [GoogleTest Advanced Topics](https://google.github.io/googletest/advanced.html) - test; value-parameterized tests, undefined test order, shared resources
+- [gMock Cookbook](https://google.github.io/googletest/gmock_cook_book.html) - test; coding to interfaces, mocking seams, matchers in expectations
+- [Clang - AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html) - test, mem; out-of-bounds, use-after-free, double-free detection
+- [Clang - UndefinedBehaviorSanitizer](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html) - test, unsafe; signed overflow, null dereference, misalignment checks
+- [cppreference - std::mersenne_twister_engine](https://en.cppreference.com/w/cpp/numeric/random/mersenne_twister_engine) - test; deterministic seeding of random engines
+- [cppreference - std::filesystem::temp_directory_path](https://en.cppreference.com/w/cpp/filesystem/temp_directory_path) - test, io; platform-appropriate temporary directory
+- [LLVM - libFuzzer](https://llvm.org/docs/LibFuzzer.html) - test; coverage-guided fuzzing entry point, sanitizer builds
+- [cppreference - static_assert declaration](https://en.cppreference.com/w/cpp/language/static_assert) - test, const; compile-time assertion checking
+- [cppreference - new expression](https://en.cppreference.com/w/cpp/language/new) - mem; allocation, aligned allocation, placement new, failure modes
+- [cppreference - delete expression](https://en.cppreference.com/w/cpp/language/delete) - mem; matching deallocation, null operands, incomplete types
+- [cppreference - std::pmr::monotonic_buffer_resource](https://en.cppreference.com/w/cpp/memory/monotonic_buffer_resource) - mem; arena allocation for same-lifetime batches
+- [cppreference - std::pmr::memory_resource](https://en.cppreference.com/w/cpp/memory/memory_resource) - mem; the allocator interface and lifetime contract for pmr containers
+- [cppreference - alignas specifier](https://en.cppreference.com/w/cpp/language/alignas) - mem; alignment requirements for types and objects
+- [cppreference - std::source_location](https://en.cppreference.com/w/cpp/utility/source_location) - obs; capturing the caller's file, line, and function
+- [cppreference - std::format](https://en.cppreference.com/w/cpp/utility/format/format) - obs; compile-time-checked message formatting
+- [cppreference - std::cerr](https://en.cppreference.com/w/cpp/io/cerr) - obs; unbuffered error stream for immediate diagnostics
+- [cppreference - std::clog](https://en.cppreference.com/w/cpp/io/clog) - obs; buffered log stream
+- [cppreference - std::exception](https://en.cppreference.com/w/cpp/error/exception) - obs; the base class and what() contract of standard exceptions
+- [cppreference - std::exception::what](https://en.cppreference.com/w/cpp/error/exception/what) - obs; the explanatory string carried by exceptions
+- [cppreference - std::set_terminate](https://en.cppreference.com/w/cpp/error/set_terminate) - obs; reporting unhandled exceptions before aborting
+- [cppreference - std::thread::id](https://en.cppreference.com/w/cpp/thread/thread/id) - obs, conc; identifying the thread that produced a log line
+- [cppreference - std::chrono::system_clock](https://en.cppreference.com/w/cpp/chrono/system_clock) - obs; wall-clock timestamps vs monotonic durations
+- [CWE-532: Insertion of Sensitive Information into Log File](https://cwe.mitre.org/data/definitions/532.html) - obs, sec; never writing secrets to logs
+- [cppreference - std::async](https://en.cppreference.com/w/cpp/thread/async) - conc; task-based concurrency with futures
+- [cppreference - std::make_unique](https://en.cppreference.com/w/cpp/memory/unique_ptr/make_unique) - raii, mem; make_unique and make_unique_for_overwrite
+- [cppreference - std::string](https://en.cppreference.com/w/cpp/string/basic_string) - sec, str; owning strings that size themselves to the data
+- [cppreference - std::getenv](https://en.cppreference.com/w/cpp/utility/program/getenv) - sec; reading configuration from the environment at run time
+- [cppreference - std::random_device](https://en.cppreference.com/w/cpp/numeric/random/random_device) - sec, test; non-deterministic random numbers
+- [cppreference - std::bit_cast](https://en.cppreference.com/w/cpp/numeric/bit_cast) - sec, type; defined bit reinterpretation vs the aliasing rule
+- [cppreference - std::basic_fstream](https://en.cppreference.com/w/cpp/io/basic_fstream) - io; file streams, binary mode, and closing on destruction
+- [cppreference - std::basic_ios](https://en.cppreference.com/w/cpp/io/basic_ios) - io; stream state flags and operator bool
+- [cppreference - std::basic_istream](https://en.cppreference.com/w/cpp/io/basic_istream) - io; formatted and unformatted input operations
+- [cppreference - std::istreambuf_iterator](https://en.cppreference.com/w/cpp/iterator/istreambuf_iterator) - io; reading a whole stream in one pass
+- [cppreference - std::filesystem::path](https://en.cppreference.com/w/cpp/filesystem/path) - io, sec; path representation, joining, and decomposition
+- [cppreference - Filesystem library](https://en.cppreference.com/w/cpp/filesystem) - io, sec; operations, throwing vs error_code overloads, race semantics
+- [cppreference - std::filesystem::rename](https://en.cppreference.com/w/cpp/filesystem/rename) - io; atomic replacement semantics
+- [cppreference - std::ios_base::openmode](https://en.cppreference.com/w/cpp/io/ios_base/openmode) - io; open flags including binary and noreplace
+- [cppreference - std::basic_istringstream](https://en.cppreference.com/w/cpp/io/basic_istringstream) - io; input operations on string-based streams
+- [cppreference - std::ios_base::sync_with_stdio](https://en.cppreference.com/w/cpp/io/ios_base/sync_with_stdio) - io; C/C++ stream synchronization and buffering
+- [cppreference - std::basic_ostream::flush](https://en.cppreference.com/w/cpp/io/basic_ostream/flush) - io; writing buffered output and reporting failure
+- [CWE-125: Out-of-bounds Read](https://cwe.mitre.org/data/definitions/125.html) - sec; unchecked indexing of untrusted positions
+- [CWE-190: Integer Overflow or Wraparound](https://cwe.mitre.org/data/definitions/190.html) - sec; size arithmetic that wraps before allocation
+- [CWE-120: Buffer Copy without Checking Size of Input](https://cwe.mitre.org/data/definitions/120.html) - sec; unbounded string copies into fixed buffers
+- [CWE-78: OS Command Injection](https://cwe.mitre.org/data/definitions/78.html) - sec; shell metacharacters in concatenated commands
+- [CWE-22: Path Traversal](https://cwe.mitre.org/data/definitions/22.html) - sec; escaping a restricted directory with relative or absolute paths
+- [CWE-134: Use of Externally-Controlled Format String](https://cwe.mitre.org/data/definitions/134.html) - sec; input passed as the format argument
+- [CWE-377: Insecure Temporary File](https://cwe.mitre.org/data/definitions/377.html) - sec; predictable temporary names and creation races
+- [CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html) - sec; secrets embedded in source and binaries
+- [CWE-209: Generation of Error Message Containing Sensitive Information](https://cwe.mitre.org/data/definitions/209.html) - sec; verbose errors that reveal internals
+- [CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator](https://cwe.mitre.org/data/definitions/338.html) - sec; predictable tokens and keys
+- [CWE-843: Access of Resource Using Incompatible Type](https://cwe.mitre.org/data/definitions/843.html) - sec; type confusion through incompatible access
+- [CWE-403: Exposure of File Descriptor to Unintended Control Sphere](https://cwe.mitre.org/data/definitions/403.html) - sec; descriptors inherited across exec
+- [CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition](https://cwe.mitre.org/data/definitions/367.html) - sec, io; check-then-use races on shared resources
+- [CWE-276: Incorrect Default Permissions](https://cwe.mitre.org/data/definitions/276.html) - sec, io; overly broad file modes on sensitive files
+- [Doxygen manual - Documenting the code](https://www.doxygen.nl/manual/docblocks.html) - doc; special comment blocks, brief vs detailed, @file
+- [Doxygen manual - Special commands](https://www.doxygen.nl/manual/commands.html) - doc; @param, @return, @throws, @file, @defgroup and friends
+- [Doxygen manual - Grouping](https://www.doxygen.nl/manual/grouping.html) - doc; topics, @defgroup/@ingroup, group markers
+- [cppreference - Comments](https://en.cppreference.com/w/cpp/comment) - doc; comment syntax, non-nesting, exclusion mechanisms
+- [cppreference - deprecated attribute](https://en.cppreference.com/w/cpp/language/attributes/deprecated) - doc; deprecation with a replacement message
+- [cppreference - Conditional inclusion](https://en.cppreference.com/w/cpp/preprocessor/conditional) - doc; #if 0 as a nesting-safe exclusion mechanism
+- [cppreference - std::chrono::duration](https://en.cppreference.com/w/cpp/chrono/duration) - num; tick count plus period as the type
+- [cppreference - std::numeric_limits](https://en.cppreference.com/w/cpp/types/numeric_limits) - num; typed bounds and the C macro mapping
+- [cppreference - Mathematical constants](https://en.cppreference.com/w/cpp/numeric/constants) - num; std::numbers variable templates
+- [cppreference - integer comparison functions](https://en.cppreference.com/w/cpp/utility/intcmp) - num; cmp_* across signedness
+- [cppreference - Fixed width integer types](https://en.cppreference.com/w/cpp/types/integer) - num; exact-width types and format macros
+- [cppreference - std::midpoint](https://en.cppreference.com/w/cpp/numeric/midpoint) - num; overflow-free average
+- [cppreference - std::to_chars](https://en.cppreference.com/w/cpp/utility/to_chars) - num; locale-independent, non-allocating conversion
+- [cppreference - Fundamental types](https://en.cppreference.com/w/cpp/language/types) - num; minimum widths and data models
+- [cppreference - std::from_chars](https://en.cppreference.com/w/cpp/utility/from_chars) - str; parsing numbers with an error channel
+- [cppreference - std::getline](https://en.cppreference.com/w/cpp/string/basic_string/getline) - str; line-oriented and delimiter-based reading
+- [cppreference - std::tolower](https://en.cppreference.com/w/cpp/string/byte/tolower) - str; ctype domain rules and the unsigned char cast
+- [cppreference - std::quoted](https://en.cppreference.com/w/cpp/io/manip/quoted) - str; quoted round-tripping through streams
+- [cppreference - Replacing text macros](https://en.cppreference.com/w/cpp/preprocessor/replace) - macro; substitution rules, # and ##, #undef, reserved names
+- [cppreference - Source file inclusion](https://en.cppreference.com/w/cpp/preprocessor/include) - macro; header guards, #pragma once, __has_include
+- [cppreference - assert](https://en.cppreference.com/w/cpp/error/assert) - macro; NDEBUG disabling and the macro-argument traps
+- [cppreference - if statement](https://en.cppreference.com/w/cpp/language/if) - macro; constexpr if, discarded statements, and #if boundaries
+- [cppreference - constexpr specifier](https://en.cppreference.com/w/cpp/language/constexpr) - macro; typed constants usable in constant expressions
+- [cppreference - std::array](https://en.cppreference.com/w/cpp/container/array) - coll; fixed-size container with a known size
+- [cppreference - std::remove, std::remove_if](https://en.cppreference.com/w/cpp/algorithm/remove) - coll; the erase-remove idiom
+- [cppreference - Algorithms library](https://en.cppreference.com/w/cpp/algorithm) - coll; the catalog of range operations
+- [cppreference - std::sort](https://en.cppreference.com/w/cpp/algorithm/sort) - coll; the comparator requirement
+- [cppreference - std::lower_bound](https://en.cppreference.com/w/cpp/algorithm/lower_bound) - coll; logarithmic search on partitioned ranges
+- [cppreference - std::map](https://en.cppreference.com/w/cpp/container/map) - coll; lookup versus operator[] insertion
+- [cppreference - std::transform](https://en.cppreference.com/w/cpp/algorithm/transform) - coll; mapping into a destination range
+- [cppreference - std::vector<bool>](https://en.cppreference.com/w/cpp/container/vector_bool) - coll; the proxy-reference specialization
+- [cppreference - cv type qualifiers](https://en.cppreference.com/w/cpp/language/cv) - const; const objects, mutable, and conversions
+- [cppreference - const_cast conversion](https://en.cppreference.com/w/cpp/language/const_cast) - const; casting away constness and its limits
+- [cppreference - consteval specifier](https://en.cppreference.com/w/cpp/language/consteval) - const; immediate functions
+- [cppreference - constinit specifier](https://en.cppreference.com/w/cpp/language/constinit) - const; static initialization assertions
+- [cppreference - std::as_const](https://en.cppreference.com/w/cpp/utility/as_const) - const; read-only views without casts
+- [cppreference - Reference initialization](https://en.cppreference.com/w/cpp/language/reference_initialization) - const; binding rules and temporary lifetime
+- [cppreference - Definitions and ODR](https://en.cppreference.com/w/cpp/language/definition) - proj; one definition rule and identical token sequences
+- [cppreference - inline specifier](https://en.cppreference.com/w/cpp/language/inline) - proj; header definitions and inline variables
+- [cppreference - Namespaces](https://en.cppreference.com/w/cpp/language/namespace) - proj; namespace structure, unnamed namespaces, using-directives
+- [cppreference - Language linkage](https://en.cppreference.com/w/cpp/language/language_linkage) - ffi; extern "C", mangling, and dual-use headers
+- [cppreference - TriviallyCopyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable) - ffi; byte-wise value transport
+- [cppreference - StandardLayoutType](https://en.cppreference.com/w/cpp/named_req/StandardLayoutType) - ffi; layouts that match other languages
+- [cppreference - Enumeration declaration](https://en.cppreference.com/w/cpp/language/enum) - ffi; fixed underlying types
+- [cppreference - Undefined behavior](https://en.cppreference.com/w/cpp/language/ub) - unsafe; UB categories and optimization consequences
+- [cppreference - Order of evaluation](https://en.cppreference.com/w/cpp/language/eval_order) - unsafe; sequenced-before rules and unsequenced UB
+- [cppreference - Default-initialization](https://en.cppreference.com/w/cpp/language/default_initialization) - unsafe; indeterminate values
+- [cppreference - Lifetime](https://en.cppreference.com/w/cpp/language/lifetime) - unsafe; begin and end of lifetime, storage reuse
+- [cppreference - dynamic_cast conversion](https://en.cppreference.com/w/cpp/language/dynamic_cast) - unsafe; checked downcasts and RTTI
+- [cppreference - std::memcpy](https://en.cppreference.com/w/cpp/string/byte/memcpy) - unsafe; the non-overlap contract
+- [cppreference - Arithmetic operators](https://en.cppreference.com/w/cpp/language/operator_arithmetic) - unsafe; pointer arithmetic and shift bounds
+- [cppreference - goto statement](https://en.cppreference.com/w/cpp/language/goto) - unsafe; jump and scope rules
+- [cppreference - nullptr](https://en.cppreference.com/w/cpp/language/nullptr) - ptr; the pointer literal vs NULL
+- [cppreference - std::enable_shared_from_this](https://en.cppreference.com/w/cpp/memory/enable_shared_from_this) - ptr; sharing an existing control block
+- [cppreference - shared_ptr::use_count](https://en.cppreference.com/w/cpp/memory/shared_ptr/use_count) - ptr; approximate owner count
+- [cppreference - std::addressof](https://en.cppreference.com/w/cpp/memory/addressof) - ptr; actual address despite operator&
+- [cppreference - Templates](https://en.cppreference.com/w/cpp/language/templates) - tmpl; families of classes and functions
+- [cppreference - Template argument deduction](https://en.cppreference.com/w/cpp/language/template_argument_deduction) - tmpl; deduction rules and forwarding references
+- [cppreference - Type alias, alias template](https://en.cppreference.com/w/cpp/language/type_alias) - tmpl; naming families of types
+- [cppreference - Fold expressions](https://en.cppreference.com/w/cpp/language/fold) - tmpl; reducing parameter packs
+- [cppreference - Dependent names](https://en.cppreference.com/w/cpp/language/dependent_name) - tmpl; typename and template disambiguators
+- [cppreference - Explicit (full) template specialization](https://en.cppreference.com/w/cpp/language/template_specialization) - tmpl; customizing one set of arguments
+- [cppreference - Class template argument deduction](https://en.cppreference.com/w/cpp/language/class_template_argument_deduction) - tmpl; CTAD and deduction guides
+- [cppreference - SFINAE](https://en.cppreference.com/w/cpp/language/sfinae) - tmpl; substitution failure and its alternatives
+- [cppreference - Constraints and concepts](https://en.cppreference.com/w/cpp/language/constraints) - trait; requires clauses and subsumption
+- [cppreference - Concepts library](https://en.cppreference.com/w/cpp/concepts) - trait; the standard concepts
+- [cppreference - requires expression](https://en.cppreference.com/w/cpp/language/requires) - trait; simple, type, compound, nested requirements
+- [cppreference - std::enable_if](https://en.cppreference.com/w/cpp/types/enable_if) - trait; pre-concepts conditional overloads
+- [cppreference - std::declval](https://en.cppreference.com/w/cpp/utility/declval) - trait; hypothetical values in unevaluated contexts
+- [cppreference - std::is_integral](https://en.cppreference.com/w/cpp/types/is_integral) - trait; trait value and _v helper
+- [cppreference - List-initialization](https://en.cppreference.com/w/cpp/language/list_initialization) - init; brace forms and narrowing rules
+- [cppreference - Non-static data members](https://en.cppreference.com/w/cpp/language/data_members) - init; default member initializers
+- [cppreference - Constructors and member initializer lists](https://en.cppreference.com/w/cpp/language/constructor) - init; member init order and delegation
+- [cppreference - Default constructors](https://en.cppreference.com/w/cpp/language/default_constructor) - init; =default and triviality
+- [cppreference - virtual function specifier](https://en.cppreference.com/w/cpp/language/virtual) - init, anti; dispatch and construction-time calls
+- [cppreference - Storage class specifiers](https://en.cppreference.com/w/cpp/language/storage_duration) - init; static locals and lazy initialization
+- [cppreference - Explicit type conversion](https://en.cppreference.com/w/cpp/language/explicit_cast) - anti; C-style cast interpretation order
+- [cppreference - switch statement](https://en.cppreference.com/w/cpp/language/switch) - anti; fallthrough and the attribute
+- [cppreference - Scope](https://en.cppreference.com/w/cpp/language/scope) - anti; lookup and shadowing
+- [cppreference - std::async](https://en.cppreference.com/w/cpp/thread/async) - async; launch policies and future lifetime
+- [cppreference - std::future](https://en.cppreference.com/w/cpp/thread/future) - async; shared state, get, shared_future
+- [cppreference - std::promise](https://en.cppreference.com/w/cpp/thread/promise) - async; setting values, exceptions, broken promises
+- [cppreference - Coroutines](https://en.cppreference.com/w/cpp/language/coroutines) - async; frames, handles, awaiters, parameter copies
+- [cppreference - Copy assignment operator](https://en.cppreference.com/w/cpp/language/copy_assignment) - data; self-assignment and deleted assignment
+- [cppreference - Copy constructors](https://en.cppreference.com/w/cpp/language/copy_constructor) - data; deleted copies and the C++98 idiom
+- [GCC - Options to Request or Suppress Warnings](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html) - lint; -Wall, -Wextra, -Werror, -Wpedantic
+- [GCC - Diagnostic Pragmas](https://gcc.gnu.org/onlinedocs/gcc/Diagnostic-Pragmas.html) - lint; scoped push/pop suppression
+- [clang-tidy - Checks](https://clang.llvm.org/extra/clang-tidy/) - lint; check families and analyzer checks
+- [GCC - Options That Control Static Analysis](https://gcc.gnu.org/onlinedocs/gcc/Static-Analyzer-Options.html) - lint; -fanalyzer path analysis
+- [cppreference - Access specifiers](https://en.cppreference.com/w/cpp/language/access) - pat; member and inheritance access
+- [cppreference - Identifiers](https://en.cppreference.com/w/cpp/language/identifiers) - style; names, reserved forms, significance
+- [cppreference - Placeholder type specifiers](https://en.cppreference.com/w/cpp/language/auto) - style; auto deduction rules
+- [cppreference - Integer literal](https://en.cppreference.com/w/cpp/language/integer_literal) - style; digit separators
+
+## Further reading
+
+- [isocpp.org - Current Status](https://isocpp.org/std/status) - WG21 milestones and work in progress
+- [clang-tidy - bugprone-exception-escape](https://clang.llvm.org/extra/clang-tidy/checks/bugprone/exception-escape.html) - tool backing for noexcept/destructor/move rules
+- [clang-tidy - bugprone-empty-catch](https://clang.llvm.org/extra/clang-tidy/checks/bugprone/empty-catch.html) - tool backing for the no-swallow rule

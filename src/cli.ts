@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
 import { readCommand, listCommand } from "./commands/read.js";
@@ -17,6 +17,15 @@ import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task
 import { learnCommand, type Confidence } from "./commands/learn.js";
 import { pruneCommand, statsCommand, deprecateCommand, type RetentionPolicy } from "./commands/prune.js";
 import { resumeCommand, formatResumeContext } from "./commands/resume.js";
+import { specCommand, type SpecAction } from "./commands/spec.js";
+import { ticketsCommand, type TicketInput } from "./commands/tickets.js";
+import { evidenceCommand } from "./commands/evidence.js";
+import { gateCommand } from "./commands/gate.js";
+import { impactCommand } from "./commands/impact.js";
+import { claimsCommand } from "./commands/claims.js";
+import { telemetryCommand, type TelemetryAction } from "./commands/telemetry.js";
+import { parseAcceptanceItem } from "./lib/gates/spec.js";
+import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx } from "./app-context.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
@@ -1035,6 +1044,457 @@ skillCmd
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
+  });
+
+// ── spec ─────────────────────────────────────────────
+const specCmd = program
+  .command("spec")
+  .description("Deterministic plan specs (skeleton + gates)");
+
+specCmd
+  .command("create")
+  .description("Create a draft spec skeleton")
+  .requiredOption("-t, --title <text>", "Spec title")
+  .option("--goal <text>", "Goal", "")
+  .option("--non-goals <items...>", "Explicitly out of scope")
+  .option("--constraints <items...>", "Hard constraints")
+  .option("--context <text>", "Background context", "")
+  .option("--allowed-files <globs...>", "Globs this work may touch")
+  .option("--forbidden-files <globs...>", "Globs this work must not touch")
+  .option("--acceptance <items...>", "Acceptance: 'text | run: cmd' or 'text | manual: reason'")
+  .option("--risks <items...>", "Known risks")
+  .option("--rollback <text>", "How to undo this work", "")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: {
+    title: string;
+    goal: string;
+    nonGoals?: string[];
+    constraints?: string[];
+    context: string;
+    allowedFiles?: string[];
+    forbiddenFiles?: string[];
+    acceptance?: string[];
+    risks?: string[];
+    rollback: string;
+    project?: string;
+  }) => {
+    try {
+      const result = await specCommand({
+        action: "create",
+        title: opts.title,
+        goal: opts.goal,
+        nonGoals: opts.nonGoals,
+        constraints: opts.constraints,
+        context: opts.context,
+        allowedFiles: opts.allowedFiles,
+        forbiddenFiles: opts.forbiddenFiles,
+        acceptance: opts.acceptance?.map(parseAcceptanceItem),
+        risks: opts.risks,
+        rollback: opts.rollback,
+        project: opts.project,
+      }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+specCmd
+  .command("status <ref>")
+  .description("Show spec gaps and hash state")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (ref: string, opts: { project?: string }) => {
+    try {
+      const result = await specCommand({ action: "status", spec: ref, project: opts.project }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+specCmd
+  .command("approve <ref>")
+  .description("Approve a gap-free spec")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (ref: string, opts: { project?: string }) => {
+    try {
+      const result = await specCommand({ action: "approve", spec: ref, project: opts.project }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+specCmd
+  .command("freeze <ref>")
+  .description("Freeze an approved spec (pins content hash, makes it immutable)")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (ref: string, opts: { project?: string }) => {
+    try {
+      const result = await specCommand({ action: "freeze", spec: ref, project: opts.project }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+specCmd
+  .command("list")
+  .description("List project specs")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const result = await specCommand({ action: "list", project: opts.project }, await createScopedCtx());
+      if (!result.specs?.length) {
+        console.log("No specs found.");
+        return;
+      }
+      for (const spec of result.specs) {
+        console.log(`[${spec.spec_id ?? "?"}] [${spec.status}] ${spec.title ?? spec.path}`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── tickets ──────────────────────────────────────────
+function parseTicketInputs(json: string): TicketInput[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error(`Invalid JSON in --tickets: ${json}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error("--tickets must be a JSON array");
+
+  return parsed.map((raw, index) => {
+    if (raw === null || typeof raw !== "object") {
+      throw new Error(`--tickets[${index}] must be an object`);
+    }
+    const obj = raw as Record<string, unknown>;
+    const acceptance = Array.isArray(obj.acceptance)
+      ? obj.acceptance.map((item) => (typeof item === "string" ? parseAcceptanceItem(item) : item))
+      : undefined;
+    return {
+      title: typeof obj.title === "string" ? obj.title : "",
+      acceptance: acceptance as TicketInput["acceptance"],
+      blockedBy: Array.isArray(obj.blocked_by)
+        ? obj.blocked_by.filter((v): v is string => typeof v === "string")
+        : undefined,
+      requiresReview: obj.requires_review === true,
+    };
+  });
+}
+
+const ticketsCmd = program
+  .command("tickets")
+  .description("Tickets derived from frozen specs");
+
+ticketsCmd
+  .command("create")
+  .description("Create tickets from a frozen spec")
+  .requiredOption("--spec <ref>", "Frozen spec reference")
+  .requiredOption("--tickets <json>", "JSON array of {title, acceptance, blocked_by, requires_review}")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { spec: string; tickets: string; project?: string }) => {
+    try {
+      const result = await ticketsCommand({
+        action: "create",
+        spec: opts.spec,
+        tickets: parseTicketInputs(opts.tickets),
+        project: opts.project,
+      }, await createScopedCtx());
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+ticketsCmd
+  .command("list")
+  .description("List tickets")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const result = await ticketsCommand({ action: "list", project: opts.project }, await createScopedCtx());
+      if (!result.tickets?.length) {
+        console.log("No tickets found.");
+        return;
+      }
+      for (const t of result.tickets) {
+        const blocked = t.blocked_by.length > 0 ? ` blocked_by=${t.blocked_by.join(",")}` : "";
+        const review = t.requires_review ? " [review]" : "";
+        console.log(`[${t.id}] [${t.status}]${review}${blocked} ${t.title}`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+ticketsCmd
+  .command("board")
+  .description("Show ticket board")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const result = await ticketsCommand({ action: "board", project: opts.project }, await createScopedCtx());
+      if (!result.board) return;
+      for (const [status, tickets] of Object.entries(result.board)) {
+        if (tickets.length === 0) continue;
+        console.log(`\n=== ${status.toUpperCase()} (${tickets.length}) ===`);
+        for (const t of tickets) {
+          console.log(`  [${t.id}] ${t.title}`);
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+ticketsCmd
+  .command("ready")
+  .description("List unblocked tickets in deterministic topological order")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (opts: { project?: string }) => {
+    try {
+      const result = await ticketsCommand({ action: "ready", project: opts.project }, await createScopedCtx());
+      if (!result.ready?.length) {
+        console.log("No ready tickets.");
+        return;
+      }
+      for (const t of result.ready) {
+        console.log(`[${t.id}] ${t.title}`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+ticketsCmd
+  .command("update <ticket-id>")
+  .description("Update a ticket")
+  .option("-p, --project <slug>", "Project slug")
+  .option("-s, --status <status>", "New status")
+  .action(async (ticketId: string, opts: { project?: string; status?: string }) => {
+    try {
+      const validStatuses = ["backlog", "in-progress", "blocked", "done", "cancelled"] as const;
+      if (opts.status && !validStatuses.includes(opts.status as (typeof validStatuses)[number])) {
+        throw new Error(`--status must be one of: ${validStatuses.join(", ")}`);
+      }
+      const result = await ticketsCommand({
+        action: "update",
+        ticketId,
+        status: opts.status as TicketStatus | undefined,
+        project: opts.project,
+      }, await createScopedCtx());
+      console.log(JSON.stringify({ ticket_id: result.ticket_id, updated_fields: result.updated_fields }));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── evidence ─────────────────────────────────────────
+const evidenceCmd = program
+  .command("evidence")
+  .description("Record and read ticket evidence");
+
+evidenceCmd
+  .command("add <ticket>")
+  .description("Append an evidence record for a ticket")
+  .requiredOption("-c, --command <cmd>", "Command that was run")
+  .option("--exit <code>", "Exit code", "0")
+  .option("--output <text>", "Command output (truncated when stored)", "")
+  .option("--commit <hash>", "Commit the evidence applies to (default: git HEAD)")
+  .option("--cwd <path>", "Directory used for the git HEAD lookup")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (ticket: string, opts: { command: string; exit: string; output: string; commit?: string; cwd?: string; project?: string }) => {
+    try {
+      const exitCode = parseInt(opts.exit, 10);
+      if (Number.isNaN(exitCode)) throw new Error("--exit must be a number");
+      const result = await evidenceCommand({
+        action: "add",
+        ticket,
+        command: opts.command,
+        exit: exitCode,
+        output: opts.output,
+        commit: opts.commit,
+        cwd: opts.cwd,
+        project: opts.project,
+      }, await createScopedCtx());
+      console.log(JSON.stringify({ ticket: result.ticket, path: result.path, count: result.count }));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+evidenceCmd
+  .command("list <ticket>")
+  .description("List evidence records for a ticket")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (ticket: string, opts: { project?: string }) => {
+    try {
+      const result = await evidenceCommand({ action: "list", ticket, project: opts.project }, await createScopedCtx());
+      console.log(JSON.stringify({ ticket: result.ticket, path: result.path, count: result.count, evidence: result.evidence }, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── gate ─────────────────────────────────────────────
+program
+  .command("gate")
+  .description("Deterministic evidence gates")
+  .command("check <target>")
+  .description("Check a spec or ticket; exits non-zero on failure")
+  .option("--ci", "CI mode: JSON output")
+  .option("--head <hash>", "Override HEAD commit for the evidence check")
+  .option("--cwd <path>", "Directory used for the git HEAD lookup")
+  .option("-p, --project <slug>", "Project slug")
+  .action(async (target: string, opts: { ci?: boolean; head?: string; cwd?: string; project?: string }) => {
+    try {
+      const result = await gateCommand({
+        target,
+        head: opts.head,
+        cwd: opts.cwd,
+        project: opts.project,
+      }, await createScopedCtx());
+      if (opts.ci) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`${result.pass ? "PASS" : "FAIL"} ${result.kind} ${result.target}`);
+        for (const item of result.missing) {
+          console.log(`  - ${item}`);
+        }
+      }
+      if (!result.pass) process.exitCode = 1;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── impact ───────────────────────────────────────────
+program
+  .command("impact <target>")
+  .description("Deterministic code-graph impact: definitions, importers, callers, shortest path")
+  .option("-t, --to <target>", "Second target; when given, include the shortest graph path")
+  .option("-r, --root <path>", "Scan root (default: cwd)")
+  .action(async (target: string, opts: { to?: string; root?: string }) => {
+    try {
+      const result = await impactCommand({ target, to: opts.to, root: opts.root });
+      console.log(JSON.stringify(result, null, 2));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── claims ───────────────────────────────────────────
+program
+  .command("claims")
+  .description("Verify structured claims against a deterministic code-graph scan")
+  .requiredOption("-c, --claims <json>", "JSON array of claims")
+  .option("-r, --root <path>", "Scan root (default: cwd)")
+  .action(async (opts: { claims: string; root?: string }) => {
+    try {
+      let claims: unknown;
+      try {
+        claims = JSON.parse(opts.claims);
+      } catch {
+        throw new Error("--claims must be valid JSON");
+      }
+      const result = await claimsCommand({ claims, root: opts.root });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.summary.refuted > 0) process.exitCode = 1;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  });
+
+// ── telemetry ────────────────────────────────────────
+const telemetryCmd = program
+  .command("telemetry")
+  .description("Local, opt-in telemetry for rule-selection effectiveness");
+
+async function runTelemetry(action: TelemetryAction, top?: number): Promise<void> {
+  try {
+    const result = await telemetryCommand({ action, top }, await createScopedCtx());
+    if (result.report) console.log(result.report);
+    console.log(result.message);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  }
+}
+
+telemetryCmd
+  .command("status")
+  .description("Show whether telemetry is enabled and how many events exist")
+  .action(async () => {
+    await runTelemetry("status");
+  });
+
+telemetryCmd
+  .command("enable")
+  .description("Opt in: record rule-selection events locally (never uploaded)")
+  .action(async () => {
+    await runTelemetry("enable");
+  });
+
+telemetryCmd
+  .command("disable")
+  .description("Opt out: stop recording events; existing events stay on disk")
+  .action(async () => {
+    await runTelemetry("disable");
+  });
+
+telemetryCmd
+  .command("report")
+  .description("Aggregate local events: top-selected, most-dropped, never-selected rules")
+  .option("--top <n>", "Rows per selection/drop list", "20")
+  .action(async (opts: { top: string }) => {
+    const top = parseInt(opts.top, 10);
+    if (Number.isNaN(top) || top < 0) {
+      console.error("Error: --top must be a non-negative integer");
+      process.exit(1);
+    }
+    await runTelemetry("report", top);
+  });
+
+telemetryCmd
+  .command("clear")
+  .description("Delete all local telemetry events")
+  .action(async () => {
+    await runTelemetry("clear");
   });
 
 // ── setup / teardown ─────────────────────────────────

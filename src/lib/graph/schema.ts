@@ -1,7 +1,9 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 
 export type NodeType = "project" | "skill" | "session";
 export type EdgeType = "project_skill" | "skill_skill" | "session_skill" | "session_file";
+
+export const GRAPH_SCHEMA_VERSION = 2;
 
 export type AuditStatus = "pass" | "fail" | "warn" | "unknown";
 
@@ -87,6 +89,7 @@ export interface SessionFileEdge {
 export type Edge = ProjectSkillEdge | SkillSkillEdge | SessionSkillEdge | SessionFileEdge;
 
 export interface Graph {
+  version?: number;
   nodes: Node[];
   edges: Edge[];
 }
@@ -118,5 +121,6 @@ export interface NeighborhoodResult {
 }
 
 export interface ContentResult {
-  skills: Array<{ id: string; content: string }>;
+  skills: Array<{ id: string; content: string; stale?: boolean }>;
+  warnings: string[];
 }

@@ -1,0 +1,115 @@
+{
+  "errors": [],
+  "warnings": [
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/api-common-traits.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/api-default-impl.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/api-extension-trait.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/conc-thread-local.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/const-fn.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: requires a fixture README.md for include_str!",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/doc-crate-readme.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/lint-deny-correctness.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: Bad demonstrates legacy `#[macro_use] extern crate mylib` and needs a separate consumer crate",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/macro-export-crate-path.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/macro-fragment-specifiers.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/macro-proc-two-crate.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/macro-rules-hygiene.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: nightly-only `std::hint::{likely, unlikely}` (E0554 on stable)",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/opt-likely-hint.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/own-arc-shared.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/own-mutex-interior.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/type-phantom-marker.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/unsafe-extern-block.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: toolchain lag: MaybeUninit::<[T; N]>::from stabilized after rustc 1.94 (verified on 1.95); the local harness compiles with 1.94",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/unsafe-maybeuninit.md",
+      "severity": "warning"
+    },
+    {
+      "code": "compile-exempt",
+      "message": "compile check skipped: intentional compile-error demonstration",
+      "path": "/Users/arvee/Documents/superskill/catalog/rules/rust/unsafe-no-mangle-unsafe.md",
+      "severity": "warning"
+    }
+  ],
+  "ruleCount": 2245,
+  "checkedCount": 2245
+}

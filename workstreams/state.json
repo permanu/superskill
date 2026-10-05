@@ -1,0 +1,1976 @@
+{
+  "version": 1,
+  "updated": "2026-10-05T05:36:43.719Z",
+  "batches": {
+    "rust/own": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "rust/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "rust/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 17 verified rule(s) (planned target 17)"
+    },
+    "rust/unsafe": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 7)"
+    },
+    "rust/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 17 verified rule(s) (planned target 17)"
+    },
+    "rust/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 18 verified rule(s) (planned target 18)"
+    },
+    "rust/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 4)"
+    },
+    "rust/opt": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "rust/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 5)"
+    },
+    "rust/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 13)"
+    },
+    "rust/trait": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 6)"
+    },
+    "rust/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 3 verified rule(s) (planned target 3)"
+    },
+    "rust/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 4)"
+    },
+    "rust/serde": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 8)"
+    },
+    "rust/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 5)"
+    },
+    "rust/macro": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 8)"
+    },
+    "rust/clo": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'clo'; dropped or renamed during authoring"
+    },
+    "rust/coll": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 4)"
+    },
+    "rust/name": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 16)"
+    },
+    "rust/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 15)"
+    },
+    "rust/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 11 verified rule(s) (planned target 12)"
+    },
+    "rust/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 7)"
+    },
+    "rust/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 13)"
+    },
+    "rust/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 14)"
+    },
+    "rust/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 13)"
+    },
+    "rust/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 15)"
+    },
+    "typescript/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 14)"
+    },
+    "typescript/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 12)"
+    },
+    "typescript/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 8)"
+    },
+    "typescript/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 16)"
+    },
+    "typescript/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 12)"
+    },
+    "typescript/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "typescript/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "typescript/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "typescript/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 10)"
+    },
+    "typescript/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 6)"
+    },
+    "typescript/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 10)"
+    },
+    "typescript/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "typescript/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 9)"
+    },
+    "typescript/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "typescript/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "typescript/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "typescript/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 5)"
+    },
+    "typescript/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 7)"
+    },
+    "typescript/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 6)"
+    },
+    "typescript/macro": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'macro'; dropped or renamed during authoring"
+    },
+    "typescript/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 4)"
+    },
+    "typescript/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 6)"
+    },
+    "typescript/net": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 5)"
+    },
+    "typescript/ui": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 6)"
+    },
+    "typescript/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 5)"
+    },
+    "typescript/gen": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'gen'; dropped or renamed during authoring"
+    },
+    "typescript/ts": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ts'; dropped or renamed during authoring"
+    },
+    "typescript/node": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'node'; dropped or renamed during authoring"
+    },
+    "python/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 28 verified rule(s) (planned target 14)"
+    },
+    "python/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "python/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "python/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 16)"
+    },
+    "python/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 20 verified rule(s) (planned target 12)"
+    },
+    "python/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 8)"
+    },
+    "python/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 17 verified rule(s) (planned target 12)"
+    },
+    "python/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 17 verified rule(s) (planned target 12)"
+    },
+    "python/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "python/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 6)"
+    },
+    "python/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 10)"
+    },
+    "python/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 12)"
+    },
+    "python/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 9)"
+    },
+    "python/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "python/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 12)"
+    },
+    "python/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 8)"
+    },
+    "python/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 5)"
+    },
+    "python/conv": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'conv'; dropped or renamed during authoring"
+    },
+    "python/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 6)"
+    },
+    "python/macro": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'macro'; dropped or renamed during authoring"
+    },
+    "python/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 4)"
+    },
+    "python/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "python/net": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'net'; dropped or renamed during authoring"
+    },
+    "python/ui": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ui'; dropped or renamed during authoring"
+    },
+    "python/ffi": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ffi'; dropped or renamed during authoring"
+    },
+    "python/py": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'py'; dropped or renamed during authoring"
+    },
+    "python/typing": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'typing'; dropped or renamed during authoring"
+    },
+    "python/pack": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'pack'; dropped or renamed during authoring"
+    },
+    "go/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 14)"
+    },
+    "go/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "go/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 8)"
+    },
+    "go/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 16)"
+    },
+    "go/async": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'async'; dropped or renamed during authoring"
+    },
+    "go/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 8)"
+    },
+    "go/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 12)"
+    },
+    "go/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "go/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 10)"
+    },
+    "go/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 6)"
+    },
+    "go/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "go/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "go/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 9)"
+    },
+    "go/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 10)"
+    },
+    "go/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 12)"
+    },
+    "go/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "go/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 5)"
+    },
+    "go/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 7)"
+    },
+    "go/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 6)"
+    },
+    "go/macro": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'macro'; dropped or renamed during authoring"
+    },
+    "go/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 4)"
+    },
+    "go/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 6)"
+    },
+    "go/net": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 5)"
+    },
+    "go/ui": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 3 verified rule(s) (planned target 6)"
+    },
+    "go/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 3 verified rule(s) (planned target 5)"
+    },
+    "go/chan": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'chan'; dropped or renamed during authoring"
+    },
+    "go/iface": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 15)"
+    },
+    "go/mod": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 15)"
+    },
+    "swift/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 14)"
+    },
+    "swift/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "swift/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "swift/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 16)"
+    },
+    "swift/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "swift/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 8)"
+    },
+    "swift/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "swift/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 12)"
+    },
+    "swift/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "swift/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "swift/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "swift/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "swift/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 9)"
+    },
+    "swift/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "swift/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 11 verified rule(s) (planned target 12)"
+    },
+    "swift/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "swift/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 5)"
+    },
+    "swift/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 7)"
+    },
+    "swift/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 6)"
+    },
+    "swift/macro": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 5)"
+    },
+    "swift/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 4)"
+    },
+    "swift/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 6)"
+    },
+    "swift/net": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 5)"
+    },
+    "swift/ui": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 17 verified rule(s) (planned target 6)"
+    },
+    "swift/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 8 verified rule(s) (planned target 5)"
+    },
+    "swift/proto": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'proto'; dropped or renamed during authoring"
+    },
+    "swift/swiftui": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'swiftui'; dropped or renamed during authoring"
+    },
+    "swift/interop": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'interop'; dropped or renamed during authoring"
+    },
+    "java/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 18 verified rule(s) (planned target 14)"
+    },
+    "java/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "java/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "java/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 16)"
+    },
+    "java/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 12)"
+    },
+    "java/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 20 verified rule(s) (planned target 8)"
+    },
+    "java/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "java/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "java/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "java/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "java/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 10)"
+    },
+    "java/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "java/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 9)"
+    },
+    "java/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "java/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "java/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 8)"
+    },
+    "java/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "java/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 7)"
+    },
+    "java/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 6)"
+    },
+    "java/macro": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'macro'; dropped or renamed during authoring"
+    },
+    "java/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 4)"
+    },
+    "java/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "java/net": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 5)"
+    },
+    "java/ui": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ui'; dropped or renamed during authoring"
+    },
+    "java/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 5)"
+    },
+    "java/stream": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'stream'; dropped or renamed during authoring"
+    },
+    "java/gen": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 15)"
+    },
+    "java/jvm": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'jvm'; dropped or renamed during authoring"
+    },
+    "c/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 14)"
+    },
+    "c/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 12)"
+    },
+    "c/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 8)"
+    },
+    "c/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 16)"
+    },
+    "c/async": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'async'; dropped or renamed during authoring"
+    },
+    "c/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "c/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 12)"
+    },
+    "c/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 12)"
+    },
+    "c/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "c/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "c/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 10)"
+    },
+    "c/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "c/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 9)"
+    },
+    "c/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "c/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "c/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "c/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "c/conv": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 7)"
+    },
+    "c/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "c/macro": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "c/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 3 verified rule(s) (planned target 4)"
+    },
+    "c/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 6)"
+    },
+    "c/net": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 2 verified rule(s) (planned target 5)"
+    },
+    "c/ui": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ui'; dropped or renamed during authoring"
+    },
+    "c/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "c/ptr": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 14 verified rule(s) (planned target 15)"
+    },
+    "c/ub": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ub'; dropped or renamed during authoring"
+    },
+    "c/pre": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'pre'; dropped or renamed during authoring"
+    },
+    "cpp/type": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 14)"
+    },
+    "cpp/err": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 12)"
+    },
+    "cpp/mem": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 8)"
+    },
+    "cpp/api": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 16)"
+    },
+    "cpp/async": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 12)"
+    },
+    "cpp/conc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 8)"
+    },
+    "cpp/perf": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "cpp/test": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "cpp/doc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "cpp/obs": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "cpp/sec": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 10)"
+    },
+    "cpp/style": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 12)"
+    },
+    "cpp/proj": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 9)"
+    },
+    "cpp/lint": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 10)"
+    },
+    "cpp/anti": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 7 verified rule(s) (planned target 12)"
+    },
+    "cpp/data": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 4 verified rule(s) (planned target 8)"
+    },
+    "cpp/num": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "cpp/conv": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'conv'; dropped or renamed during authoring"
+    },
+    "cpp/pat": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 6 verified rule(s) (planned target 6)"
+    },
+    "cpp/macro": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "cpp/const": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 4)"
+    },
+    "cpp/io": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 6)"
+    },
+    "cpp/net": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'net'; dropped or renamed during authoring"
+    },
+    "cpp/ui": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'ui'; dropped or renamed during authoring"
+    },
+    "cpp/ffi": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 5)"
+    },
+    "cpp/raii": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 13 verified rule(s) (planned target 15)"
+    },
+    "cpp/tmpl": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 15)"
+    },
+    "cpp/move": {
+      "status": "superseded",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "no verified rules on disk for prefix 'move'; dropped or renamed during authoring"
+    },
+    "c/unsafe": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 16 verified rule(s) (planned target 16)"
+    },
+    "cpp/coll": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "cpp/init": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 9)"
+    },
+    "cpp/ptr": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 10 verified rule(s) (planned target 10)"
+    },
+    "cpp/str": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "cpp/trait": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 9)"
+    },
+    "cpp/unsafe": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "go/gen": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 9 verified rule(s) (planned target 9)"
+    },
+    "java/ann": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 5)"
+    },
+    "java/coll": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "java/opt": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "python/pkg": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 15 verified rule(s) (planned target 15)"
+    },
+    "rust/closure": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 5 verified rule(s) (planned target 5)"
+    },
+    "swift/arc": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    },
+    "typescript/mod": {
+      "status": "done",
+      "owner": null,
+      "updated": "2026-10-05T05:36:34.199Z",
+      "claimed_at": null,
+      "completed_at": "2026-10-05T05:36:34.199Z",
+      "note": "reconciled from catalog: 12 verified rule(s) (planned target 12)"
+    }
+  },
+  "workstreams": {
+    "engine/determinism-repairs": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.664Z",
+      "claimed_at": "2026-10-05T05:36:43.661Z",
+      "completed_at": "2026-10-05T05:36:43.664Z",
+      "note": null
+    },
+    "engine/rules-selector": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.670Z",
+      "claimed_at": "2026-10-05T05:36:43.668Z",
+      "completed_at": "2026-10-05T05:36:43.670Z",
+      "note": null
+    },
+    "engine/integration": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.674Z",
+      "claimed_at": "2026-10-05T05:36:43.672Z",
+      "completed_at": "2026-10-05T05:36:43.674Z",
+      "note": null
+    },
+    "graph/codegraph": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.678Z",
+      "claimed_at": "2026-10-05T05:36:43.676Z",
+      "completed_at": "2026-10-05T05:36:43.678Z",
+      "note": null
+    },
+    "gates/spec-tickets-evidence": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.680Z",
+      "claimed_at": "2026-10-05T05:36:43.679Z",
+      "completed_at": "2026-10-05T05:36:43.680Z",
+      "note": null
+    },
+    "harness/bootstrap": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.689Z",
+      "claimed_at": "2026-10-05T05:36:43.681Z",
+      "completed_at": "2026-10-05T05:36:43.689Z",
+      "note": null
+    },
+    "harness/ci": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.701Z",
+      "claimed_at": "2026-10-05T05:36:43.700Z",
+      "completed_at": "2026-10-05T05:36:43.701Z",
+      "note": null
+    },
+    "telemetry": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.708Z",
+      "claimed_at": "2026-10-05T05:36:43.706Z",
+      "completed_at": "2026-10-05T05:36:43.708Z",
+      "note": null
+    },
+    "docs/readme-usage-guide": {
+      "status": "done",
+      "owner": "wave-close",
+      "updated": "2026-10-05T05:36:43.719Z",
+      "claimed_at": "2026-10-05T05:36:43.713Z",
+      "completed_at": "2026-10-05T05:36:43.719Z",
+      "note": null
+    }
+  }
+}

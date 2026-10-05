@@ -1,20 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { planDelegation } from "./orchestrate.js";
+import { loadCatalog } from "./catalog.js";
 
 describe("planDelegation", () => {
-  it("is a single entry and keeps adhd + careful-minimal defaults", () => {
+  it("is a single entry and keeps catalog-resolvable defaults", () => {
     const p = planDelegation("fix a typo", ["typescript"]);
     expect(p.entry).toBe("superskill");
     expect(p.defaults).toEqual([
-      "adhd-output",
-      "careful-minimal",
-      "algorithm-correct",
-      "systems-thinking",
-      "human-in-the-loop",
+      "pipeline/norms",
+      "pipeline/systems",
+      "optimizer/algorithm",
+      "security/index",
     ]);
     expect(p.specialists.map((s) => s.agent)).toContain("typescript");
     expect(p.specialists.map((s) => s.agent)).not.toContain("platform");
     expect(p.specialists.map((s) => s.agent)).not.toContain("qa");
+  });
+
+  it("resolves every default to a real catalog artifact", async () => {
+    const catalogIds = new Set((await loadCatalog()).map((s) => s.id));
+    for (const id of planDelegation("fix a typo").defaults) {
+      expect(catalogIds.has(id)).toBe(true);
+    }
   });
 
   it("delegates go work to the go specialist", () => {

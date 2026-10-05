@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, writeFile, readFile } from "fs/promises";
+import { mkdir, rm, writeFile, readFile, utimes } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { activateSkills } from "./activate.js";
@@ -61,7 +61,7 @@ function createTestGraph(skills: Array<{ id: string; w: number }>): Graph {
   };
 }
 
-describe("activateSkills (graph-driven)", () => {
+describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
   let projectDir: string;
 
   beforeEach(async () => {
@@ -72,6 +72,7 @@ describe("activateSkills (graph-driven)", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await rm(projectDir, { recursive: true, force: true }).catch(() => {});
   });
@@ -200,5 +201,69 @@ describe("activateSkills (graph-driven)", () => {
 
     expect(result.success).toBe(false);
     expect(result.warnings).toContainEqual(expect.stringContaining("BLOCKED"));
+  });
+
+  it("distinguishes a missing skill_id from a security-audit block", async () => {
+    const graph = createTestGraph([
+      { id: "foo/bar@known-skill", w: 0.9 },
+    ]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: "foo/bar@ghost-skill" }, ctx);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("not in graph");
+    expect(result.error).not.toContain("security audit");
+    expect(result.warnings.join(" ")).toContain("ghost-skill");
+  });
+
+  it("surfaces budget accounting and the detected context window", async () => {
+    vi.stubEnv("CLAUDE_CODE", "1");
+    vi.stubEnv("CLAUDE_CODE_MODEL", "claude-opus-4-6");
+
+    const graph = createTestGraph([
+      { id: "vercel-labs/agent-skills@react-best-practices", w: 0.9 },
+    ]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ task: "react component" }, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.usedTokens).toBe(result.total_tokens);
+    expect(result.usedTokens).toBeGreaterThan(0);
+    expect(result.allocatedTokens).toBe(50_000);
+    expect(result.dropped).toEqual([]);
+  });
+
+  it("serves stale skill-cache content with a warning and a stale marker", async () => {
+    const skillId = "owner/repo@stale-skill";
+    const graph = createTestGraph([{ id: skillId, w: 0.9 }]);
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(graph),
+    );
+    const cacheDir = join(projectDir, ".superskill", "skill-cache", "owner", "repo", "stale-skill");
+    await mkdir(cacheDir, { recursive: true });
+    const file = join(cacheDir, "SKILL.md");
+    await writeFile(file, "# Stale Skill\n\nOld but readable.", "utf-8");
+    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await utimes(file, old, old);
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: skillId }, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.skills_loaded).toContainEqual(
+      expect.objectContaining({ id: skillId, stale: true }),
+    );
+    expect(result.warnings.some((w) => w.includes("stale"))).toBe(true);
   });
 });

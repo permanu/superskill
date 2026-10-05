@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- License changed from AGPL-3.0-or-later to Apache-2.0.
 - Catalog playbooks are **project-agnostic** (any repo SuperSkill is used on), not SuperSkill-internal lore.
 - CI no longer publishes to npm. Releases still cut GitHub notes on `v*` tags. Publish with `npm publish` locally.
 
