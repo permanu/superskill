@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Command } from "commander";
+import { dirname } from "path";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClients } from "./detect.js";
 import { configureClient } from "./configure.js";
 import { teardownAll } from "./teardown.js";
 import type { DetectedClient } from "./types.js";
 import { resolveHome, currentPlatform } from "./types.js";
+import { installSharedSkill, removeSharedSkill } from "./skill.js";
 
 export function registerSetupCommands(program: Command): void {
   program
@@ -110,6 +112,20 @@ export function registerSetupCommands(program: Command): void {
         }
       }
 
+      // Install the harness-agnostic skill shared by hosts with skill discovery
+      try {
+        const skill = installSharedSkill({ dryRun: opts.dryRun });
+        if (skill.skipped) {
+          console.log(`  SuperSkill skill ~ ${skill.skipped} (${skill.path})`);
+        } else {
+          console.log(
+            `  SuperSkill skill ${opts.dryRun ? "would be installed at" : "installed at"} ${skill.path}`
+          );
+        }
+      } catch (e: unknown) {
+        console.log(`  ! Skill install failed: ${(e as Error).message}`);
+      }
+
       console.log(
         `\nDone! ${configured} client(s) ${opts.dryRun ? "would be configured" : "configured"}.\n`
       );
@@ -135,10 +151,11 @@ export function registerSetupCommands(program: Command): void {
         dryRun: opts.dryRun,
         silent: opts.silent,
       });
+      const skill = removeSharedSkill({ dryRun: opts.dryRun });
 
       if (opts.silent) return;
 
-      if (results.length === 0) {
+      if (results.length === 0 && !skill.removed) {
         console.log("\nNothing to clean up.\n");
         return;
       }
@@ -154,6 +171,11 @@ export function registerSetupCommands(program: Command): void {
           if (r.slashCommandsRemoved && r.slashCommandsRemoved.length > 0) console.log("    - Slash commands removed");
           if (!r.mcpRemoved && !r.instructionRemoved) console.log("    ~ Nothing found");
         }
+      }
+      if (skill.removed) {
+        console.log(
+          `  SuperSkill skill ${opts.dryRun ? "would be removed from" : "removed from"} ${dirname(skill.path)}`
+        );
       }
       console.log("\nDone!\n");
     });
