@@ -16,8 +16,18 @@ SuperSkill is the shared project memory served by the `superskill` MCP server. T
 3. **Coordinate** — call `session` with `action: register` when you start, and `action: complete` with a one-line outcome when you finish.
 4. **Write back** — record durable decisions, learnings, and follow-up tasks through the MCP tools so later sessions inherit them.
 
+## Lazy retrieval — never bulk-load
+
+Reach content through the graph instead of loading everything:
+
+1. **Resolve** — `graph_traverse` with `action: "resolve"` and your task: returns the proposed load path (matched skills, rules, notes) as `{ id, path, bytes, tokens, reason }` — **no content**.
+2. **Descend** — `action: "children"` one level at a time (`rules` → `rules:rust` → `rules:rust/own` → rule ids), or `action: "node"` for metadata + edges.
+3. **Open** — `action: "open"` pulls exactly one file's content (capped ~4KB; `full: true` for all) only when you actually need it.
+
+Id prefixes: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`; containers like `rules:<lang>/<prefix>`. Budget first (tokens ≈ bytes/4), open second. CLI: `superskill graph resolve|children|node|open`.
+
 ## Rules
 
-- The vault is jailed to `VAULT_PATH`; only the superskill MCP tools and `superskill-cli` touch it.
+- The vault is jailed to `VAULT_PATH`; only the superskill MCP tools and the `superskill` CLI touch it.
 - No "done" without evidence — run the checks the repo defines and report their results.
 - If the project has no vault context yet, say so plainly instead of inventing history.

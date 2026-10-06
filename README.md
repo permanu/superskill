@@ -526,6 +526,10 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 | `graph viz` | Write `knowledge-graph.html`, `knowledge-graph.canvas`, `architecture-diagrams.html` | `--open` launches them; shorthand `superskill viz` |
 | `graph related <path>` | Backlinks and outgoing links | `--hops <n>` |
 | `graph cross-project <query>` | Project-jailed search; cross-project is denied | `-l, --limit` |
+| `graph node <id>` | Metadata + edges for one traversal node | `--json` |
+| `graph children <id>` | One-level lazy descent (vault/rules/skills/code) | `--limit <n>` |
+| `graph resolve <task>` | What would load: paths + byte/token estimates, no content | `--limit <n>` |
+| `graph open <id>` | Content for exactly one node | `--full` |
 | `qa viz` | Regenerate the graph HTML and click through it in system Chrome | |
 
 ### Skills
@@ -738,7 +742,20 @@ superskill viz --open -p my-project     # shorthand for `graph viz`; --open laun
 superskill qa viz -p my-project
 ```
 
-`graph viz` writes `projects/<slug>/knowledge-graph.html` (Cytoscape + ELK layered view with search, type filters, and a legend; tabs **Graph · HLA · LLA · ERD · Modules**; keys `g` `h` `l` `e` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. HLA/LLA are derived from the real module graph. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
+`graph viz` writes `projects/<slug>/knowledge-graph.html` (Cytoscape + ELK layered view with search, type filters, and a legend; tabs **Graph · HLA · LLA · ERD · Flow · Rules · Modules**; keys `g` `h` `l` `e` `f` `r` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. HLA/LLA are derived from the real module graph; Rules nests the whole rule library (`language → prefix → rule`). Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
+
+### Lazy traversal (agent access)
+
+Don't load catalog dumps — resolve first, open last:
+
+```bash
+superskill graph resolve "fix a rust ownership bug"   # paths + byte/token estimates, no content
+superskill graph children rules:rust                  # descend one level (rules → lang → prefix)
+superskill graph node rule:rust-own-cow-conditional   # metadata + edges
+superskill graph open rule:rust-own-cow-conditional   # pull just this file (cap ~4KB, --full for all)
+```
+
+Ids span every artifact: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`. The MCP equivalent is one tool: `graph_traverse` (`action: resolve|children|node|open`).
 
 ### Code graph: impact and claims
 

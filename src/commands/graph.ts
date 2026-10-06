@@ -3,6 +3,66 @@ import type { CommandContext } from "../core/types.js";
 import { VaultError } from "../lib/vault-fs.js";
 import { searchText, type SearchResult } from "../lib/search-engine.js";
 import { ensureProjectIndex } from "../lib/knowledge-index.js";
+import { openTraverser } from "../lib/graph/traverse.js";
+import type {
+  TraverseChildrenResult,
+  TraverseContent,
+  TraverseNodeInfo,
+  TraverseResolveResult,
+} from "../lib/graph/traverse.js";
+
+export type GraphTraverseAction = "node" | "children" | "resolve" | "open";
+
+export interface GraphTraverseArgs {
+  action: GraphTraverseAction;
+  id?: string;
+  task?: string;
+  limit?: number;
+  full?: boolean;
+}
+
+export type GraphTraverseResult =
+  | TraverseNodeInfo
+  | TraverseChildrenResult
+  | TraverseResolveResult
+  | TraverseContent;
+
+export async function graphTraverseCommand(
+  args: GraphTraverseArgs,
+  ctx: CommandContext,
+): Promise<GraphTraverseResult> {
+  const traverser = await openTraverser({
+    root: process.cwd(),
+    vaultPath: ctx.vaultPath,
+    projectSlug: ctx.projectSlug ?? undefined,
+    vaultFs: ctx.vaultFs,
+  });
+
+  switch (args.action) {
+    case "node": {
+      if (!args.id) throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=node requires id");
+      const node = traverser.node(args.id);
+      if (!node) throw new VaultError("FILE_NOT_FOUND", `Unknown traverse node: ${args.id}`);
+      return node;
+    }
+    case "children": {
+      if (!args.id) throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=children requires id");
+      return traverser.children(args.id, { limit: args.limit });
+    }
+    case "resolve": {
+      if (!args.task || args.task.trim() === "") {
+        throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=resolve requires task");
+      }
+      return traverser.resolve(args.task, { limit: args.limit });
+    }
+    case "open": {
+      if (!args.id) throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=open requires id");
+      return traverser.open(args.id, { full: args.full });
+    }
+    default:
+      throw new VaultError("INVALID_ARGUMENT", `Unknown graph_traverse action: ${String(args.action)}`);
+  }
+}
 
 export interface GraphResult {
   note: string;

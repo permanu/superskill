@@ -2,7 +2,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ensureProjectIndex } from "./knowledge-index.js";
+import { ensureProjectIndex, upsertVaultFile } from "./knowledge-index.js";
 import { scanImportGraph } from "./code-graph.js";
 import { attachCodeBodies, buildVizModel, mermaidFlowchart, type VizModel } from "./viz-model.js";
 
@@ -20,6 +20,32 @@ const CDN = {
 const FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="${CDN.fonts}" rel="stylesheet"/>`;
+
+const FALLBACK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.4l1.7 4.3 4.3 1.7-4.3 1.7L8 13.4 6.3 9.1 2 7.4l4.3-1.7z" fill="none" stroke="#e8b268" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+
+function readIconAsset(): string {
+  try {
+    return readFileSync(new URL("../../assets/superskill-icon.svg", import.meta.url), "utf-8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    console.error(`[knowledge-viz] icon asset unavailable (${code ?? String(err)}); using fallback`);
+    return FALLBACK_ICON;
+  }
+}
+
+function inlineIcon(size: number): string {
+  const svg = readIconAsset()
+    .replace(/^<\?xml[^>]*\?>\s*/, "")
+    .replace(/\s(?:width|height|role|aria-label|aria-hidden)="[^"]*"/g, "")
+    .trim();
+  if (!svg.startsWith("<svg")) return FALLBACK_ICON;
+  return svg.replace(/<svg\b/, `<svg width="${size}" height="${size}" aria-hidden="true"`);
+}
+
+function iconFaviconHref(): string {
+  const svg = readIconAsset().replace(/^<\?xml[^>]*\?>\s*/, "").trim();
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
 
 const PALETTE_CSS = `
   :root {
@@ -61,6 +87,8 @@ const TYPE_STYLE: Record<string, { label: string; color: string }> = {
   architecture: { label: "Architecture", color: "#8ab4f8" },
   pack: { label: "Pack", color: "#c58af9" },
   playbook: { label: "Playbook", color: "#8fd694" },
+  rules: { label: "Rules group", color: "#c9a0ff" },
+  rule: { label: "Rule", color: "#e5c07b" },
   adr: { label: "Decision", color: "#f2c94c" },
   learning: { label: "Learning", color: "#7ee0b0" },
   context: { label: "Context", color: "#f2998e" },
@@ -132,6 +160,27 @@ const CLIENT_JS = String.raw`
   var reduceMotion = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   var colorOf = {};
   legend.forEach(function (entry) { colorOf[entry.type] = entry.color; });
+
+  var EDGE_COLORS = ["#5f6f95", "#8b6fb0", "#4f8a8b", "#a08050", "#7a8a5a", "#8b6b6b"];
+  function edgeColorOf(type) {
+    var s = String(type || "related");
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return EDGE_COLORS[h % EDGE_COLORS.length];
+  }
+  var nodeOwner = {};
+  var nodeTitles = {};
+  Object.keys(model.graphs).forEach(function (gid) {
+    var nodes = (model.graphs[gid] && model.graphs[gid].nodes) || [];
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n.id) continue;
+      if (!nodeOwner[n.id] || (gid.indexOf("rules") === 0 && nodeOwner[n.id].indexOf("rules") !== 0)) {
+        nodeOwner[n.id] = gid;
+      }
+      if (!nodeTitles[n.id]) nodeTitles[n.id] = n.title || n.id;
+    }
+  });
 
   function $(id) { return document.getElementById(id); }
 
@@ -216,26 +265,36 @@ const CLIENT_JS = String.raw`
     return html;
   }
 
-  function extractMermaid(src) {
+  function extractMermaids(src) {
     var text = String(src || "");
     var tag = FENCE + "mermaid";
+    var out = [];
     var i = text.indexOf(tag);
-    if (i < 0) return null;
-    var nl = text.indexOf("\n", i);
-    var end = text.indexOf(FENCE, nl + 1);
-    if (nl < 0 || end < 0) return null;
-    return text.slice(nl + 1, end).trim();
+    while (i >= 0) {
+      var nl = text.indexOf("\n", i);
+      var end = text.indexOf(FENCE, nl + 1);
+      if (nl < 0 || end < 0) break;
+      out.push(text.slice(nl + 1, end).trim());
+      i = text.indexOf(tag, end + 3);
+    }
+    return out;
   }
 
-  function stripMermaid(src) {
+  function stripMermaids(src) {
     var text = String(src || "");
-    if (!extractMermaid(text)) return text;
     var tag = FENCE + "mermaid";
     var i = text.indexOf(tag);
-    var nl = text.indexOf("\n", i);
-    var end = text.indexOf(FENCE, nl + 1);
-    if (i < 0 || end < 0) return text;
-    return (text.slice(0, i) + text.slice(end + 3)).trim();
+    if (i < 0) return text;
+    var kept = "";
+    while (i >= 0) {
+      var nl = text.indexOf("\n", i);
+      var end = text.indexOf(FENCE, nl + 1);
+      if (nl < 0 || end < 0) return (kept + text.slice(0, i)).trim();
+      kept += text.slice(0, i);
+      text = text.slice(end + 3);
+      i = text.indexOf(tag);
+    }
+    return (kept + text).trim();
   }
 
   function snippet(src) {
@@ -286,19 +345,23 @@ const CLIENT_JS = String.raw`
   }
 
   var VIEW_HEAD = {
-    graph: ["SuperSkill", ""],
+    graph: ["SuperSkill", "Retrieval graph"],
     hla: ["High-level architecture", "Orchestrator and specialists"],
     lla: ["Low-level architecture", "Module dependencies"],
     erd: ["Data model (ERD)", "Notes, edges, skill graph"],
-    modules: ["The program", "Modules. Click one to see the files inside."]
+    flow: ["Dataflow", "How a task becomes context \u2014 and how writes come back"],
+    rules: ["Rules library", "Languages \u2192 prefixes \u2192 rules. Click a rule to read it."],
+    modules: ["The program", "Layers hold modules. Click a layer to collapse it."]
   };
-  var DOC_OF_VIEW = { hla: "diag:high", lla: "diag:low", erd: "diag:erd" };
+  var DOC_OF_VIEW = { hla: "diag:high", lla: "diag:low", erd: "diag:erd", flow: "diag:flow" };
 
   var state = {
     view: "graph",
     tab: "graph",
     stack: ["root"],
     selected: null,
+    hovered: null,
+    denseLabels: false,
     query: "",
     hidden: {},
     cy: null,
@@ -332,27 +395,44 @@ const CLIENT_JS = String.raw`
       "text-max-width": 200,
       "text-valign": "center",
       "text-halign": "center",
-      "width": "data(w)",
-      "height": "data(h)",
       "shape": "round-rectangle",
       "padding": 8,
       "transition-property": "opacity, border-color, background-color",
       "transition-duration": "160ms"
     }},
+    { selector: "node.leaf", style: { "width": "data(w)", "height": "data(h)" } },
+    { selector: "node.parent-node", style: {
+      "background-color": "#12161f",
+      "background-opacity": 0.75,
+      "border-color": "#3a4150",
+      "border-style": "dashed",
+      "font-size": 11,
+      "color": "#8f96a3",
+      "text-valign": "top",
+      "text-halign": "center",
+      "padding": 14
+    }},
+    { selector: "node.parent-node.collapsed", style: { "border-style": "solid", "background-opacity": 0.9 } },
+    { selector: "node.c-hidden", style: { "display": "none" } },
     { selector: "node[open = 'graph']", style: { "border-style": "dashed", "border-width": 2 } },
     { selector: "node:selected", style: { "border-color": "#e8b268", "border-width": 3, "background-color": "#232a36" } },
     { selector: "node.q-dim", style: { "opacity": 0.14, "text-opacity": 0.14 } },
     { selector: "node.t-match", style: { "border-color": "#e8b268", "border-width": 2.5 } },
-    { selector: "node.h-dim", style: { "opacity": 0.14, "text-opacity": 0.14 } },
+    { selector: "node.s-dim", style: { "opacity": 0.3, "text-opacity": 0.3 } },
+    { selector: "node.h-dim", style: { "opacity": 0.3, "text-opacity": 0.3 } },
     { selector: "node.h-hl", style: { "border-color": "#e8b268", "z-index": 20 } },
     { selector: "node.f-hidden", style: { "display": "none" } },
     { selector: "edge", style: {
-      "width": 1.2,
-      "line-color": "#333b48",
-      "target-arrow-color": "#333b48",
+      "width": 1.3,
+      "line-color": "data(ecolor)",
+      "target-arrow-color": "data(ecolor)",
+      "opacity": 0.72,
       "target-arrow-shape": "triangle",
       "arrow-scale": 0.9,
-      "curve-style": "bezier",
+      "curve-style": "taxi",
+      "taxi-direction": "rightward",
+      "taxi-turn": 10,
+      "taxi-turn-min-distance": 8,
       "label": "data(etype)",
       "font-family": "JetBrains Mono, monospace",
       "font-size": 9,
@@ -364,10 +444,14 @@ const CLIENT_JS = String.raw`
       "transition-property": "opacity",
       "transition-duration": "160ms"
     }},
+    { selector: "edge.dense", style: { "text-opacity": 0 } },
+    { selector: "edge.dense.lbl", style: { "text-opacity": 1, "z-index": 20 } },
     { selector: "edge.q-dim", style: { "opacity": 0.08 } },
-    { selector: "edge.h-dim", style: { "opacity": 0.08 } },
+    { selector: "edge.s-dim", style: { "opacity": 0.25 } },
+    { selector: "edge.h-dim", style: { "opacity": 0.25 } },
     { selector: "edge.h-hl", style: { "line-color": "#6b7486", "target-arrow-color": "#6b7486", "z-index": 20 } },
-    { selector: "edge.f-hidden", style: { "display": "none" } }
+    { selector: "edge.f-hidden", style: { "display": "none" } },
+    { selector: "edge.c-hidden", style: { "display": "none" } }
   ];
   if (reduceMotion) {
     CY_STYLE.push({ selector: "node", style: { "transition-duration": "0ms" } });
@@ -388,16 +472,25 @@ const CLIENT_JS = String.raw`
         minZoom: 0.15,
         maxZoom: 2.5
       });
-      state.cy.on("tap", "node", function (ev) { selectNode(ev.target.data("id")); });
+      state.cy.on("tap", "node", function (ev) {
+        if (ev.target.data("role") === "layer") toggleLayer(ev.target);
+        selectNode(ev.target.data("id"));
+      });
       state.cy.on("mouseover", "node", function (ev) {
-        var node = ev.target;
-        if (node.hasClass("q-dim") || node.hasClass("f-hidden")) return;
-        var hood = node.closedNeighborhood();
-        state.cy.elements().not(hood).addClass("h-dim");
-        hood.addClass("h-hl");
+        if (ev.target.hasClass("f-hidden")) return;
+        state.hovered = ev.target.data("id");
+        refreshEmphasis();
       });
       state.cy.on("mouseout", "node", function () {
-        state.cy.elements().removeClass("h-dim h-hl");
+        state.hovered = null;
+        refreshEmphasis();
+      });
+      state.cy.on("tap", function (ev) {
+        if (ev.target !== state.cy) return;
+        state.selected = null;
+        state.cy.nodes().unselect();
+        refreshEmphasis();
+        renderOverview(currentGraph());
       });
       return state.cy;
     } catch (err) {
@@ -407,29 +500,85 @@ const CLIENT_JS = String.raw`
     }
   }
 
+  function refreshEmphasis() {
+    var cy = state.cy;
+    if (!cy) return;
+    var selected = state.selected ? cy.getElementById(state.selected) : cy.collection();
+    var hovered = state.hovered ? cy.getElementById(state.hovered) : cy.collection();
+    var hood = selected.length ? selected.closedNeighborhood() : cy.collection();
+    var hoverHood = hovered.length ? hovered.closedNeighborhood() : cy.collection();
+    cy.batch(function () {
+      cy.elements().removeClass("s-dim s-hl h-dim h-hl");
+      if (hood.length) {
+        cy.elements().not(hood).addClass("s-dim");
+        hood.addClass("s-hl");
+      }
+      if (hoverHood.length && !hood.length) {
+        cy.elements().not(hoverHood).addClass("h-dim");
+        hoverHood.addClass("h-hl");
+      }
+      if (state.denseLabels) {
+        var labelled = cy.collection();
+        if (selected.length) labelled = labelled.union(selected.connectedEdges());
+        if (hovered.length) labelled = labelled.union(hovered.connectedEdges());
+        cy.edges().removeClass("lbl");
+        labelled.addClass("lbl");
+      }
+    });
+  }
+
+  function refreshLayerEdges(cy) {
+    cy.edges().forEach(function (edge) {
+      edge.toggleClass("c-hidden", edge.source().hasClass("c-hidden") || edge.target().hasClass("c-hidden"));
+    });
+  }
+
+  function toggleLayer(node) {
+    var cy = state.cy;
+    if (!cy) return;
+    var collapsed = !node.data("collapsed");
+    node.data("collapsed", collapsed);
+    node.toggleClass("collapsed", collapsed);
+    node.children().toggleClass("c-hidden", collapsed);
+    refreshLayerEdges(cy);
+    runLayout(cy);
+    updateStats(currentGraph());
+  }
+
   function runLayout(cy) {
-    var options = { name: "breadthfirst", directed: true, padding: 40, spacingFactor: 1.15, animate: false, fit: true };
+    var eles = cy.elements().not(".c-hidden, .f-hidden");
+    if (!eles.length) return;
+    var options = { name: "breadthfirst", directed: true, padding: 40, spacingFactor: 1.15, animate: false, fit: true, eles: eles };
     if (typeof cytoscapeElk !== "undefined") {
-      options = { name: "elk", animate: false, fit: true, padding: 40, elk: {
+      var elk = {
         "elk.algorithm": "layered",
         "elk.direction": "RIGHT",
-        "elk.spacing.nodeNode": 28,
-        "elk.layered.spacing.nodeNodeBetweenLayers": 64,
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.spacing.nodeNode": 40,
+        "elk.layered.spacing.nodeNodeBetweenLayers": 72,
+        "elk.layered.spacing.edgeNodeBetweenLayers": 24,
+        "elk.layered.mergeEdges": true,
+        "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
         "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX"
-      }};
+      };
+      if (cy.nodes(":parent").length) {
+        elk["elk.hierarchyHandling"] = "INCLUDE_CHILDREN";
+        elk["elk.padding"] = "[top=36,left=20,bottom=20,right=20]";
+      }
+      options = { name: "elk", animate: false, fit: true, padding: 40, eles: eles, elk: elk };
     }
     try {
       cy.layout(options).run();
     } catch (err) {
       console.error(err);
-      try { cy.layout({ name: "breadthfirst", directed: true, padding: 40, animate: false, fit: true }).run(); } catch (e2) { console.error(e2); }
+      try { cy.layout({ name: "breadthfirst", directed: true, padding: 40, animate: false, fit: true, eles: eles }).run(); } catch (e2) { console.error(e2); }
     }
     cy.one("layoutstop", function () { fitView(); });
   }
 
   function fitView() {
     if (!state.cy) return;
-    var visible = state.cy.elements().not(".f-hidden");
+    var visible = state.cy.elements().not(".f-hidden, .c-hidden");
     try { state.cy.fit(visible.length ? visible : state.cy.elements(), 48); } catch (e) { console.error(e); }
   }
 
@@ -528,7 +677,7 @@ const CLIENT_JS = String.raw`
     presentTypes(g).forEach(function (type) {
       html += "<span class=\"legend-item\">" + dot(type) + esc(typeLabel(type)) + "</span>";
     });
-    html += "</div><div class=\"legend-note\">Dashed outline opens a nested view</div>";
+    html += "</div><div class=\"legend-note\">Dashed outline opens a nested view \u00b7 click a layer to collapse it</div>";
     host.innerHTML = html;
     host.hidden = false;
   }
@@ -551,12 +700,15 @@ const CLIENT_JS = String.raw`
 
   function renderOverview(g) {
     var panel = $("panel");
+    var viewDoc = model.docs["view:" + currentGraphId()];
+    var intro = viewDoc ? "<div class=\"doc-body view-doc\">" + md(viewDoc.body) + "</div>" : "";
     if (!state.libOk) {
       panel.innerHTML = "<div class=\"panel-head\"><h2>" + esc(g.title) + "</h2><p class=\"hint\">" + esc(g.subtitle || "") + "</p></div>" +
-        "<p class=\"hint\">Select a node from the index to read it.</p>";
+        intro + "<p class=\"hint\">Select a node from the index to read it.</p>";
       return;
     }
     var html = "<div class=\"panel-head\"><h2>" + esc(g.title) + "</h2><p class=\"hint\">" + esc(g.subtitle || "") + "</p></div>";
+    html += intro;
     html += g.nodes.length ? "<div class=\"node-list\">" + g.nodes.map(nodeButton).join("") + "</div>"
       : "<p class=\"hint\">Nothing stored here yet.</p>";
     panel.innerHTML = html;
@@ -568,11 +720,20 @@ const CLIENT_JS = String.raw`
     var doc = model.docs[node.id];
     var nodeById = {};
     g.nodes.forEach(function (n) { nodeById[n.id] = n; });
-    var relations = [];
+    var relMap = {};
+    var relOrder = [];
     g.edges.forEach(function (edge) {
-      if (edge.from === node.id) relations.push({ dir: "out", other: edge.to, type: edge.type });
-      else if (edge.to === node.id) relations.push({ dir: "in", other: edge.from, type: edge.type });
+      var dir = edge.from === node.id ? "out" : edge.to === node.id ? "in" : null;
+      if (!dir) return;
+      var label = edge.label || edge.type || "related";
+      var key = dir + "|" + (dir === "out" ? edge.to : edge.from) + "|" + label;
+      if (!relMap[key]) {
+        relMap[key] = { dir: dir, other: dir === "out" ? edge.to : edge.from, type: label, count: 0 };
+        relOrder.push(key);
+      }
+      relMap[key].count++;
     });
+    var relations = relOrder.map(function (k) { return relMap[k]; });
     var html = "<div class=\"detail anim\">";
     html += "<div class=\"detail-meta\">" + dot(node.type) + "<span class=\"chip-type\">" + esc(typeLabel(node.type)) + "</span></div>";
     html += "<h2>" + esc(node.title || node.id) + "</h2>";
@@ -587,11 +748,19 @@ const CLIENT_JS = String.raw`
       html += "<ul class=\"rels\">" + relations.map(function (r) {
         var other = nodeById[r.other];
         return "<li><button type=\"button\" class=\"rel\" data-rel=\"" + esc(r.other) + "\"><span class=\"rel-dir\">" + (r.dir === "out" ? "\u2192" : "\u2190") + "</span><span>" +
-          esc(other ? other.title || r.other : r.other) + "</span> <span class=\"rel-type\">" + esc(r.type) + "</span></button></li>";
+          esc(other ? other.title || r.other : r.other) + "</span> <span class=\"rel-type\">" + esc(r.type) + (r.count > 1 ? " \u00d7" + r.count : "") + "</span></button></li>";
+      }).join("") + "</ul>";
+    }
+    var linked = doc && doc.related ? doc.related : [];
+    if (linked.length) {
+      html += "<h3>Related <span class=\"count\">" + linked.length + "</span></h3>";
+      html += "<ul class=\"rels\">" + linked.map(function (rid) {
+        return "<li><button type=\"button\" class=\"rel\" data-jump=\"" + esc(rid) + "\"><span class=\"rel-dir\">\u2192</span><span>" +
+          esc(nodeTitles[rid] || rid) + "</span> <span class=\"rel-type\">related</span></button></li>";
       }).join("") + "</ul>";
     }
     html += "<h3>Document</h3>";
-    html += doc ? "<div class=\"doc-body\">" + md(stripMermaid(doc.body)) + "</div>"
+    html += doc ? "<div class=\"doc-body\">" + md(stripMermaids(doc.body)) + "</div>"
       : "<p class=\"hint\">No document stored for this node.</p>";
     html += "</div>";
     var panel = $("panel");
@@ -602,6 +771,9 @@ const CLIENT_JS = String.raw`
     });
     Array.prototype.forEach.call(panel.querySelectorAll("[data-rel]"), function (button) {
       button.onclick = function () { selectNode(button.getAttribute("data-rel")); };
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-jump]"), function (button) {
+      button.onclick = function () { jumpToNode(button.getAttribute("data-jump")); };
     });
   }
 
@@ -616,6 +788,7 @@ const CLIENT_JS = String.raw`
       state.cy.nodes().unselect();
       var el = state.cy.getElementById(id);
       if (el && el.length) el.select();
+      refreshEmphasis();
     }
     renderDetail(g, node);
   }
@@ -625,6 +798,17 @@ const CLIENT_JS = String.raw`
     state.stack.push(id);
     state.selected = null;
     renderGraphView();
+  }
+
+  function jumpToNode(id) {
+    var g = currentGraph();
+    if (g && g.nodes.some(function (n) { return n.id === id; })) { selectNode(id); return; }
+    var owner = nodeOwner[id];
+    if (!owner || !model.graphs[owner]) return;
+    state.stack.push(owner);
+    state.tab = owner.indexOf("rules") === 0 ? "rules" : state.tab;
+    renderGraphView();
+    selectNode(id);
   }
 
   function renderFallbackList() {
@@ -650,6 +834,7 @@ const CLIENT_JS = String.raw`
 
   function drawGraph(g) {
     state.selected = null;
+    state.hovered = null;
     renderChips(g);
     renderLegend(g);
     updateStats(g);
@@ -674,31 +859,45 @@ const CLIENT_JS = String.raw`
     $("reset").disabled = false;
     try { cy.resize(); } catch (e) { console.error(e); }
     cy.elements().remove();
+    state.denseLabels =
+      currentGraphId() !== "root" &&
+      (g.nodes.length > 12 || g.edges.length > 18 || (g.edges.length > 8 && g.edges.length * 2 > g.nodes.length));
+    var parents = {};
+    g.nodes.forEach(function (n) { if (n.parent) parents[n.parent] = true; });
+    var ordered = g.nodes.slice().sort(function (a, b) {
+      return (a.parent ? 1 : 0) - (b.parent ? 1 : 0);
+    });
     var elements = [];
-    g.nodes.forEach(function (n) {
+    ordered.forEach(function (n) {
       var size = nodeSize(n.title || n.id);
-      elements.push({ group: "nodes", data: {
+      var isParent = !!parents[n.id];
+      elements.push({ group: "nodes", classes: isParent ? "parent-node" : "leaf", data: {
         id: n.id,
         title: n.title || n.id,
         type: n.type || "note",
         open: n.open && n.open.kind === "graph" ? "graph" : "doc",
         color: typeColor(n.type),
         w: size.w,
-        h: size.h
+        h: size.h,
+        parent: n.parent || undefined,
+        role: isParent ? "layer" : "node"
       }});
     });
     var ids = {};
     g.nodes.forEach(function (n) { ids[n.id] = true; });
     g.edges.forEach(function (e, i) {
       if (!ids[e.from] || !ids[e.to]) return;
-      elements.push({ group: "edges", data: { id: "e" + i, source: e.from, target: e.to, etype: e.type || "related" } });
+      var etype = e.label || e.type || "related";
+      elements.push({ group: "edges", data: { id: "e" + i, source: e.from, target: e.to, etype: etype, ecolor: edgeColorOf(e.type || etype) } });
     });
     if (!elements.length) {
       try { cy.fit(); } catch (e) { console.error(e); }
       return;
     }
     cy.add(elements);
+    if (state.denseLabels) cy.edges().addClass("dense");
     runLayout(cy);
+    refreshEmphasis();
     applyFilters();
   }
 
@@ -733,28 +932,35 @@ const CLIENT_JS = String.raw`
     $("fallback").innerHTML = "";
     var slot = $("doc-slot");
     slot.hidden = false;
-    var code = meaningfulDiagram(doc ? extractMermaid(doc.body) : null);
-    if (!code) {
+    var codes = (doc ? extractMermaids(doc.body) : []).map(meaningfulDiagram).filter(Boolean);
+    if (!codes.length) {
       slot.innerHTML = "<p class=\"empty\">No diagram stored for this view yet.</p>";
     } else if (typeof mermaid === "undefined") {
-      slot.innerHTML = "<p class=\"empty\">Mermaid did not load. Showing the diagram source.</p><pre class=\"code\"><code>" + esc(code) + "</code></pre>";
+      slot.innerHTML = "<p class=\"empty\">Mermaid did not load. Showing the diagram source.</p>" +
+        codes.map(function (c) { return "<pre class=\"code\"><code>" + esc(c) + "</code></pre>"; }).join("");
     } else {
-      slot.innerHTML = "<p class=\"empty\">Rendering diagram\u2026</p>";
-      try {
-        mermaid.render("mmd" + Date.now(), code).then(function (res) {
-          slot.innerHTML = "<div class=\"diagram\">" + res.svg + "</div>";
-        }).catch(function (err) {
+      var stamp = Date.now();
+      slot.innerHTML = codes.map(function (c, i) {
+        return "<div class=\"diagram\" id=\"diagram-" + stamp + "-" + i + "\"><p class=\"empty\">Rendering diagram\u2026</p></div>";
+      }).join("");
+      codes.forEach(function (code, i) {
+        var host = document.getElementById("diagram-" + stamp + "-" + i);
+        function showSource() {
+          if (host) host.innerHTML = "<pre class=\"code\"><code>" + esc(code) + "</code></pre>";
+        }
+        try {
+          mermaid.render("mmd" + stamp + "_" + i, code).then(function (res) {
+            if (host) host.innerHTML = res.svg;
+          }).catch(function (err) { console.error(err); showSource(); });
+        } catch (err) {
           console.error(err);
-          slot.innerHTML = "<pre class=\"code\"><code>" + esc(code) + "</code></pre>";
-        });
-      } catch (err) {
-        console.error(err);
-        slot.innerHTML = "<pre class=\"code\"><code>" + esc(code) + "</code></pre>";
-      }
+          showSource();
+        }
+      });
     }
     var panel = $("panel");
     panel.innerHTML = doc
-      ? "<div class=\"detail anim\"><div class=\"detail-meta\">" + dot(doc.type) + "<span class=\"chip-type\">" + esc(typeLabel(doc.type)) + "</span></div><h2>" + esc(doc.title) + "</h2><div class=\"doc-body\">" + md(stripMermaid(doc.body)) + "</div></div>"
+      ? "<div class=\"detail anim\"><div class=\"detail-meta\">" + dot(doc.type) + "<span class=\"chip-type\">" + esc(typeLabel(doc.type)) + "</span></div><h2>" + esc(doc.title) + "</h2><div class=\"doc-body\">" + md(stripMermaids(doc.body)) + "</div></div>"
       : "<p class=\"hint\">Nothing stored for this view.</p>";
     panel.scrollTop = 0;
   }
@@ -775,14 +981,14 @@ const CLIENT_JS = String.raw`
     state.selected = null;
     state.query = "";
     $("search").value = "";
-    if (view === "hla" || view === "lla" || view === "erd") {
+    if (view === "hla" || view === "lla" || view === "erd" || view === "flow") {
       state.tab = view;
       state.stack = ["root"];
       renderDocView(view);
       return;
     }
-    state.tab = view === "modules" ? "modules" : "graph";
-    state.stack = view === "modules" ? ["root", "impl"] : ["root"];
+    state.tab = view === "modules" ? "modules" : view === "rules" ? "rules" : "graph";
+    state.stack = view === "modules" ? ["root", "impl"] : view === "rules" ? ["root", "rules"] : ["root"];
     renderGraphView();
   }
 
@@ -827,8 +1033,9 @@ const CLIENT_JS = String.raw`
     else if (key === "h") go("hla");
     else if (key === "l") go("lla");
     else if (key === "e") go("erd");
+    else if (key === "r") go("rules");
+    else if (key === "f") go("flow");
     else if (key === "m") go("modules");
-    else if (key === "f") fitView();
   });
 
   var initial = location.hash.replace("#", "") || "graph";
@@ -842,6 +1049,8 @@ export function renderKnowledgeGraphHtml(model: VizModel): string {
   const legend = JSON.stringify(legendEntries(model)).replace(/</g, "\\u003c");
   const theme = JSON.stringify(MERMAID_THEME).replace(/</g, "\\u003c");
   const title = escapeHtml(model.graphs.root?.title ?? "Knowledge graph");
+  const brandIcon = inlineIcon(30);
+  const favicon = iconFaviconHref();
   const script = CLIENT_JS.replace(/__SUPERSKILL_(MODEL|LEGEND|THEME)__/g, (token) => {
     if (token === "__SUPERSKILL_MODEL__") return data;
     if (token === "__SUPERSKILL_LEGEND__") return legend;
@@ -853,6 +1062,7 @@ export function renderKnowledgeGraphHtml(model: VizModel): string {
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title} — SuperSkill</title>
+<link rel="icon" href="${favicon}"/>
 ${FONT_LINKS}
 <script src="${CDN.elkjs}"></script>
 <script src="${CDN.cytoscape}"></script>
@@ -875,7 +1085,7 @@ ${PALETTE_CSS}
   #shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
   #topbar { display: flex; align-items: center; gap: 24px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
   #brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
-  #brand svg { display: block; }
+  #brand svg { display: block; flex: none; }
   #nav { display: flex; gap: 4px; }
   #nav button { padding: 6px 12px; border-radius: 999px; color: var(--ink-2); font-size: 13px; letter-spacing: -0.01em; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   #nav button:hover { color: var(--ink); background: var(--bg-3); }
@@ -913,6 +1123,7 @@ ${PALETTE_CSS}
   #doc-slot { position: absolute; inset: 0; overflow: auto; padding: 32px; }
   #doc-slot .empty { margin: 0 0 16px; color: var(--ink-2); font-size: 13px; }
   #doc-slot .diagram svg { max-width: 100%; height: auto; }
+  #doc-slot .diagram + .diagram { margin-top: 20px; }
   #fallback { position: absolute; inset: 0; overflow: auto; padding: 24px 28px; }
   #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: var(--ink-2); font-size: 13px; }
   #fallback .fallback-note { margin: 0 0 4px; color: var(--ink-2); font-size: 13px; }
@@ -947,6 +1158,7 @@ ${PALETTE_CSS}
   .rel-dir { font-family: var(--f-mono); color: var(--accent); }
   .rel-type { margin-left: auto; font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-3); }
   .doc-body { max-width: 68ch; color: var(--ink-2); font-size: 13.5px; }
+  .view-doc { margin: 4px 0 16px; }
   .doc-body p { margin: 0 0 12px; }
   .doc-body h2 { margin: 24px 0 8px; font-size: 15px; color: var(--ink); }
   .doc-body h3 { margin: 24px 0 8px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--ink); }
@@ -969,17 +1181,19 @@ ${PALETTE_CSS}
 <div id="shell">
   <header id="topbar">
     <span id="brand">
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.4l1.7 4.3 4.3 1.7-4.3 1.7L8 13.4 6.3 9.1 2 7.4l4.3-1.7z" fill="none" stroke="var(--accent)" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      ${brandIcon}
       SuperSkill
     </span>
     <nav id="nav" aria-label="Views">
-      <button type="button" data-qa="nav" data-view="graph">Graph</button>
+      <button type="button" data-qa="nav" data-view="graph">Retrieval</button>
       <button type="button" data-qa="nav" data-view="hla">HLA</button>
       <button type="button" data-qa="nav" data-view="lla">LLA</button>
       <button type="button" data-qa="nav" data-view="erd">ERD</button>
+      <button type="button" data-qa="nav" data-view="rules">Rules</button>
+      <button type="button" data-qa="nav" data-view="flow">Flow</button>
       <button type="button" data-qa="nav" data-view="modules">Modules</button>
     </nav>
-    <span class="kbd-hint" aria-hidden="true">g h l e m · / search · esc back</span>
+    <span class="kbd-hint" aria-hidden="true">g h l e r f m · / search · esc back</span>
   </header>
   <div id="app">
     <main id="stage">
@@ -1040,11 +1254,6 @@ type GraphDump = {
   edges: Array<{ from: string; to: string; type: string }>;
 };
 
-function mermaidFromDoc(body: string): string {
-  const m = body.match(/```mermaid\s*([\s\S]*?)```/);
-  return m ? m[1].trim() : "";
-}
-
 function meaningfulMermaid(code: string): string {
   const trimmed = code.trim();
   if (!trimmed) return "";
@@ -1052,16 +1261,56 @@ function meaningfulMermaid(code: string): string {
   return trimmed;
 }
 
+function mermaidCodes(body: string): string[] {
+  const codes: string[] = [];
+  const re = /```mermaid\s*([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const code = meaningfulMermaid(m[1]);
+    if (code) codes.push(code);
+  }
+  return codes;
+}
+
 export function renderArchitectureDiagramsHtml(model: VizModel): string {
   const rootTitle = model.graphs.root?.title ?? "SuperSkill";
-  const blocks = [
-    ["01", "High-level architecture", "Orchestrator, vault, index, router, and the specialist packs.", meaningfulMermaid(mermaidFromDoc(model.docs["diag:high"]?.body ?? ""))],
-    ["02", "Low-level architecture", "Module dependencies inside the implementation.", meaningfulMermaid(mermaidFromDoc(model.docs["diag:low"]?.body ?? mermaidFlowchart(model.graphs.impl ?? { nodes: [], edges: [], title: "", subtitle: "" })))],
-    ["03", "Data model (ERD)", "Notes, links, projects, skills, and sessions.", meaningfulMermaid(mermaidFromDoc(model.docs["diag:erd"]?.body ?? ""))],
-  ] as const;
-  const sections = blocks
+  const brandIcon = inlineIcon(30);
+  const favicon = iconFaviconHref();
+  const rows: Array<{ index: string; title: string; lede: string; codes: string[] }> = [
+    {
+      index: "01",
+      title: "High-level architecture",
+      lede: "C4-style container view of the real import graph; edges are labeled with import counts.",
+      codes: mermaidCodes(model.docs["diag:high"]?.body ?? ""),
+    },
+    {
+      index: "02",
+      title: "Low-level architecture",
+      lede: "Module dependency view; arrows point dependent → dependency, fan-in/out and cycles are flagged.",
+      codes: mermaidCodes(model.docs["diag:low"]?.body ?? ""),
+    },
+    {
+      index: "03",
+      title: "Data model (ERD)",
+      lede: "Notes, links, projects, skills, and sessions.",
+      codes: mermaidCodes(model.docs["diag:erd"]?.body ?? ""),
+    },
+    {
+      index: "04",
+      title: "Dataflow",
+      lede: "Two-level DFD: context plus decomposition, with token budgets on LLM-bound flows.",
+      codes: mermaidCodes(model.docs["diag:flow"]?.body ?? ""),
+    },
+  ];
+  if (!rows[1].codes.length) {
+    const fallback = meaningfulMermaid(
+      mermaidFlowchart(model.graphs.impl ?? { nodes: [], edges: [], title: "", subtitle: "" }),
+    );
+    if (fallback) rows[1].codes.push(fallback);
+  }
+  const sections = rows
     .map(
-      ([index, title, lede, code]) => `
+      ({ index, title, lede, codes }) => `
   <section class="diagram-section">
     <div class="section-head">
       <span class="section-index" aria-hidden="true">${index}</span>
@@ -1071,8 +1320,8 @@ export function renderArchitectureDiagramsHtml(model: VizModel): string {
       </div>
     </div>
     ${
-      code
-        ? `<div class="diagram"><pre class="mermaid">${escapeHtml(code)}</pre></div>`
+      codes.length
+        ? codes.map((code) => `<div class="diagram"><pre class="mermaid">${escapeHtml(code)}</pre></div>`).join("\n    ")
         : `<p class="empty">No diagram is stored for this view yet. Run graph viz again after the architecture notes exist.</p>`
     }
   </section>`,
@@ -1084,6 +1333,7 @@ export function renderArchitectureDiagramsHtml(model: VizModel): string {
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Architecture diagrams — ${escapeHtml(rootTitle)}</title>
+<link rel="icon" href="${favicon}"/>
 ${FONT_LINKS}
 <script src="${CDN.mermaid}"></script>
 <style>
@@ -1100,6 +1350,8 @@ ${PALETTE_CSS}
   * { scrollbar-color: var(--line-strong) var(--bg); scrollbar-width: thin; }
 
   header.page { max-width: 1180px; margin: 0 auto; padding: 48px 32px 24px; }
+  .brand { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+  .brand svg { display: block; flex: none; }
   .eyebrow { margin: 0 0 12px; font-family: var(--f-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-3); }
   h1 { margin: 0 0 12px; font-size: clamp(26px, 4vw, 38px); font-weight: 600; letter-spacing: -0.03em; }
   .lede { max-width: 68ch; margin: 0 0 16px; color: var(--ink-2); }
@@ -1112,6 +1364,7 @@ ${PALETTE_CSS}
   .section-head h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
   .section-lede { margin: 0; max-width: 68ch; color: var(--ink-2); font-size: 13px; }
   .diagram { overflow: auto; padding: 8px 0; }
+  .diagram + .diagram { margin-top: 12px; }
   .diagram svg { max-width: 100%; height: auto; }
   .empty { margin: 0; color: var(--ink-2); font-size: 13px; }
   .no-mermaid .diagram { padding: 0; }
@@ -1122,9 +1375,10 @@ ${PALETTE_CSS}
 </head>
 <body>
 <header class="page">
-  <p class="eyebrow">SuperSkill · Architecture</p>
+  <p class="brand">${brandIcon}<span>SuperSkill</span></p>
+  <p class="eyebrow">Architecture</p>
   <h1>Architecture diagrams</h1>
-  <p class="lede">High-level, low-level, and data-model views for ${escapeHtml(rootTitle)}. Rendered from the markdown stored in this vault.</p>
+  <p class="lede">High-level, low-level, data-model, and dataflow views for ${escapeHtml(rootTitle)}. Rendered from the markdown stored in this vault.</p>
   <a class="back-link" href="knowledge-graph.html">Open the interactive graph</a>
 </header>
 <main>
@@ -1212,8 +1466,9 @@ export function writeKnowledgeGraphHtml(vaultRoot: string, slug: string): string
   return writeKnowledgeGraphFiles(vaultRoot, slug).html;
 }
 
-function generatedNote(inner: string): string {
-  return `---\ntype: architecture\n---\n\n${GENERATED_MARKER}\n\n${inner}\n`;
+function generatedNote(inner: string, related: string[]): string {
+  const rel = related.length ? `related:\n${related.map((r) => `  - ${r}`).join("\n")}\n` : "";
+  return `---\ntype: architecture\n${rel}---\n\n${GENERATED_MARKER}\n\n${inner}\n`;
 }
 
 function withHeading(title: string, body: string): string {
@@ -1263,12 +1518,14 @@ export function writeKnowledgeGraphFiles(
   const highRel = `projects/${slug}/architecture/high-level-architecture.md`;
   const lowRel = `projects/${slug}/architecture/low-level-architecture.md`;
   const erdRel = `projects/${slug}/architecture/data-model-erd.md`;
+  const flowRel = `projects/${slug}/architecture/dataflow.md`;
   const notes: Array<{ rel: string; abs: string; content: string }> = [
     {
       rel: highRel,
       abs: join(archDir, "high-level-architecture.md"),
       content: generatedNote(
         withHeading(model.docs["diag:high"]?.title ?? "High-level architecture", model.docs["diag:high"]?.body ?? ""),
+        [lowRel, erdRel, flowRel],
       ),
     },
     {
@@ -1276,6 +1533,7 @@ export function writeKnowledgeGraphFiles(
       abs: join(archDir, "low-level-architecture.md"),
       content: generatedNote(
         withHeading(model.docs["diag:low"]?.title ?? "Low-level architecture", model.docs["diag:low"]?.body ?? `# Low-level architecture\n`),
+        [highRel, erdRel, flowRel],
       ),
     },
     {
@@ -1283,12 +1541,25 @@ export function writeKnowledgeGraphFiles(
       abs: join(archDir, "data-model-erd.md"),
       content: generatedNote(
         withHeading(model.docs["diag:erd"]?.title ?? "Data model (ERD)", model.docs["diag:erd"]?.body ?? ""),
+        [highRel, lowRel, flowRel],
+      ),
+    },
+    {
+      rel: flowRel,
+      abs: join(archDir, "dataflow.md"),
+      content: generatedNote(
+        withHeading(model.docs["diag:flow"]?.title ?? "Dataflow", model.docs["diag:flow"]?.body ?? ""),
+        [highRel, lowRel, erdRel],
       ),
     },
   ];
   const kept: string[] = [];
   for (const note of notes) {
     if (!writeGeneratedNote(note.abs, note.content)) kept.push(note.rel);
+  }
+  for (const note of notes) {
+    if (kept.includes(note.rel)) continue;
+    upsertVaultFile(vaultRoot, note.rel, note.content);
   }
   const diagramsRel = `projects/${slug}/architecture-diagrams.html`;
   writeFileSync(join(dir, "knowledge-graph.html"), renderKnowledgeGraphHtml(model), "utf-8");
@@ -1299,6 +1570,7 @@ export function writeKnowledgeGraphFiles(
       { file: highRel, color: "5" },
       { file: lowRel, color: "1" },
       { file: erdRel, color: "4" },
+      { file: flowRel, color: "6" },
     ]),
     "utf-8",
   );

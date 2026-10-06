@@ -17,7 +17,7 @@ import { initCommand } from "../commands/init.js";
 import { initProject } from "../commands/skill/init.js";
 import { activateSkills } from "../commands/skill/activate.js";
 import { statusCommand } from "../commands/skill/status.js";
-import { graphRelatedCommand, graphCrossProjectCommand } from "../commands/graph.js";
+import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "../commands/graph.js";
 import { knowledgeRebuildCommand, knowledgeVizCommand } from "../commands/knowledge.js";
 import { qaVizCommand } from "../commands/qa.js";
 import { linkCommand } from "../commands/link.js";
@@ -709,6 +709,34 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       path: raw.path as string,
       hops: n(raw.hops),
+    }),
+  });
+
+  r.register("graph_traverse", {
+    handler: graphTraverseCommand as CommandHandler,
+    toolDef: {
+      name: "graph_traverse",
+      description:
+        "Traverse the unified project index (vault notes, skills, rules, code) without loading content. action=node|children return metadata (path, bytes, tokens); action=resolve proposes what a task would load with a token budget; action=open returns capped content.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: { type: "string", enum: ["node", "children", "resolve", "open"], description: "Traversal action" },
+          id: { type: "string", description: "Node id (required for node/children/open), e.g. rule:rust-own-borrow-over-clone, skill:code/rust, code:src/lib/graph/traverse.ts, vault:projects/<slug>/context.md" },
+          task: { type: "string", description: "Task text (required for resolve)" },
+          limit: { type: "number", description: "Max children/resolve items (default 100/30)" },
+          full: { type: "boolean", description: "open: return the whole file instead of the 4KB cap" },
+        },
+        required: ["action"],
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      action: (typeof raw.action === "string" ? raw.action : "node") as "node" | "children" | "resolve" | "open",
+      id: s(raw.id),
+      task: s(raw.task),
+      limit: n(raw.limit),
+      full: b(raw.full),
     }),
   });
 

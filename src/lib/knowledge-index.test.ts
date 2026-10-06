@@ -6,6 +6,8 @@ import {
   KnowledgeIndex,
   extractKnowledgeLinks,
   rebuildProjectIndex,
+  ensureProjectIndex,
+  upsertVaultFile,
 } from "./knowledge-index.js";
 
 describe("extractKnowledgeLinks", () => {
@@ -107,5 +109,42 @@ describe("KnowledgeIndex", () => {
     } finally {
       idx.close();
     }
+  });
+});
+
+describe("index freshness", () => {
+  const slug = "fresh";
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = join(tmpdir(), `ki-fresh-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(join(vault, "projects", slug), { recursive: true });
+  });
+
+  afterEach(() => rm(vault, { recursive: true, force: true }));
+
+  it("rebuilds when a note appears outside the write tool", async () => {
+    await writeFile(join(vault, "projects", slug, "a.md"), "---\ntype: note\n---\n\nfirst", "utf-8");
+    const first = ensureProjectIndex(vault, slug);
+    expect(JSON.stringify(first.graphDump())).toContain("a.md");
+    first.close();
+
+    await writeFile(join(vault, "projects", slug, "b.md"), "---\ntype: note\n---\n\nsecond", "utf-8");
+    const second = ensureProjectIndex(vault, slug);
+    expect(JSON.stringify(second.graphDump())).toContain("b.md");
+    second.close();
+  });
+
+  it("keeps incremental upserts fresh without waiting for a rebuild", async () => {
+    await writeFile(join(vault, "projects", slug, "a.md"), "---\ntype: note\n---\n\nfirst", "utf-8");
+    ensureProjectIndex(vault, slug).close();
+
+    const content = "---\ntype: note\n---\n\nthird";
+    await writeFile(join(vault, "projects", slug, "c.md"), content, "utf-8");
+    upsertVaultFile(vault, `projects/${slug}/c.md`, content);
+
+    const idx = ensureProjectIndex(vault, slug);
+    expect(JSON.stringify(idx.graphDump())).toContain("c.md");
+    idx.close();
   });
 });

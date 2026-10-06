@@ -14,7 +14,15 @@ import { decideCommand } from "./commands/decide.js";
 import { todoCommand } from "./commands/todo.js";
 import { brainstormCommand } from "./commands/brainstorm.js";
 import { sessionCommand } from "./commands/session.js";
-import { graphRelatedCommand, graphCrossProjectCommand } from "./commands/graph.js";
+import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "./commands/graph.js";
+import { DEFAULT_CHILDREN_LIMIT, DEFAULT_RESOLVE_LIMIT } from "./lib/graph/traverse.js";
+import type {
+  TraverseChildrenResult,
+  TraverseContent,
+  TraverseNodeInfo,
+  TraverseNodeView,
+  TraverseResolveResult,
+} from "./lib/graph/traverse.js";
 import { initCommand } from "./commands/init.js";
 import { onboard } from "./commands/onboard.js";
 import { taskCommand, type TaskStatus, type TaskPriority } from "./commands/task.js";
@@ -807,6 +815,122 @@ export function createProgram(): Command {
           for (const r of results) {
             console.log(`  ${r.path}: ${r.snippet.slice(0, 100)}`);
           }
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  function printTraverseNodeLine(node: TraverseNodeView): string {
+    const size = `${node.bytes} B (~${node.tokens} tok)`;
+    const count = node.kind === "container" ? ` (${node.childrenCount ?? 0} children)` : "";
+    const path = node.path ? `  ${node.path}` : "";
+    return `${node.id}${count}  ${size}${path}`;
+  }
+
+  function printTraverseNode(node: TraverseNodeInfo): void {
+    console.log(printTraverseNodeLine(node));
+    console.log(`  edges: ${node.edge_counts.out} out / ${node.edge_counts.in} in`);
+  }
+
+  function printTraverseChildren(result: TraverseChildrenResult): void {
+    console.log(`${result.id} — ${result.total} children`);
+    for (const child of result.children) {
+      console.log(`  [${child.kind}] ${printTraverseNodeLine(child)}`);
+    }
+    if (result.children.length < result.total) {
+      console.log(`  … ${result.total - result.children.length} more (raise --limit)`);
+    }
+  }
+
+  function printTraverseResolve(result: TraverseResolveResult): void {
+    console.log(`task: ${result.task}`);
+    console.log(`phase: ${result.phase}  packs: ${result.packs.join(", ") || "none"}`);
+    for (const item of result.items) {
+      const path = item.path ? `  (${item.path})` : "";
+      console.log(`  [${item.kind}] ${item.id}  ${item.bytes} B (~${item.tokens} tok)  ${item.reason}${path}`);
+    }
+    const truncated = result.truncated ? `  [${result.items.length} of ${result.available}]` : "";
+    console.log(`totals: ${result.totals.items} items, ${result.totals.bytes} B (~${result.totals.tokens} tok)${truncated}`);
+  }
+
+  graphCmd
+    .command("node <id>")
+    .description("Show a traversal node: kind, path, bytes, tokens — never content")
+    .option("--json", "Print raw JSON")
+    .action(async (id: string, opts: { json?: boolean }) => {
+      try {
+        const result = await graphTraverseCommand({ action: "node", id }, await createScopedCtx());
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else printTraverseNode(result as TraverseNodeInfo);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  graphCmd
+    .command("children <id>")
+    .description("List a container's children (lazy descent; ids + sizes, no content)")
+    .option("-l, --limit <number>", "Max children", String(DEFAULT_CHILDREN_LIMIT))
+    .option("--json", "Print raw JSON")
+    .action(async (id: string, opts: { limit: string; json?: boolean }) => {
+      try {
+        const limit = parseInt(opts.limit, 10);
+        if (Number.isNaN(limit) || limit < 1) {
+          throw new Error("--limit must be a positive integer");
+        }
+        const result = await graphTraverseCommand({ action: "children", id, limit }, await createScopedCtx());
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else printTraverseChildren(result as TraverseChildrenResult);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  graphCmd
+    .command("resolve <task>")
+    .description("Propose what a task would load (packs/skills/rules) with byte + token totals — no content")
+    .option("-l, --limit <number>", "Max items", String(DEFAULT_RESOLVE_LIMIT))
+    .option("--json", "Print raw JSON")
+    .action(async (task: string, opts: { limit: string; json?: boolean }) => {
+      try {
+        const limit = parseInt(opts.limit, 10);
+        if (Number.isNaN(limit) || limit < 1) {
+          throw new Error("--limit must be a positive integer");
+        }
+        const result = await graphTraverseCommand({ action: "resolve", task, limit }, await createScopedCtx());
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else printTraverseResolve(result as TraverseResolveResult);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  graphCmd
+    .command("open <id>")
+    .description("Open a node's content (capped at 4KB unless --full)")
+    .option("--full", "Return the whole file")
+    .option("--json", "Print raw JSON")
+    .action(async (id: string, opts: { full?: boolean; json?: boolean }) => {
+      try {
+        const result = await graphTraverseCommand({ action: "open", id, full: opts.full }, await createScopedCtx());
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        const content = result as TraverseContent;
+        process.stdout.write(content.content);
+        if (!content.content.endsWith("\n")) process.stdout.write("\n");
+        if (content.truncated) {
+          console.error(`[truncated at ${content.content.length} of ${content.bytes} bytes — use --full]`);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

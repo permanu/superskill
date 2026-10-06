@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="SuperSkill emblem">
+  <title>SuperSkill</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1c2745"/>
+      <stop offset="1" stop-color="#0d1019"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6e8fe0"/>
+      <stop offset="1" stop-color="#8fb3ff"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f3c67a"/>
+      <stop offset="1" stop-color="#e0af68"/>
+    </radialGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/>
+    </filter>
+  </defs>
+
+  <path d="M256 30 L419 124 V388 L256 482 L93 388 V124 Z"
+        fill="url(#bg)" stroke="#31406b" stroke-width="6" stroke-linejoin="round"/>
+
+  <g stroke="url(#edge)" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.92">
+    <path d="M340 150 L220 150"/>
+    <path d="M220 150 L165 205"/>
+    <path d="M165 205 L250 255"/>
+    <path d="M250 255 L345 305"/>
+    <path d="M345 305 L290 360"/>
+    <path d="M290 360 L170 360"/>
+  </g>
+  <g stroke-width="9" stroke-linecap="round" fill="none" opacity="0.7">
+    <path d="M250 255 L378 232" stroke="#bb9af7"/>
+    <path d="M250 255 L150 300" stroke="#9ece6a"/>
+  </g>
+
+  <g fill="#16203a" stroke="#8fb3ff" stroke-width="6">
+    <circle cx="340" cy="150" r="20"/>
+    <circle cx="220" cy="150" r="17"/>
+    <circle cx="165" cy="205" r="19"/>
+    <circle cx="345" cy="305" r="19"/>
+    <circle cx="290" cy="360" r="17"/>
+    <circle cx="170" cy="360" r="20"/>
+  </g>
+  <g stroke-width="5">
+    <circle cx="378" cy="232" r="11" fill="#131a2b" stroke="#bb9af7"/>
+    <circle cx="150" cy="300" r="11" fill="#131a2b" stroke="#9ece6a"/>
+  </g>
+
+  <circle cx="250" cy="255" r="30" fill="url(#core)" opacity="0.45" filter="url(#soft)"/>
+  <circle cx="250" cy="255" r="28" fill="url(#core)" stroke="#f6d9a0" stroke-width="5"/>
+</svg>

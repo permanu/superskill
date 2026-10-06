@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "fs/promises";
-import { homedir } from "os";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
-import { graphRelatedCommand, graphCrossProjectCommand } from "./graph.js";
+import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "./graph.js";
 import { VaultFS } from "../lib/vault-fs.js";
 import type { CommandContext } from "../core/types.js";
 
@@ -308,6 +309,100 @@ Test content ${i}
       await expect(
         graphRelatedCommand({ path: "nonexistent.md" }, ctx)
       ).rejects.toThrow();
+    });
+  });
+});
+
+describe("graphTraverseCommand", () => {
+  let repoRoot: string;
+  let vaultRoot: string;
+  let ctx: CommandContext;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeAll(async () => {
+    repoRoot = mkdtempSync(join(tmpdir(), "graph-traverse-repo-"));
+    mkdirSync(join(repoRoot, ".superskill"), { recursive: true });
+    mkdirSync(join(repoRoot, "src"), { recursive: true });
+    writeFileSync(join(repoRoot, "src", "index.ts"), "export const index = 1;\n");
+    writeFileSync(
+      join(repoRoot, ".superskill", "graph.json"),
+      JSON.stringify({
+        version: 3,
+        nodes: [{ type: "project", id: "project", stack: ["typescript"], tools: [], phase: "explore", ts: 1 }],
+        edges: [],
+      }),
+    );
+
+    vaultRoot = join(homedir(), `.vault-traverse-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(vaultRoot, { recursive: true });
+    const vaultFs = new VaultFS(vaultRoot, { projectSlug: "testproj" });
+    await vaultFs.write("notes/alpha.md", "---\ntype: note\n---\n# Alpha\n\nVAULT SENTINEL.\n");
+    ctx = createCommandContext(vaultFs, { projectSlug: "testproj" });
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(repoRoot);
+  });
+
+  afterAll(async () => {
+    cwdSpy.mockRestore();
+    await rm(vaultRoot, { recursive: true, force: true });
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+
+  it("returns node metadata without content", async () => {
+    const root = (await graphTraverseCommand({ action: "node", id: "graph" }, ctx)) as any;
+    expect(root.kind).toBe("container");
+    expect(root.childrenCount).toBeGreaterThanOrEqual(4);
+
+    const code = (await graphTraverseCommand({ action: "node", id: "code:src/index.ts" }, ctx)) as any;
+    expect(code.bytes).toBeGreaterThan(0);
+    expect(code.tokens).toBe(Math.ceil(code.bytes / 4));
+    expect(JSON.stringify(code)).not.toContain("export const index");
+  });
+
+  it("lists children lazily", async () => {
+    const result = (await graphTraverseCommand({ action: "children", id: "code", limit: 5 }, ctx)) as any;
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.children.some((child: any) => child.id === "code:src/")).toBe(true);
+
+    const unknown = (await graphTraverseCommand({ action: "children", id: "does-not-exist" }, ctx)) as any;
+    expect(unknown.total).toBe(0);
+  });
+
+  it("resolves a task to rules with token estimates and no content", async () => {
+    const result = (await graphTraverseCommand(
+      { action: "resolve", task: "fix a rust ownership bug", limit: 50 },
+      ctx,
+    )) as any;
+    expect(result.items.length).toBeGreaterThan(0);
+    expect(result.items.some((item: any) => item.kind === "rule" && item.reason.includes("ownership"))).toBe(true);
+    for (const item of result.items) {
+      expect(item.tokens).toBe(Math.ceil(item.bytes / 4));
+    }
+    expect(JSON.stringify(result)).not.toContain("VAULT SENTINEL");
+    expect(result.totals.items).toBe(result.items.length);
+  });
+
+  it("opens content and rejects containers/unknown ids", async () => {
+    const content = (await graphTraverseCommand(
+      { action: "open", id: "vault:projects/testproj/notes/alpha.md" },
+      ctx,
+    )) as any;
+    expect(content.content).toContain("VAULT SENTINEL");
+    expect(content.truncated).toBe(false);
+
+    await expect(graphTraverseCommand({ action: "open", id: "rules" }, ctx)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(graphTraverseCommand({ action: "node", id: "nope" }, ctx)).rejects.toMatchObject({
+      code: "FILE_NOT_FOUND",
+    });
+  });
+
+  it("validates action arguments", async () => {
+    await expect(graphTraverseCommand({ action: "resolve" }, ctx)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+    await expect(graphTraverseCommand({ action: "node" }, ctx)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
     });
   });
 });

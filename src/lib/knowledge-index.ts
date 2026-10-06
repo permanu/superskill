@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseFrontmatter, type Frontmatter } from "./frontmatter.js";
 import { validateProjectSlug } from "../config.js";
@@ -44,6 +44,43 @@ export function extractKnowledgeLinks(data: Frontmatter, body: string): string[]
 
 export function indexPathFor(vaultRoot: string, slug: string): string {
   return join(vaultRoot, "projects", validateProjectSlug(slug), INDEX_FILENAME);
+}
+
+function indexStampFor(vaultRoot: string, slug: string): string {
+  return `${indexPathFor(vaultRoot, slug)}.stamp`;
+}
+
+function writeIndexStamp(vaultRoot: string, slug: string, newestMtimeMs: number): void {
+  try {
+    writeFileSync(indexStampFor(vaultRoot, slug), String(newestMtimeMs), "utf-8");
+  } catch (err) {
+    console.error(`[knowledge-index] cannot write index stamp for ${slug}: ${String(err)}`);
+  }
+}
+
+function readIndexStampMtime(vaultRoot: string, slug: string): number | null {
+  try {
+    const value = Number(readFileSync(indexStampFor(vaultRoot, slug), "utf-8"));
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function newestMarkdownMtime(projectDir: string): number {
+  const files: string[] = [];
+  if (existsSync(projectDir) && statSync(projectDir).isDirectory()) {
+    walkMarkdown(projectDir, files);
+  }
+  let newest = 0;
+  for (const abs of files) {
+    try {
+      newest = Math.max(newest, statSync(abs).mtimeMs);
+    } catch {
+      continue;
+    }
+  }
+  return newest;
 }
 
 function toMatchQuery(q: string): string {
@@ -273,11 +310,13 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
 
   const parsed: IndexedNote[] = [];
   const pathSet = new Set<string>();
+  let newest = 0;
   for (const abs of files) {
     const rel = abs.slice(vaultRoot.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
     let raw: string;
     try {
       raw = readFileSync(abs, "utf-8");
+      newest = Math.max(newest, statSync(abs).mtimeMs);
     } catch {
       continue;
     }
@@ -301,15 +340,22 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
   idx.clear();
   for (const n of parsed) idx.upsert(n);
   const dump = idx.graphDump();
+  writeIndexStamp(vaultRoot, safe, newest);
   return { notes: dump.nodes.length, edges: dump.edges.length };
 }
 
 export function ensureProjectIndex(vaultRoot: string, slug: string): KnowledgeIndex {
-  const path = indexPathFor(vaultRoot, slug);
-  if (!existsSync(path)) {
-    rebuildProjectIndex(vaultRoot, slug);
+  const safe = validateProjectSlug(slug);
+  const stampMtime = existsSync(indexPathFor(vaultRoot, safe)) ? readIndexStampMtime(vaultRoot, safe) : null;
+  if (stampMtime === null) {
+    rebuildProjectIndex(vaultRoot, safe);
+  } else {
+    const projectDir = join(vaultRoot, "projects", safe);
+    if (newestMarkdownMtime(projectDir) > stampMtime) {
+      rebuildProjectIndex(vaultRoot, safe);
+    }
   }
-  return KnowledgeIndex.openForProject(vaultRoot, slug);
+  return KnowledgeIndex.openForProject(vaultRoot, safe);
 }
 
 export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content: string): void {
@@ -330,4 +376,13 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
     body,
     related,
   });
+  try {
+    const current = readIndexStampMtime(vaultRoot, slug);
+    const fileMtime = statSync(join(vaultRoot, vaultRelPath)).mtimeMs;
+    if (current !== null && fileMtime > current) {
+      writeIndexStamp(vaultRoot, slug, fileMtime);
+    }
+  } catch {
+    // stamp refresh is best-effort; ensureProjectIndex rebuilds when in doubt
+  }
 }

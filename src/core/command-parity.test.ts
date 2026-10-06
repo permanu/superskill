@@ -35,6 +35,11 @@ const CLI_TO_MCP_OVERRIDES: Record<string, string> = {
   viz: "knowledge_viz",
   "graph rebuild": "knowledge_rebuild",
   "graph viz": "knowledge_viz",
+  // The four traversal verbs share one MCP tool (action=node|children|resolve|open).
+  "graph node": "graph_traverse",
+  "graph children": "graph_traverse",
+  "graph resolve": "graph_traverse",
+  "graph open": "graph_traverse",
   hygiene: "hygiene_report",
   "skill init": "init",
   "skill status": "status",
