@@ -115,8 +115,8 @@ describe("formatHygieneReport", () => {
     expect(output).toContain("Skipped:");
     expect(output).toContain("  xcode: xcode-select not found");
     expect(output).toContain("Nothing was deleted. Everything above is a recommendation.");
-    expect(output).toContain("superskill-cli hygiene --due");
-    expect(output).toContain("superskill-cli worktree gc --all");
+    expect(output).toContain("superskill hygiene --due");
+    expect(output).toContain("superskill worktree gc --all");
   });
 
   it("filters to due items when requested", () => {

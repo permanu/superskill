@@ -61,6 +61,11 @@ export function createProgram(): Command {
     .description("Universal agentic knowledge base + context optimizer + skill marketplace for AI tools")
     .version(version);
 
+  program.addHelpText(
+    "after",
+    "\nAI clients launch `superskill` with no arguments as the MCP server; run `superskill <command>` for the CLI.\n`superskill-cli` remains a permanent alias."
+  );
+
   // ── read ──────────────────────────────────────────────
   program
     .command("read <path>")
@@ -1576,7 +1581,7 @@ export function createProgram(): Command {
     )
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree status\n  $ superskill-cli worktree gc --all --older-than 30d\n  $ superskill-cli worktree audit --sizes --json"
+      "\nExamples:\n  $ superskill worktree status\n  $ superskill worktree gc --all --older-than 30d\n  $ superskill worktree audit --sizes --json"
     );
 
   worktreeCmd
@@ -1588,7 +1593,7 @@ export function createProgram(): Command {
     .option("--eval", "Print export statements (default; explicit for shell integration)")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree env\n  $ eval \"$(superskill-cli worktree env --eval)\"\n  $ superskill-cli worktree env --shell fish --providers rust,node"
+      "\nExamples:\n  $ superskill worktree env\n  $ eval \"$(superskill worktree env --eval)\"\n  $ superskill worktree env --shell fish --providers rust,node"
     )
     .action(async (opts: { json?: boolean; shell?: string; providers?: string[]; eval?: boolean }) => {
       try {
@@ -1625,7 +1630,7 @@ export function createProgram(): Command {
     .option("--worktree <name>", "Audit only this worktree path or name")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree audit\n  $ superskill-cli worktree audit --sizes\n  $ superskill-cli worktree audit --json --worktree feat-login"
+      "\nExamples:\n  $ superskill worktree audit\n  $ superskill worktree audit --sizes\n  $ superskill worktree audit --json --worktree feat-login"
     )
     .action(async (opts: { json?: boolean; sizes?: boolean; worktree?: string }) => {
       try {
@@ -1653,7 +1658,7 @@ export function createProgram(): Command {
     .option("--budget <size>", "Compare cache usage against a size budget, e.g. 2G or 500M")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree status\n  $ superskill-cli worktree status --budget 2G\n  $ superskill-cli worktree status --json"
+      "\nExamples:\n  $ superskill worktree status\n  $ superskill worktree status --budget 2G\n  $ superskill worktree status --json"
     )
     .action(async (opts: { json?: boolean; budget?: string }) => {
       try {
@@ -1699,7 +1704,7 @@ export function createProgram(): Command {
     .option("--verbose", "Show per-path skip reasons instead of summaries")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree gc --tool rust --older-than 30d --apply\n  $ superskill-cli worktree gc --all --min-size 500M --json\n  $ superskill-cli worktree gc --undo 2026-10-05T14-22-01.000Z-a1b2c3d4"
+      "\nExamples:\n  $ superskill worktree gc --tool rust --older-than 30d --apply\n  $ superskill worktree gc --all --min-size 500M --json\n  $ superskill worktree gc --undo 2026-10-05T14-22-01.000Z-a1b2c3d4"
     )
     .action(async (opts: {
       all?: boolean;
@@ -1782,7 +1787,7 @@ export function createProgram(): Command {
     .option("--json", "Print the activation result as JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree activate --yes\n  $ superskill-cli worktree activate --dry-run\n  $ superskill-cli worktree activate --yes --hosts claude-code,opencode --no-seed"
+      "\nExamples:\n  $ superskill worktree activate --yes\n  $ superskill worktree activate --dry-run\n  $ superskill worktree activate --yes --hosts claude-code,opencode --no-seed"
     )
     .action(async (opts: {
       yes?: boolean;
@@ -1828,7 +1833,7 @@ export function createProgram(): Command {
     .option("--json", "Print the plan/result as JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree apply --all-safe\n  $ superskill-cli worktree apply --item seed --yes\n  $ superskill-cli worktree apply --all-safe --yes --json"
+      "\nExamples:\n  $ superskill worktree apply --all-safe\n  $ superskill worktree apply --item seed --yes\n  $ superskill worktree apply --all-safe --yes --json"
     )
     .action(async (opts: { item?: string[]; allSafe?: boolean; yes?: boolean; json?: boolean }) => {
       try {
@@ -1862,7 +1867,7 @@ export function createProgram(): Command {
     .option("--json", "Print the uninstall result as JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree uninstall\n  $ superskill-cli worktree uninstall --purge-local --yes\n  $ superskill-cli worktree uninstall --json"
+      "\nExamples:\n  $ superskill worktree uninstall\n  $ superskill worktree uninstall --purge-local --yes\n  $ superskill worktree uninstall --json"
     )
     .action(async (opts: { purgeLocal?: boolean; yes?: boolean; json?: boolean }) => {
       try {
@@ -1891,7 +1896,7 @@ export function createProgram(): Command {
     .option("--json", "Print the bootstrap result as JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli worktree bootstrap --source worktree-create\n  $ superskill-cli worktree bootstrap --source session --claude-env\n  $ superskill-cli worktree bootstrap --json"
+      "\nExamples:\n  $ superskill worktree bootstrap --source worktree-create\n  $ superskill worktree bootstrap --source session --claude-env\n  $ superskill worktree bootstrap --json"
     )
     .action(async (opts: { source: string; claudeEnv?: boolean; json?: boolean }) => {
       try {
@@ -1927,7 +1932,7 @@ export function createProgram(): Command {
     .option("--category <names...>", "Limit to categories: caches worktrees docker xcode scratch")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli hygiene\n  $ superskill-cli hygiene --due --sizes\n  $ superskill-cli hygiene --category docker xcode --json"
+      "\nExamples:\n  $ superskill hygiene\n  $ superskill hygiene --due --sizes\n  $ superskill hygiene --category docker xcode --json"
     )
     .action(async (opts: { json?: boolean; due?: boolean; sizes?: boolean; category?: string[] }) => {
       try {
@@ -1974,7 +1979,7 @@ export function createProgram(): Command {
     .option("--json", "Print raw JSON instead of the rendered report")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli watchdog dig\n  $ superskill-cli watchdog dig --scope window --since 7d\n  $ superskill-cli watchdog dig --scope env\n  $ superskill-cli watchdog dig --session opencode:ses_abc123",
+      "\nExamples:\n  $ superskill watchdog dig\n  $ superskill watchdog dig --scope window --since 7d\n  $ superskill watchdog dig --scope env\n  $ superskill watchdog dig --session opencode:ses_abc123",
     )
     .action(async (opts: { session?: string; scope?: string; since?: string; count?: string; allProjects?: boolean; project?: string; tool?: string; persist?: boolean; json?: boolean }) => {
       try {
@@ -2017,7 +2022,7 @@ export function createProgram(): Command {
     .option("--json", "Print raw JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill-cli watchdog fix --category leaked-tmp\n  $ superskill-cli watchdog fix --category leaked-tmp --apply\n  $ superskill-cli watchdog fix --finding f_ab12cd34ef --apply",
+      "\nExamples:\n  $ superskill watchdog fix --category leaked-tmp\n  $ superskill watchdog fix --category leaked-tmp --apply\n  $ superskill watchdog fix --finding f_ab12cd34ef --apply",
     )
     .action(async (opts: { finding?: string[]; category?: string[]; dismiss?: boolean; apply?: boolean; project?: string; json?: boolean }) => {
       try {

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/mcp-server.js",
   "bin": {
-    "superskill": "dist/mcp-server.js",
+    "superskill": "dist/main.js",
     "superskill-cli": "dist/cli.js"
   },
   "exports": {

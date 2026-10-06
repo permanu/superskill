@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Standard CLI staples for the `superskill` binary (the stdio MCP server).
- * MCP clients launch it with no arguments; humans get --version/--help.
+ * Standard CLI staples for the `superskill` binary. AI clients launch it with
+ * no arguments over pipes (the stdio MCP server); a command or an interactive
+ * terminal routes to the full CLI.
  */
 
 export function cliHelpText(version: string): string {
-  return `superskill ${version} — MCP server (stdio)
+  return `superskill ${version}
 
 Usage:
-  superskill              Start the MCP server (configure your AI client to run this)
-  superskill --version    Print the installed version
-  superskill --help       Show this help
+  superskill               No arguments over piped stdio: start the MCP server (AI clients)
+  superskill <command>     Full CLI — read, write, search, skill, graph, setup, worktree, …
+  superskill --version     Print the installed version
+  superskill --help        Show the CLI help
 
-This binary is the MCP server. The full command-line interface is the
-superskill-cli binary:
-
-  superskill-cli --help   read, write, search, context, skill, spec, tickets,
-                          evidence, gate, impact, claims, telemetry, setup, ...
+\`superskill-cli\` remains a permanent alias for the CLI.
+Set SUPERSKILL_FORCE_MCP=1 to force MCP server mode.
 
 Docs: https://github.com/permanu/superskill`;
 }

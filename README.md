@@ -27,26 +27,26 @@ SuperSkill injects a system brief from the project graph, jails vault IO to `pro
 npm install -g superskill          # Node 22.13+
 
 # in your repo
-superskill-cli skill init          # detect stack, index the in-repo catalog, build .superskill/graph.json
-superskill-cli setup               # register MCP + instructions in every detected AI client
+superskill skill init          # detect stack, index the in-repo catalog, build .superskill/graph.json
+superskill setup               # register MCP + instructions in every detected AI client
 ```
 
-Two commands ship: **`superskill-cli`** for everything you run yourself (`setup`, `doctor`, `skill`, …), and **`superskill`** — the MCP server your AI client launches; you rarely call it directly (its `--version`/`--help` work if you do).
+One binary, two faces: **`superskill <command>`** runs everything you run yourself (`setup`, `doctor`, `skill`, `graph`, `worktree`, …), and bare `superskill` in a terminal shows the help. With no arguments over piped stdio — how AI clients launch it — the same binary starts the **MCP server**. `superskill-cli` remains a permanent alias, and `SUPERSKILL_FORCE_MCP=1` forces server mode.
 
 1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
 2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) for each host that supports them — plus the harness-agnostic `superskill` skill at `~/.agents/skills/superskill/SKILL.md` so hosts with skill discovery list it. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
 3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/watchdog [dig|fix]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
 4. Activations write `.superskill/graph.json` (local only).
 
-Want a vault context document too? `superskill-cli init .` prints a draft `context.md`; review it, then save it with `superskill-cli write`.
+Want a vault context document too? `superskill init .` prints a draft `context.md`; review it, then save it with `superskill write`.
 
-Verify any time with `superskill-cli doctor`: install vs running MCP servers, vault + project mapping, project graph isolation (fails if `.superskill/` is tracked), catalog validation, compile toolchains, telemetry, and MCP clients.
+Verify any time with `superskill doctor`: install vs running MCP servers, vault + project mapping, project graph isolation (fails if `.superskill/` is tracked), catalog validation, compile toolchains, telemetry, and MCP clients.
 
 ### Upgrade
 
 ```bash
 npm install -g superskill@latest
-superskill-cli setup        # refresh slash commands + the shared skill (idempotent)
+superskill setup        # refresh slash commands + the shared skill (idempotent)
 ```
 
 `setup --force` also rewrites the MCP entry and instruction file. MCP servers pick up the new version on their next restart.
@@ -54,7 +54,7 @@ superskill-cli setup        # refresh slash commands + the shared skill (idempot
 ### Uninstall
 
 ```bash
-superskill-cli teardown     # MCP entries, instructions, slash commands, shared skill
+superskill teardown     # MCP entries, instructions, slash commands, shared skill
 npm uninstall -g superskill
 ```
 
@@ -115,7 +115,7 @@ args = ["-y", "superskill"]
 VAULT_PATH = "~/Vaults/ai"
 ```
 
-**Claude Code plugin** — `/plugin marketplace add permanu/superskill`, then `/plugin install superskill@superskill`. The plugin ships the `superskill` skill; run `superskill-cli setup` once to register the MCP server.
+**Claude Code plugin** — `/plugin marketplace add permanu/superskill`, then `/plugin install superskill@superskill`. The plugin ships the `superskill` skill; run `superskill setup` once to register the MCP server.
 
 Then prompt normally and call the `superskill` tool with the task.
 
@@ -210,12 +210,12 @@ MCP tools: `worktree_status`, `worktree_audit`, `worktree_env`, `worktree_activa
 
 - **Policy** — `.git/superskill/policy.json` (the repo's common git dir, so all worktrees share it). Records repo id, stacks, toolchain env flags, host list, and activation flags (`hooks`, `seed`, `install`). `hook.state`, `journal.jsonl`, and per-worktree manifests live beside it.
 - **Cache payload** — `~/Library/Caches/superskill/<repoHash>` on macOS, `~/.cache/superskill/<repoHash>` (or `$XDG_CACHE_HOME`) on Linux, `%LOCALAPPDATA%\superskill\<repoHash>` on Windows; override the root with `SUPERSKILL_CACHE_ROOT`. Only shared caches live here — per-worktree build state stays in the worktree.
-- **post-checkout flow** — `worktree activate` installs a guarded block into `.git/hooks/post-checkout` (or the configured `core.hooksPath`, husky, or `.lefthook-local.yml`). On a worktree-creating checkout it runs `superskill-cli worktree bootstrap --source worktree-create` in the background: seed cheap caches from the main worktree via reflink and record a manifest. The block always exits 0 and never changes the hook's exit status.
+- **post-checkout flow** — `worktree activate` installs a guarded block into `.git/hooks/post-checkout` (or the configured `core.hooksPath`, husky, or `.lefthook-local.yml`). On a worktree-creating checkout it runs `superskill worktree bootstrap --source worktree-create` in the background: seed cheap caches from the main worktree via reflink and record a manifest. The block always exits 0 and never changes the hook's exit status.
 - **env injection flow** — host session hooks run `worktree bootstrap --source session`; the OpenCode plugin runs `worktree env --json` and merges the result into every shell. The resolved values are read-only cache locations plus per-worktree build-dir overrides; injection never edits the repo's own files.
 
 ### CLI reference
 
-Every subcommand supports `--help`, e.g. `superskill-cli worktree gc --help`.
+Every subcommand supports `--help`, e.g. `superskill worktree gc --help`.
 
 | Command | Purpose |
 |---|---|
@@ -235,8 +235,8 @@ Every subcommand supports `--help`, e.g. `superskill-cli worktree gc --help`.
 Read-only. Options: `--json`; `--budget <size>` (e.g. `2G`, `500M`; notes when cache bytes exceed it).
 
 ```bash
-superskill-cli worktree status
-superskill-cli worktree status --budget 5G --json
+superskill worktree status
+superskill worktree status --budget 5G --json
 ```
 
 #### `worktree audit`
@@ -244,8 +244,8 @@ superskill-cli worktree status --budget 5G --json
 Read-only. Options: `--json`; `--sizes` (du every cache dir); `--worktree <name>` (audit one worktree by path or name).
 
 ```bash
-superskill-cli worktree audit --sizes
-superskill-cli worktree audit --worktree feat-login --json
+superskill worktree audit --sizes
+superskill worktree audit --worktree feat-login --json
 ```
 
 #### `worktree env`
@@ -253,9 +253,9 @@ superskill-cli worktree audit --worktree feat-login --json
 Read-only. Options: `--json`; `--eval` (shell `export` lines, the form hooks use); `--shell <sh|fish|powershell>`; `--providers <ids...>` (restrict to detected toolchains such as `rust`, `go`, `node`, `python`, `swift`).
 
 ```bash
-eval "$(superskill-cli worktree env --eval)"
-superskill-cli worktree env --json
-superskill-cli worktree env --providers rust node
+eval "$(superskill worktree env --eval)"
+superskill worktree env --json
+superskill worktree env --providers rust node
 ```
 
 #### `worktree activate`
@@ -263,8 +263,8 @@ superskill-cli worktree env --providers rust node
 Options: `--yes` (non-interactive consent); `--dry-run`; `--no-hooks`; `--no-seed`; `--hosts <ids...>` (`claude-code`, `opencode`, `codex`, `cursor`, `gemini`, `grokbuild`, `generic`); `--install`; `--json`. Detected hosts are used when `--hosts` is omitted.
 
 ```bash
-superskill-cli worktree activate --dry-run
-superskill-cli worktree activate --hosts claude-code,opencode
+superskill worktree activate --dry-run
+superskill worktree activate --hosts claude-code,opencode
 ```
 
 #### `worktree gc`
@@ -291,11 +291,11 @@ Options:
 Tiering: `auto` (compiler/build caches such as `go-build`, `sccache`, `pnpm-store`, `uv`) is selected only when at least 30 days old unless you pass an explicit age or tier; `consent` (e.g. `cargo-build`, `node-modules`) requires `--tier consent` or an explicit age filter. Tool-native prunes (`go clean -cache`, `pnpm store prune`, `uv cache prune --ci`, …) are printed as informational commands — run them through the tool when you want them.
 
 ```bash
-superskill-cli worktree gc                           # report for this repo (dry run)
-superskill-cli worktree gc --older-than 30d --apply  # quarantine (reversible)
-superskill-cli worktree gc --all --tool node,rust --min-size 1G --json
-superskill-cli worktree gc --purge --yes             # delete quarantined dirs >= 14d old
-superskill-cli worktree gc --undo 2026-10-05T12-00-00.000Z
+superskill worktree gc                           # report for this repo (dry run)
+superskill worktree gc --older-than 30d --apply  # quarantine (reversible)
+superskill worktree gc --all --tool node,rust --min-size 1G --json
+superskill worktree gc --purge --yes             # delete quarantined dirs >= 14d old
+superskill worktree gc --undo 2026-10-05T12-00-00.000Z
 ```
 
 Default is a dry-run report; nothing is deleted. `--apply` moves candidates into `_quarantine/` (reversible with `--undo`); only `--purge --yes` deletes, and only inside `_quarantine/`.
@@ -305,9 +305,9 @@ Default is a dry-run report; nothing is deleted. `--apply` moves candidates into
 Options: `--item <ids...>` (audit ids such as `policy`, `hook`, `env`, `seed:<provider>:<relative>`, `prune:<tool>`, `reclaim:<provider>:<dir-id>`); `--all-safe`; `--yes`; `--undo <journalId>`; `--json`.
 
 ```bash
-superskill-cli worktree apply --all-safe
-superskill-cli worktree apply --item seed --yes
-superskill-cli worktree apply --undo 2026-10-05T14-22-01.000Z-a1b2c3d4 --yes
+superskill worktree apply --all-safe
+superskill worktree apply --item seed --yes
+superskill worktree apply --undo 2026-10-05T14-22-01.000Z-a1b2c3d4 --yes
 ```
 
 Default is a dry-run report; nothing is deleted. `reclaim:<provider>:<dir-id>` items rename a worktree-local cache directory (`node_modules/`, `target/`, `DerivedData/`, …) into `.git/superskill/quarantine/<id>` (never a copy+delete); restore it with `worktree apply --undo <id>`. `--all-safe` skips consent items; name a consent item explicitly with `--item <id> --yes` to apply it. Reclaims and other mutations require `--yes` on the CLI or `confirm: true` on the MCP `worktree_apply` tool.
@@ -317,7 +317,7 @@ Default is a dry-run report; nothing is deleted. `reclaim:<provider>:<dir-id>` i
 Options: `--source <worktree-create|session>`; `--claude-env` (append exports to `$CLAUDE_ENV_FILE`); `--json`. Normally invoked by hooks and adapters; safe to run by hand to re-seed. Skips the main worktree, honors `SUPERSKILL_WORKTREE_BOOTSTRAP=0`, and requires an activated repo.
 
 ```bash
-superskill-cli worktree bootstrap --source worktree-create
+superskill worktree bootstrap --source worktree-create
 ```
 
 #### `worktree uninstall`
@@ -325,8 +325,8 @@ superskill-cli worktree bootstrap --source worktree-create
 Options: `--purge-local` (quarantine this repo's cache namespace; needs `--yes`); `--yes`; `--json`.
 
 ```bash
-superskill-cli worktree uninstall
-superskill-cli worktree uninstall --purge-local --yes
+superskill worktree uninstall
+superskill worktree uninstall --purge-local --yes
 ```
 
 Plain uninstall removes the post-checkout hook and host adapters and stops future seeding/env injection; it keeps the policy and touches no cache data. `--purge-local --yes` only moves this repo's cache namespace into quarantine (reversible with `worktree gc --undo <journalId>`); without `--yes` it is skipped.
@@ -335,32 +335,32 @@ Plain uninstall removes the post-checkout hook and host adapters and stops futur
 
 ```bash
 # This repo only (the default)
-superskill-cli worktree gc
+superskill worktree gc
 
 # A vault-mapped project by slug
-superskill-cli worktree gc --project my-app
+superskill worktree gc --project my-app
 
 # Every repo in the cache root, keeping the newest dir per tool
-superskill-cli worktree gc --all --keep-latest 1
+superskill worktree gc --all --keep-latest 1
 
 # One tool, old entries only
-superskill-cli worktree gc --tool rust --older-than 60d
+superskill worktree gc --tool rust --older-than 60d
 
 # Age window
-superskill-cli worktree gc --older-than 14d --newer-than 90d
+superskill worktree gc --older-than 14d --newer-than 90d
 
 # Size gate
-superskill-cli worktree gc --all --min-size 500M
+superskill worktree gc --all --min-size 500M
 
 # Interactive TTY: read the report, then apply the same filters
-superskill-cli worktree gc --all
-superskill-cli worktree gc --all --older-than 30d --apply
+superskill worktree gc --all
+superskill worktree gc --all --older-than 30d --apply
 
 # JSON for scripts
-superskill-cli worktree gc --all --json | jq '.plan.selected[] | { path, bytes }'
+superskill worktree gc --all --json | jq '.plan.selected[] | { path, bytes }'
 
 # Undo a quarantine
-superskill-cli worktree gc --undo <journalId>
+superskill worktree gc --undo <journalId>
 ```
 
 ### Host support matrix
@@ -378,21 +378,21 @@ superskill-cli worktree gc --undo <journalId>
 
 ### Troubleshooting
 
-- **First look** — `superskill-cli worktree status` shows repo id, worktrees with safe/unsafe reasons, cache size, policy/hook state, and hosts. Add `--budget 5G` to flag over-budget cache usage.
-- **Drill down** — `superskill-cli worktree audit --sizes` shows every cache dir (local vs shared), plus seeded-manifest drift (`modified` / `missing`) for each worktree. Manifest drift is reported, never auto-fixed.
-- **Per-path skip reasons** — `superskill-cli worktree gc --verbose` explains why each candidate was not selected.
-- **Health check** — `superskill-cli doctor` includes worktree checks (policy active, guarded hook installed) alongside install, MCP wiring, vault, catalog, and toolchains; run it when worktree commands are missing after an upgrade.
+- **First look** — `superskill worktree status` shows repo id, worktrees with safe/unsafe reasons, cache size, policy/hook state, and hosts. Add `--budget 5G` to flag over-budget cache usage.
+- **Drill down** — `superskill worktree audit --sizes` shows every cache dir (local vs shared), plus seeded-manifest drift (`modified` / `missing`) for each worktree. Manifest drift is reported, never auto-fixed.
+- **Per-path skip reasons** — `superskill worktree gc --verbose` explains why each candidate was not selected.
+- **Health check** — `superskill doctor` includes worktree checks (policy active, guarded hook installed) alongside install, MCP wiring, vault, catalog, and toolchains; run it when worktree commands are missing after an upgrade.
 - **Hook did not fire** — husky and lefthook are supported; a `.pre-commit-config.yaml` repo needs the post-checkout command added manually (the config is never rewritten). Re-run `worktree activate` after changing hook managers.
 - **Where state lives** — policy, `hook.state`, `journal.jsonl`, and manifests under `.git/superskill/`; caches under the platform cache root (`SUPERSKILL_CACHE_ROOT` to move it); quarantined dirs under `<cacheRoot>/_quarantine/`.
-- **Opt out** — `SUPERSKILL_WORKTREE_BOOTSTRAP=0` disables post-checkout seeding for one process; `superskill-cli worktree uninstall` removes hooks and adapters entirely.
+- **Opt out** — `SUPERSKILL_WORKTREE_BOOTSTRAP=0` disables post-checkout seeding for one process; `superskill worktree uninstall` removes hooks and adapters entirely.
 
 ### Uninstalling the worktree integration
 
 ```bash
-superskill-cli worktree uninstall
+superskill worktree uninstall
 ```
 
-This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill-cli worktree uninstall --purge-local --yes` and undo with `superskill-cli worktree gc --undo <journalId>`.
+This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill worktree uninstall --purge-local --yes` and undo with `superskill worktree gc --undo <journalId>`.
 
 ## Space hygiene
 
@@ -400,16 +400,16 @@ Worktrees, toolchains, Docker, and Xcode all grow quietly until the disk is full
 
 Three ways to reach it:
 
-- **CLI** — `superskill-cli hygiene`
+- **CLI** — `superskill hygiene`
 - **MCP** — the `hygiene_report` tool (read-only; agents can call it before heavy builds to warn the user)
 - **Agent prompt** — "run a space hygiene report" routes to the tool in every host
 
 ```bash
-superskill-cli hygiene                          # fast report, all probes
-superskill-cli hygiene --due                    # only what is due
-superskill-cli hygiene --due --sizes            # measure real bytes on disk (slower)
-superskill-cli hygiene --category docker xcode  # limit probes
-superskill-cli hygiene --json                   # scripts + agents
+superskill hygiene                          # fast report, all probes
+superskill hygiene --due                    # only what is due
+superskill hygiene --due --sizes            # measure real bytes on disk (slower)
+superskill hygiene --category docker xcode  # limit probes
+superskill hygiene --json                   # scripts + agents
 ```
 
 | Probe | Looks at | Due when |
@@ -426,11 +426,11 @@ Acting on the report is explicit and reuses the existing safety rails:
 
 ```bash
 # Caches: the plan hands off to worktree gc (dry-run default, quarantine, undo)
-superskill-cli worktree gc --all --older-than 30d         # review
-superskill-cli worktree gc --all --older-than 30d --apply # quarantine, reversible
+superskill worktree gc --all --older-than 30d         # review
+superskill worktree gc --all --older-than 30d --apply # quarantine, reversible
 
 # Docker / Xcode / scratch: review the plan, then run it yourself
-superskill-cli hygiene --due --sizes                      # each item prints its plan
+superskill hygiene --due --sizes                      # each item prints its plan
 ```
 
 Tune the thresholds with `SUPERSKILL_HYGIENE_CACHE_AGE_DAYS`, `SUPERSKILL_HYGIENE_SCRATCH_TTL_HOURS`, `SUPERSKILL_HYGIENE_DOCKER_AGE_DAYS`, and point scratch scanning at your own roots with `SUPERSKILL_SCRATCH_ROOTS` (colon-separated paths, added to `$TMPDIR`, `/tmp`, and `~/.superskill/scratch`).
@@ -456,13 +456,13 @@ Findings are grouped by the part of the environment that failed: **navigation** 
 - **CLI**
 
   ```bash
-  superskill-cli watchdog dig                              # latest session in this project
-  superskill-cli watchdog dig --scope window --since 7d     # bulk review across sessions
-  superskill-cli watchdog dig --scope env                   # machine + repo environment
-  superskill-cli watchdog dig --scope all --json            # everything, machine-readable
-  superskill-cli watchdog status
-  superskill-cli watchdog fix --category leaked-tmp         # dry-run preview
-  superskill-cli watchdog fix --category leaked-tmp --apply # quarantined, reversible
+  superskill watchdog dig                              # latest session in this project
+  superskill watchdog dig --scope window --since 7d     # bulk review across sessions
+  superskill watchdog dig --scope env                   # machine + repo environment
+  superskill watchdog dig --scope all --json            # everything, machine-readable
+  superskill watchdog status
+  superskill watchdog fix --category leaked-tmp         # dry-run preview
+  superskill watchdog fix --category leaked-tmp --apply # quarantined, reversible
   ```
 
 - **MCP** — the `watchdog` tool (`action: dig | fix | status`) for any connected agent; `dig` returns the rendered report plus per-session digests that are budgeted for the model.
@@ -487,7 +487,7 @@ The trace registry mirrors the setup client list: **OpenCode** (session store, m
 
 ## CLI reference
 
-All commands work as `superskill-cli <command>`. Many commands accept `-p, --project <slug>`; the project is auto-detected from the current directory when omitted.
+All commands work as `superskill <command>`. Many commands accept `-p, --project <slug>`; the project is auto-detected from the current directory when omitted.
 
 ### Vault
 
@@ -666,7 +666,7 @@ The MCP server exposes the tools below — the superset of the CLI surface. MCP 
 
 ```bash
 # 1. Draft a spec. Gaps are reported back; nothing is enforced yet.
-superskill-cli spec create -t "Add OAuth login" \
+superskill spec create -t "Add OAuth login" \
   --goal "Users sign in through the company IdP" \
   --non-goals "No SAML, no SCIM" \
   --constraints "No new runtime dependencies" \
@@ -679,24 +679,24 @@ superskill-cli spec create -t "Add OAuth login" \
   --rollback "Revert the merge commit"
 
 # 2. Fill every gap, approve, then freeze (freeze pins the content hash).
-superskill-cli spec status 001
-superskill-cli spec approve 001
-superskill-cli spec freeze 001
+superskill spec status 001
+superskill spec approve 001
+superskill spec freeze 001
 
 # 3. Derive tickets from the frozen spec.
-superskill-cli tickets create --spec 001 --tickets '[
+superskill tickets create --spec 001 --tickets '[
   { "title": "Add IdP redirect",
     "acceptance": [{ "text": "Redirect works", "command": "npm test -- auth" }] },
   { "title": "Handle callback errors",
     "acceptance": [{ "text": "Copy reviewed", "manual": "design review" }],
     "requires_review": true }
 ]'
-superskill-cli tickets ready
+superskill tickets ready
 
 # 4. Record evidence at HEAD, then gate.
-superskill-cli evidence add ticket-001 -c "npm test -- auth" --output "42 passed"
-superskill-cli gate check ticket-001     # exit 0 only when the gate passes
-superskill-cli gate check --ci 001       # JSON output for CI
+superskill evidence add ticket-001 -c "npm test -- auth" --output "42 passed"
+superskill gate check ticket-001     # exit 0 only when the gate passes
+superskill gate check --ci 001       # JSON output for CI
 ```
 
 What the gate enforces:
@@ -733,9 +733,9 @@ Two graphs, one project scope:
 Markdown is the source of truth; `projects/<slug>/.knowledge-index.sqlite` is a derived FTS5 index with an edges table (frontmatter `related` + `[[wikilinks]]`). It is rebuilt on write and by `graph rebuild`. `graph related <path>` reads backlinks/outgoing links from the index (`--hops` for traversal depth).
 
 ```bash
-superskill-cli graph rebuild -p my-project
-superskill-cli graph viz -p my-project
-superskill-cli qa viz -p my-project
+superskill graph rebuild -p my-project
+superskill graph viz -p my-project
+superskill qa viz -p my-project
 ```
 
 `graph viz` writes `projects/<slug>/knowledge-graph.html` (tabs **Graph · HLA · LLA · ERD · Modules**; keys `g` `h` `l` `e` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
@@ -743,9 +743,9 @@ superskill-cli qa viz -p my-project
 ### Code graph: impact and claims
 
 ```bash
-superskill-cli impact src/lib/codegraph/scan.ts
-superskill-cli impact Reporter --to normalize
-superskill-cli claims -c '[{"kind":"symbol-exported","name":"Reporter","file":"src/lib/codegraph/query.ts"}]'
+superskill impact src/lib/codegraph/scan.ts
+superskill impact Reporter --to normalize
+superskill claims -c '[{"kind":"symbol-exported","name":"Reporter","file":"src/lib/codegraph/query.ts"}]'
 ```
 
 `impact` returns EXTRACTED definitions, importers, INFERRED callers, and the shortest graph path between two targets. `claims` verifies structured claims (`file-exists`, `symbol-exists`, `symbol-exported`, `import-resolves`, `no-other-importers`, `no-other-callers`) and returns `verified` / `refuted` / `unverifiable` with node ids and edge confidence; it exits non-zero when any claim is refuted.

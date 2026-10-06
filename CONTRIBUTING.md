@@ -20,7 +20,7 @@ SuperSkill uses the [Agent Skills](https://skills.sh) standard. Every skill is a
 
 1. Copy the template: `cp docs/SKILL-TEMPLATE.md my-skill/SKILL.md`
 2. Fill in frontmatter and content
-3. Validate: `superskill-cli skill validate my-skill/SKILL.md`
+3. Validate: `superskill skill validate my-skill/SKILL.md`
 4. Submit a PR using the [skill submission template](.github/PULL_REQUEST_TEMPLATE/skill_submission.md)
 
 ### Skill Structure
@@ -40,7 +40,7 @@ A skill is a single `SKILL.md` file. The YAML frontmatter defines metadata for d
 
 - Lead with the methodology, not setup instructions
 - Include concrete examples
-- Keep under 3000 tokens (check with `superskill-cli skill validate`)
+- Keep under 3000 tokens (check with `superskill skill validate`)
 - Use sections: Overview, When to Use, Steps, Examples
 
 ### Trigger Keywords
@@ -56,7 +56,7 @@ Triggers are how SuperSkill matches tasks to skills. Include 3-7 keywords per sk
 Run before submitting:
 
 ```bash
-superskill-cli skill validate path/to/SKILL.md
+superskill skill validate path/to/SKILL.md
 ```
 
 Checks:
@@ -71,7 +71,7 @@ Checks:
 The recommended way to share skills:
 
 1. Create a GitHub repo with your `SKILL.md` files
-2. Users install with: `superskill-cli skill add your-username/your-repo`
+2. Users install with: `superskill skill add your-username/your-repo`
 
 ### Adding to the Built-in Registry
 

@@ -59,8 +59,8 @@ export function formatHygieneReport(report: HygieneReport, opts: { dueOnly?: boo
   lines.push("");
   lines.push("Nothing was deleted. Everything above is a recommendation.");
   lines.push(
-    "Next: run `superskill-cli hygiene --due` to act on due items; " +
-      "use `superskill-cli worktree gc --all` to reclaim worktree caches.",
+    "Next: run `superskill hygiene --due` to act on due items; " +
+      "use `superskill worktree gc --all` to reclaim worktree caches.",
   );
   return lines.join("\n");
 }
