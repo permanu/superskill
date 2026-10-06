@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { CommandContext } from "../../core/types.js";
+import { formatBytes as formatBytesImpl } from "../../lib/format-bytes.js";
 import { buildProviderContext } from "../../lib/worktree/context.js";
 import {
   resolveProjectLabels,
@@ -86,16 +87,7 @@ export function parseSize(input: string): number | null {
 }
 
 export function formatBytes(bytes: number | null | undefined): string {
-  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "?";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
+  return formatBytesImpl(bytes, { nullLabel: "?", maxUnit: "TB" });
 }
 
 function displayPath(path: string, cacheRoot?: string): string {

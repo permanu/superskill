@@ -27,6 +27,19 @@ describe("loadCatalog", () => {
     expect(skills.find((s) => s.id === "memory/graph")?.always).toBe(true);
     expect(skills.find((s) => s.id === "security/index")?.always).toBe(true);
     expect(skills.find((s) => s.id === "code/typescript")?.langs).toContain("typescript");
+    expect(ids).toContain("ui/foundations");
+    expect(ids).toContain("ui/motion");
+    expect(ids).toContain("ui/accessibility");
+    expect(ids).toContain("ui/review");
+    const uiFoundations = skills.find((s) => s.id === "ui/foundations");
+    expect(uiFoundations?.pack).toBe("ui");
+    expect(uiFoundations?.always).toBe(true);
+    for (const trigger of ["ui", "ux", "design", "css", "tailwind", "layout", "typography", "color", "component", "button", "landing", "dashboard", "responsive", "animation", "shadow", "accessibility", "contrast", "screenshot", "beautiful", "pretty"]) {
+      expect(uiFoundations?.triggers).toContain(trigger);
+    }
+    expect(skills.find((s) => s.id === "ui/motion")?.triggers).toContain("motion");
+    expect(skills.find((s) => s.id === "ui/accessibility")?.triggers).toContain("keyboard");
+    expect(skills.find((s) => s.id === "ui/review")?.triggers).toContain("review");
   });
 
   it("catalog files exist on disk", async () => {

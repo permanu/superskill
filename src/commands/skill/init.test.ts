@@ -3,21 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { initProject } from "./init.js";
+import { initProject, parseNativeSkillFile } from "./init.js";
 import type { CommandContext } from "../../core/types.js";
-
-const mockFindSkills = vi.fn();
-const mockRefreshAudit = vi.fn();
-
-vi.mock("../../lib/skills-sh/cli.js", () => ({
-  findSkills: (...args: unknown[]) => mockFindSkills(...args),
-}));
-
-vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
-  getAudit: async () => null,
-  isStale: () => true,
-  refreshAuditWithMeta: (...args: unknown[]) => mockRefreshAudit(...args),
-}));
 
 function createMockCtx(projectDir: string): CommandContext {
   return {
@@ -36,8 +23,6 @@ describe("initProject", () => {
     projectDir = join(tmpdir(), `superskill-init-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(projectDir, { recursive: true });
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    mockFindSkills.mockResolvedValue([]);
-    mockRefreshAudit.mockResolvedValue(null);
   });
 
   afterEach(async () => {
@@ -59,7 +44,6 @@ describe("initProject", () => {
     expect(projectNode).toBeDefined();
     expect(projectNode.id).toBe("project");
     expect(projectNode.phase).toBe("explore");
-    expect(mockFindSkills).not.toHaveBeenCalled();
     const catalogSkill = graph.nodes.find((n: any) => n.id === "code/typescript");
     expect(catalogSkill).toBeDefined();
     expect(catalogSkill.source).toBe("catalog");
@@ -120,6 +104,86 @@ describe("initProject", () => {
     const testSkillNode = graph.nodes.find((n: any) => n.type === "skill" && n.id === "native/test-skill");
     expect(testSkillNode).toBeDefined();
     expect(testSkillNode.w).toBe(0.8);
+  });
+
+  it("derives triggers from description when frontmatter triggers are absent", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "ui-ux-pro-max");
+    await mkdir(skillDir, { recursive: true });
+    const skillFile = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillFile,
+      `---\nname: ui-ux-pro-max\ndescription: "Use when the user wants to design, redesign, or polish a landing page or UI component."\n---\n# UI UX Pro Max\n`,
+    );
+
+    const parsed = await parseNativeSkillFile(skillFile);
+    expect(parsed).not.toBeNull();
+    const triggers = parsed!.triggers ?? [];
+
+    expect(triggers).toContain("design");
+    expect(triggers).toContain("ui");
+    expect(triggers).toContain("landing");
+    expect(triggers).toContain("component");
+    for (const noise of ["use", "when", "user", "wants", "the", "and", "or", "for", "a"]) {
+      expect(triggers).not.toContain(noise);
+    }
+    expect(triggers.length).toBeLessThanOrEqual(24);
+    expect(new Set(triggers).size).toBe(triggers.length);
+  });
+
+  it("stores derived triggers on the native skill graph node", async () => {
+    const skillDir = join(projectDir, ".agents", "skills", "ui-ux-pro-max");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---\nname: ui-ux-pro-max\ndescription: "Use when the user wants to design, redesign, or polish a landing page or UI component."\n---\n# UI UX Pro Max\n`,
+    );
+
+    const result = await initProject({}, createMockCtx(projectDir));
+    expect(result.success).toBe(true);
+
+    const graph = JSON.parse(await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8"));
+    const node = graph.nodes.find((n: any) => n.id === "native/ui-ux-pro-max");
+    expect(node).toBeDefined();
+    expect(node.triggers).toEqual(expect.arrayContaining(["design", "ui", "landing"]));
+  });
+
+  it("preserves explicit triggers frontmatter unchanged", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "explicit-triggers");
+    await mkdir(skillDir, { recursive: true });
+    const skillFile = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillFile,
+      `---\nname: explicit-triggers\ntriggers:\n  - Design\n  - landing page\n  - ui\ndescription: "banana smoothie unrelated words"\n---\n# Explicit\n`,
+    );
+
+    const parsed = await parseNativeSkillFile(skillFile);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.triggers).toEqual(["Design", "landing page", "ui"]);
+  });
+
+  it("treats an empty triggers list as absent and derives from description", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "empty-triggers");
+    await mkdir(skillDir, { recursive: true });
+    const skillFile = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillFile,
+      `---\nname: empty-triggers\ntriggers: []\ndescription: "dashboard analytics charts"\n---\n# Empty\n`,
+    );
+
+    const parsed = await parseNativeSkillFile(skillFile);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.triggers).toEqual(["empty", "triggers", "dashboard", "analytics", "charts"]);
+  });
+
+  it("leaves triggers undefined when description and triggers are missing", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "bare");
+    await mkdir(skillDir, { recursive: true });
+    const skillFile = join(skillDir, "SKILL.md");
+    await writeFile(skillFile, `---\nname: bare\n---\n# Bare\n`);
+
+    const parsed = await parseNativeSkillFile(skillFile);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.triggers).toBeUndefined();
   });
 
   it("blocks native skills with failed audits", async () => {

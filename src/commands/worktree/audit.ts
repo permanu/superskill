@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../../core/types.js";
+import { formatBytes as formatBytesImpl } from "../../lib/format-bytes.js";
 import { auditRepo } from "../../lib/worktree/audit.js";
 import type { AuditItem, RepoAudit } from "../../lib/worktree/audit.js";
 import { isPathInside } from "../../lib/worktree/safety.js";
@@ -11,19 +12,8 @@ export interface WorktreeAuditArgs {
   worktree?: string;
 }
 
-const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
-
 export function formatBytes(bytes: number | null): string {
-  if (bytes === null || !Number.isFinite(bytes)) return "unknown";
-  if (bytes <= 0) return "0 B";
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = unit === 0 || value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${rounded} ${SIZE_UNITS[unit]}`;
+  return formatBytesImpl(bytes, { compact: true, maxUnit: "PB" });
 }
 
 function yesNo(value: boolean): string {

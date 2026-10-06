@@ -326,5 +326,61 @@ describe("catalog routing", () => {
     const result = matchTask("review this diff", catalogGraph());
     expect(result).toContain("review/architect");
   });
+
+  it("detects UI work and loads the ui pack in every phase", () => {
+    for (const phase of ["explore", "implement", "review", "ship"] as const) {
+      expect(packsToLoad("make the landing page look better", phase).has("ui")).toBe(true);
+    }
+    expect(packsToLoad("fix the flaky retry queue worker", "implement").has("ui")).toBe(false);
+  });
+
+  it("detects vibecoder UI phrasing across phases", () => {
+    const tasks = [
+      "redesign the settings screen",
+      "the buttons look ugly",
+      "add dark mode",
+      "make the dashboard responsive on mobile",
+      "polish the empty state",
+      "fix the hover animation",
+      "tweak the tailwind palette",
+      "the nav sidebar overlaps the header",
+      "match the figma screenshot",
+      "improve accessibility and contrast",
+    ];
+    for (const task of tasks) {
+      expect(packsToLoad(task, "explore").has("ui")).toBe(true);
+    }
+  });
+
+  it("does not treat generic backend tasks as UI", () => {
+    for (const task of ["add a retry queue worker", "migrate the postgres schema", "fix a memory leak in the parser"]) {
+      expect(packsToLoad(task, "implement").has("ui")).toBe(false);
+    }
+  });
+
+  it("selects ui guidance for look-and-feel tasks only", () => {
+    const g = catalogGraph();
+    g.nodes.push({
+      ...makeSkillNode("ui/foundations", 0.6),
+      source: "catalog" as const,
+      pack: "ui" as const,
+      triggers: ["ui", "design", "css", "layout", "landing", "page", "polish", "beautiful"],
+    });
+    expect(matchTask("make the landing page look better", g)).toContain("ui/foundations");
+    expect(matchTask("fix the flaky retry queue worker", g)).not.toContain("ui/foundations");
+  });
+
+  it("always-on ui foundations ride along whenever UI work is detected", () => {
+    const g = catalogGraph();
+    g.nodes.push({
+      ...makeSkillNode("ui/foundations", 0.6),
+      source: "catalog" as const,
+      pack: "ui" as const,
+      always: true,
+      triggers: ["ui", "design", "landing", "page"],
+    });
+    expect(alwaysOnSkillIds(g, "redesign the settings screen")).toContain("ui/foundations");
+    expect(alwaysOnSkillIds(g, "fix the flaky retry queue worker")).not.toContain("ui/foundations");
+  });
 });
 

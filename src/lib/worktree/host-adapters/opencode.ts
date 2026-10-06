@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { rmdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { backupOnce, readTextSafe, writeTextAtomic } from "./claude.js";
+import { backupOnce, readTextSafe, writeTextAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const LOG_PREFIX = "[host-adapters]";

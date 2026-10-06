@@ -20,8 +20,7 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
 - `src/core/` — Command infrastructure (registry, types)
 - `src/lib/` — Library modules (vault-fs, frontmatter, search-engine, etc.)
 - `src/lib/graph/` — Knowledge graph (schema, store, loader, router, learner)
-- `src/lib/skills-sh/` — Skills.sh client (client, cli, audit-cache)
-- `src/lib/global-cache.ts` — Global skill content cache (`~/.superskill/skills/`)
+- `src/lib/skills-sh/` — Skills.sh client (`client`), used by the opt-in installer
 - `src/config.ts` — Configuration + `resolveProject()` utility
 
 ## Key Patterns
@@ -29,10 +28,10 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
 - **Unified command interface:** Every command takes `(args, ctx: CommandContext)` where ctx bundles vaultFs, vaultPath, config, sessionRegistry, and log.
 - **Graph-driven routing:** task → router → loader → security gate → content. The knowledge graph determines which skills are relevant based on project stack, phase, and activation history.
 - **3-phase loading:** INDEX (project metadata + skill list) → NEIGHBORHOOD (co-activations + recent sessions) → CONTENT (actual SKILL.md files). Each phase is optional and can be skipped.
-- **Skills.sh as primary source:** Skills are fetched from skills.sh API, cached globally in `~/.superskill/skills/`, and symlinked into project-local `.superskill/skill-cache/`.
+- **Skills.sh is opt-in:** only `skill install <owner>/<repo>` queries skills.sh (skill list + gen/socket/snyk audits). The default catalog and routing never scrape it — `skill init` indexes the in-repo catalog. If skills.sh is unreachable, a GitHub clone is allowed and marked `.unaudited-superskill`; empty skills.sh results refuse the fallback.
 - **Dual interface:** Every command works via both CLI and MCP. Commands are pure async functions.
 - **Sandboxed filesystem:** `VaultFS` enforces path validation, symlink escape detection, traversal rejection.
-- **Lazy singletons:** Graph store, skills.sh client, and global cache are initialized on first use.
+- **Lazy singletons:** Graph store and the skills.sh client (opt-in installer path) are initialized on first use.
 - **Atomic operations:** Graph writes use tmpfile + rename. Session lockfiles use `O_CREAT | O_EXCL`.
 - **Project detection:** Auto-detected from CWD via `project-map.json` and git root. Use `resolveProject()` helper.
 - **Auto-numbering:** ADRs, tasks, learnings use `NNN-<slug>.md` pattern via `auto-number.ts`.

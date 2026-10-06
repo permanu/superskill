@@ -5,7 +5,7 @@ One-entry orchestrator for coding agents: deterministic rule planning, evidence 
 [![npm](https://img.shields.io/npm/v/superskill)](https://www.npmjs.com/package/superskill)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
 
-Prompt normally. Call **`superskill`** with the task. It diagnoses, then loads a combination — Go → Go pack, QA → QA, security bug → review + security — and returns a system brief plus a deterministic rule plan. Defaults: careful-minimal, algorithm-correct, **systems thinking**. Open design branches **grill the human** (HITL). Factory packs (plan, TDD, verify, SRE, grill) are ours.
+Prompt normally. Call **`superskill`** with the task. It diagnoses, then loads a combination — Go → Go pack, QA → QA, security bug → review + security — and returns a system brief plus a deterministic rule plan. Defaults: careful-minimal, algorithm-correct, **systems thinking**. Open design branches **grill the human** (HITL). Factory packs (plan, TDD, verify, SRE, grill, design/UI) are ours — UI work lazily pulls the design pack without being asked.
 
 Everything is local-first: the vault is markdown under `projects/<slug>/`, the search index is derived SQLite, and vault IO is jailed to the current project.
 
@@ -157,7 +157,7 @@ A deterministic, local-only code graph built with tree-sitter WASM. No LLM, no n
 
 ### Vault
 
-Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS5 + an edges table is a derived index (porter stemming: `authorize` hits `Authorization`), rebuilt from markdown on write and via `graph rebuild`. The project is auto-detected from the current directory (git root + `project-map.json`); override with `--project`.
+Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS5 + an edges table is a derived index (porter stemming: `authorize` hits `Authorization`); the `write` tool updates it incrementally, and `graph rebuild` rebuilds it from markdown (run it after batch or out-of-band edits). The project is auto-detected from the current directory (git root + `project-map.json`); override with `--project`.
 
 ### Project isolation
 
@@ -523,7 +523,7 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 | Command | Purpose | Common flags |
 |---|---|---|
 | `graph rebuild` | Rebuild SQLite FTS5 + edges from markdown | |
-| `graph viz` | Write `knowledge-graph.html`, `knowledge-graph.canvas`, `architecture-diagrams.html` | |
+| `graph viz` | Write `knowledge-graph.html`, `knowledge-graph.canvas`, `architecture-diagrams.html` | `--open` launches them; shorthand `superskill viz` |
 | `graph related <path>` | Backlinks and outgoing links | `--hops <n>` |
 | `graph cross-project <query>` | Project-jailed search; cross-project is denied | `-l, --limit` |
 | `qa viz` | Regenerate the graph HTML and click through it in system Chrome | |
@@ -734,11 +734,11 @@ Markdown is the source of truth; `projects/<slug>/.knowledge-index.sqlite` is a 
 
 ```bash
 superskill graph rebuild -p my-project
-superskill graph viz -p my-project
+superskill viz --open -p my-project     # shorthand for `graph viz`; --open launches the pages
 superskill qa viz -p my-project
 ```
 
-`graph viz` writes `projects/<slug>/knowledge-graph.html` (tabs **Graph · HLA · LLA · ERD · Modules**; keys `g` `h` `l` `e` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
+`graph viz` writes `projects/<slug>/knowledge-graph.html` (Cytoscape + ELK layered view with search, type filters, and a legend; tabs **Graph · HLA · LLA · ERD · Modules**; keys `g` `h` `l` `e` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. HLA/LLA are derived from the real module graph. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
 
 ### Code graph: impact and claims
 

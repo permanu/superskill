@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { backupOnce, writeTextAtomic } from "./index.js";
+import { backupOnce, writeTextAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "generic";

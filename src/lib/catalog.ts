@@ -7,7 +7,7 @@ import matter from "gray-matter";
 import type { SkillPack } from "./graph/schema.js";
 
 const PACKS: ReadonlySet<string> = new Set([
-  "memory", "code", "review", "security", "ops", "devops", "optimizer", "pipeline", "watchdog",
+  "memory", "code", "review", "security", "ops", "devops", "optimizer", "pipeline", "watchdog", "ui",
 ]);
 
 export interface CatalogSkill {

@@ -14,7 +14,7 @@ export interface AuditResult {
 }
 
 export type SkillSource = "native" | "routed" | "catalog";
-export type SkillPack = "memory" | "code" | "review" | "security" | "ops" | "devops" | "optimizer" | "pipeline" | "watchdog";
+export type SkillPack = "memory" | "code" | "review" | "security" | "ops" | "devops" | "optimizer" | "pipeline" | "watchdog" | "ui";
 export type ProjectPhase = "explore" | "implement" | "review" | "ship";
 export type SessionOutcome = "success" | "partial" | "abandoned";
 

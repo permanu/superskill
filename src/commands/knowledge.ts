@@ -28,7 +28,7 @@ export async function knowledgeRebuildCommand(
 export async function knowledgeVizCommand(
   args: { project?: string },
   ctx: CommandContext,
-): Promise<{ html: string; canvas: string; diagrams: string; project: string; nodes: number; edges: number }> {
+): Promise<{ html: string; canvas: string; diagrams: string; project: string; nodes: number; edges: number; kept?: string[] }> {
   const project = slugOf(args, ctx);
   rebuildProjectIndex(ctx.vaultPath, project);
   const files = writeKnowledgeGraphFiles(ctx.vaultPath, project, { codeRoot: process.cwd() });

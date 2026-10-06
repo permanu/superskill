@@ -585,7 +585,7 @@ export function createRegistry(): CommandRegistry {
     }) as CommandHandler,
     toolDef: {
       name: "skill_install",
-      description: "Install skills from a GitHub repo (e.g. owner/repo or full URL). Clones the repo, discovers SKILL.md files, and copies them to the local skill directory.",
+      description: "Install skills from a GitHub repo (e.g. owner/repo or full URL). Resolves the skill list and gen/socket/snyk audits via skills.sh; fail-audit skills are blocked, and the unaudited GitHub fallback is used only when skills.sh is unreachable.",
       inputSchema: {
         type: "object" as const,
         properties: {

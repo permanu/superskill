@@ -21,9 +21,16 @@ function walkTs(dir: string, acc: string[]): void {
     if (e.name.startsWith(".")) continue;
     const full = join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === "dist") continue;
+      if (e.name === "node_modules" || e.name === "dist" || e.name === "__fixtures__") continue;
       walkTs(full, acc);
-    } else if (e.isFile() && e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) {
+    } else if (
+      e.isFile() &&
+      e.name.endsWith(".ts") &&
+      !e.name.endsWith(".d.ts") &&
+      !e.name.endsWith(".test.ts") &&
+      !e.name.endsWith(".spec.ts") &&
+      !e.name.startsWith("test-helpers.")
+    ) {
       acc.push(full);
     }
   }

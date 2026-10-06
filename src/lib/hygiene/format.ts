@@ -1,21 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { formatBytes, type FormatBytesOptions } from "../format-bytes.js";
 import { HYGIENE_CATEGORY_ORDER } from "./report.js";
 import type { HygieneCategory, HygieneReport } from "./types.js";
 
-const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
-
-export function formatBytes(bytes: number | null): string {
-  if (bytes === null || !Number.isFinite(bytes)) return "unknown";
-  if (bytes <= 0) return "0 B";
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = unit === 0 || value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${rounded} ${SIZE_UNITS[unit]}`;
-}
+const BYTES_OPTIONS: FormatBytesOptions = { compact: true, maxUnit: "PB" };
 
 function formatAge(ageDays: number | null): string {
   if (ageDays === null || !Number.isFinite(ageDays)) return "unknown";
@@ -30,8 +18,8 @@ export function formatHygieneReport(report: HygieneReport, opts: { dueOnly?: boo
   const lines: string[] = [];
   lines.push(
     `Superskill hygiene report — ${report.generatedAt} — ${report.totals.itemCount} item(s), ` +
-      `${report.totals.dueCount} due (known ${formatBytes(report.totals.knownBytes)}, ` +
-      `due ${formatBytes(report.totals.dueBytes)})`,
+      `${report.totals.dueCount} due (known ${formatBytes(report.totals.knownBytes, BYTES_OPTIONS)}, ` +
+      `due ${formatBytes(report.totals.dueBytes, BYTES_OPTIONS)})`,
   );
 
   const visible = opts.dueOnly === true ? report.items.filter((item) => item.due) : report.items;
@@ -43,7 +31,7 @@ export function formatHygieneReport(report: HygieneReport, opts: { dueOnly?: boo
     for (const item of group) {
       const marker = item.due ? "[due]" : "[   ]";
       lines.push(
-        `  ${marker} ${item.title} — ${formatBytes(item.bytes)} — ${formatAge(item.ageDays)} — ` +
+        `  ${marker} ${item.title} — ${formatBytes(item.bytes, BYTES_OPTIONS)} — ${formatAge(item.ageDays)} — ` +
           `${item.tier} — ${item.reason}`,
       );
       if (item.due && item.plan !== null) lines.push(`      plan: ${item.plan}`);

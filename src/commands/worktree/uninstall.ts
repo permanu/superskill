@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
+import { formatBytes } from "../../lib/format-bytes.js";
 import { buildProviderContext } from "../../lib/worktree/context.js";
 import type { AdapterContext, AdapterActionResult } from "../../lib/worktree/host-adapters/types.js";
 import { cacheNamespace, repoStateDir } from "../../lib/worktree/paths.js";
@@ -299,7 +300,7 @@ export function renderWorktreeUninstall(result: unknown): string {
     const bytes = outcome.purgedCache.moved.reduce((sum, entry) => sum + entry.bytes, 0);
     lines.push("");
     lines.push(
-      `cache quarantined (reversible): ${outcome.purgedCache.moved.length} dir(s), ${formatBytes(bytes)} — journal ${outcome.purgedCache.journalId}`,
+      `cache quarantined (reversible): ${outcome.purgedCache.moved.length} dir(s), ${formatBytes(bytes, { nullLabel: "?", maxUnit: "TB" })} — journal ${outcome.purgedCache.journalId}`,
     );
     lines.push(`  undo: superskill-cli worktree gc --undo ${outcome.purgedCache.journalId}`);
   } else if (outcome.cacheSkipped) {
@@ -314,17 +315,4 @@ export function renderWorktreeUninstall(result: unknown): string {
   }
 
   return lines.join("\n");
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes)) return "?";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
 }

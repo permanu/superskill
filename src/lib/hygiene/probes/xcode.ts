@@ -4,6 +4,7 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { formatBytes } from "../../format-bytes.js";
 import { probeDirAge, probeDirSize } from "../../worktree/audit.js";
 import { hashId } from "../../worktree/paths.js";
 import { quoteShell } from "../shell.js";
@@ -53,18 +54,6 @@ function formatVersion(parts: number[]): string {
   return parts.join(".");
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
-}
-
 function isIgnorableFsError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException).code;
   return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES";
@@ -80,7 +69,7 @@ async function statIfExists(path: string) {
 }
 
 function derivedDataReason(bytes: number | null, sizes: boolean): string {
-  if (bytes !== null) return `${DERIVED_DATA_NOTE}; ${formatBytes(bytes)} on disk`;
+  if (bytes !== null) return `${DERIVED_DATA_NOTE}; ${formatBytes(bytes, { maxUnit: "TB" })} on disk`;
   if (!sizes) return `${DERIVED_DATA_NOTE}; size not measured, re-run with --sizes to enable cleanup`;
   return `${DERIVED_DATA_NOTE}; size unavailable`;
 }

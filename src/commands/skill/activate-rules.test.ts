@@ -5,6 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { activateSkills, resetRulesIndexCache } from "./activate.js";
+import { _resetInstallDir, _setInstallDir } from "../../lib/skill-installer.js";
 import { loadPrincipleContent, loadRuleContent } from "../../rules/content.js";
 import { buildIndex } from "../../rules/index-builder.js";
 import type { RulesIndex } from "../../rules/index-builder.js";
@@ -15,16 +16,6 @@ import type { PrinciplesIndex } from "../../rules/principles.js";
 import { estimateRuleTokens } from "../../rules/select.js";
 import type { CommandContext } from "../../core/types.js";
 import type { Graph } from "../../lib/graph/schema.js";
-
-vi.mock("../../lib/skills-sh/cli.js", () => ({
-  findSkills: async () => [],
-}));
-
-vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
-  getAudit: async () => null,
-  isStale: () => true,
-  refreshAudit: async () => null,
-}));
 
 vi.mock("../../lib/tool-detector.js", () => ({
   detectTool: () => ({ tool: "unknown", contextWindow: 10_000 }),
@@ -121,10 +112,12 @@ describe("activateSkills rule integration", () => {
   beforeEach(async () => {
     projectDir = join(tmpdir(), `superskill-activate-rules-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(join(projectDir, ".superskill"), { recursive: true });
+    _setInstallDir(join(projectDir, "installed-skills"));
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
   });
 
   afterEach(async () => {
+    _resetInstallDir();
     vi.restoreAllMocks();
     await rm(projectDir, { recursive: true, force: true }).catch(() => {});
   });

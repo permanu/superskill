@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { catalogFile } from "../catalog.js";
 import type {
@@ -156,6 +157,30 @@ export function loadNeighborhood(
 
 const SKILL_CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
+async function findNativeSkillFile(root: string, skillName: string, depth = 0): Promise<string | null> {
+  if (depth > 5) return null;
+  const direct = join(root, skillName, "SKILL.md");
+  try {
+    await stat(direct);
+    return direct;
+  } catch {
+    // marketplace layouts nest skills under intermediate directories
+  }
+  let entries: Dirent[];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+    const nested = await findNativeSkillFile(join(root, entry.name), skillName, depth + 1);
+    if (nested !== null) return nested;
+  }
+  return null;
+}
+
 export async function loadContent(
   projectDir: string,
   skillIds: string[],
@@ -170,21 +195,16 @@ export async function loadContent(
     let content: string | null = null;
     let stale = false;
 
-    if (!skillId.includes("@") && skillId.includes("/")) {
-      try {
-        const raw = await readFile(catalogFile(skillId), "utf-8");
-        content = compressContent(raw);
-      } catch {
-        console.error(`[graph-loader] catalog skill not found: ${skillId}`);
-      }
-    } else if (skillId.startsWith("native/")) {
+    if (skillId.startsWith("native/")) {
       const skillName = skillId.slice("native/".length);
-      const nativePaths = [
-        join(projectDir, ".agents", "skills", skillName, "SKILL.md"),
-        join(projectDir, ".superskill", "skills", skillName, "SKILL.md"),
-        join(projectDir, ".claude", "skills", skillName, "SKILL.md"),
+      const nativeRoots = [
+        join(projectDir, ".agents", "skills"),
+        join(projectDir, ".superskill", "skills"),
+        join(projectDir, ".claude", "skills"),
       ];
-      for (const nativePath of nativePaths) {
+      for (const root of nativeRoots) {
+        const nativePath = await findNativeSkillFile(root, skillName);
+        if (nativePath === null) continue;
         try {
           const raw = await readFile(nativePath, "utf-8");
           content = compressContent(raw);
@@ -195,6 +215,13 @@ export async function loadContent(
       }
       if (content === null) {
         console.error(`[graph-loader] native skill content not found: ${skillId}`);
+      }
+    } else if (!skillId.includes("@") && skillId.includes("/")) {
+      try {
+        const raw = await readFile(catalogFile(skillId), "utf-8");
+        content = compressContent(raw);
+      } catch {
+        console.error(`[graph-loader] catalog skill not found: ${skillId}`);
       }
     } else {
       const parts = skillId.split("@");

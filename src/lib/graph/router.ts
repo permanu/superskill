@@ -11,6 +11,9 @@ const LANG_ALIAS: Record<string, string> = {
   rs: "rust",
 };
 
+const UI_TASK_RE =
+  /\b(?:ui|ux|(?:re)?design(?:s|ed|er|ers)?|css|tailwind|styl(?:e[sd]?|ing)|layouts?|spacing|typography|fonts?|colou?rs?|palettes?|themes?|dark|components?|buttons?|forms?|inputs?|modals?|nav|navbar|navigation|sidebars?|headers?|footers?|hero|landing|pages?|dashboards?|responsive|mobile|viewport|animat\w*|motion|hover(?:ing|ed)?|gradients?|shadows?|icons?|accessib\w*|contrast|figma|screenshots?|polish(?:ed|ing)?|beautiful|prett(?:y|ier)|ugly|empty\s+states?|frontend|front-end|make\s+it\s+(?:look|feel)|look(?:s|ing)?\s+(?:better|nicer|prettier|beautiful|cleaner|modern|professional|bad|off|weird))\b/;
+
 function normLang(s: string): string {
   const k = s.toLowerCase();
   return LANG_ALIAS[k] ?? k;
@@ -119,6 +122,7 @@ export function packsToLoad(task: string, phase: ProjectPhase): Set<SkillPack> {
   if (/(deploy|aws|gcp|azure|vps|terraform|kubernetes)/.test(lower)) packs.add("devops");
   if (/(?:\bprune\b|\bonboard\b|\binit\b)/.test(lower)) packs.add("ops");
   if (/(?:\breview\b|\bpr\b|\bdiff\b)/.test(lower)) packs.add("review");
+  if (UI_TASK_RE.test(lower)) packs.add("ui");
   if (/(watchdog|\bdig\b|session review|\bretro\b|bloat|stale (skill|rule|plugin)|unused (skill|plugin|mcp)|agent environment|clean ?up)/.test(lower)) {
     packs.add("watchdog");
   }

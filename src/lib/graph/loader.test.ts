@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, writeFile, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Graph, SkillNode, SessionNode } from "./schema.js";
@@ -318,6 +318,42 @@ describe("loadContent", () => {
 
   it("handles missing content gracefully", async () => {
     const result = await loadContent(testDir, ["owner/repo@nonexistent"]);
+    expect(result.skills).toHaveLength(0);
+  });
+});
+
+describe("loadContent native skills", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "superskill-loader-native-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("loads a native skill by frontmatter name instead of hitting the catalog branch", async () => {
+    const skillDir = join(dir, ".agents", "skills", "demo");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "---\nname: demo\n---\n\n# Demo\n\nBody text.", "utf-8");
+    const result = await loadContent(dir, ["native/demo"]);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]?.id).toBe("native/demo");
+    expect(result.skills[0]?.content).toContain("Body text.");
+  });
+
+  it("finds native skills nested under marketplace directories", async () => {
+    const skillDir = join(dir, ".agents", "skills", "market", "repo", "nested");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "---\nname: nested\n---\n\nNested body.", "utf-8");
+    const result = await loadContent(dir, ["native/nested"]);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]?.content).toContain("Nested body.");
+  });
+
+  it("returns no content for a missing native skill", async () => {
+    const result = await loadContent(dir, ["native/absent"]);
     expect(result.skills).toHaveLength(0);
   });
 });

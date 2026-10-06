@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
+import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -52,6 +53,18 @@ import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
+
+function openExternal(target: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+  try {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // best-effort: the printed path can always be opened by hand
+  }
+}
 
 export function createProgram(): Command {
   const program = new Command();
@@ -700,27 +713,44 @@ export function createProgram(): Command {
       }
     });
 
+  const runViz = async (opts: { project?: string; open?: boolean }) => {
+    try {
+      const { knowledgeVizCommand } = await import("./commands/knowledge.js");
+      const ctx = await createScopedCtx();
+      const result = await knowledgeVizCommand({ project: opts.project }, ctx);
+      console.log(JSON.stringify(result, null, 2));
+      const htmlAbs = `${ctx.vaultPath}/${result.html}`;
+      const diagAbs = `${ctx.vaultPath}/${result.diagrams}`;
+      console.log(`\nDiagrams (HLA / LLA / ERD):\n  open "${diagAbs}"`);
+      console.log(`Interactive graph:\n  open "${htmlAbs}"`);
+      console.log(`Obsidian: vault root = ${ctx.vaultPath}, then open ${result.canvas}`);
+      if (result.kept && result.kept.length > 0) {
+        console.log(`\nKept user-edited notes (not regenerated):\n  ${result.kept.join("\n  ")}`);
+      }
+      if (opts.open) {
+        openExternal(htmlAbs);
+        openExternal(diagAbs);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: ${msg}`);
+      process.exit(1);
+    }
+  };
+
   graphCmd
     .command("viz")
     .description("Write knowledge-graph.html (browser) and knowledge-graph.canvas (Obsidian)")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
-      try {
-        const { knowledgeVizCommand } = await import("./commands/knowledge.js");
-        const ctx = await createScopedCtx();
-        const result = await knowledgeVizCommand({ project: opts.project }, ctx);
-        console.log(JSON.stringify(result, null, 2));
-        const htmlAbs = `${ctx.vaultPath}/${result.html}`;
-        const diagAbs = `${ctx.vaultPath}/${result.diagrams}`;
-        console.log(`\nDiagrams (HLA / LLA / ERD):\n  open "${diagAbs}"`);
-        console.log(`Interactive graph:\n  open "${htmlAbs}"`);
-        console.log(`Obsidian: vault root = ${ctx.vaultPath}, then open ${result.canvas}`);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Error: ${msg}`);
-        process.exit(1);
-      }
-    });
+    .option("--open", "Open the generated pages in your browser")
+    .action(runViz);
+
+  program
+    .command("viz")
+    .description("Shortcut for `graph viz`")
+    .option("-p, --project <slug>", "Project slug")
+    .option("--open", "Open the generated pages in your browser")
+    .action(runViz);
 
   program
     .command("qa")
@@ -778,6 +808,291 @@ export function createProgram(): Command {
             console.log(`  ${r.path}: ${r.snippet.slice(0, 100)}`);
           }
         }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  function parseJsonObjectArray(json: string, flag: string): Array<Record<string, unknown>> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new Error(`Invalid JSON in ${flag}: ${json}`);
+    }
+    if (!Array.isArray(parsed)) throw new Error(`${flag} must be a JSON array`);
+    for (const [index, item] of parsed.entries()) {
+      if (item === null || typeof item !== "object") {
+        throw new Error(`${flag}[${index}] must be an object`);
+      }
+    }
+    return parsed as Array<Record<string, unknown>>;
+  }
+
+  // ── link ─────────────────────────────────────────────
+  program
+    .command("link <source> <target>")
+    .description("Create a forward [[wikilink]] between vault notes")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (source: string, target: string, opts: { project?: string }) => {
+      try {
+        const { linkCommand } = await import("./commands/link.js");
+        const result = await linkCommand({ source, target, project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── extract ──────────────────────────────────────────
+  program
+    .command("extract <source>")
+    .description("Extract items from a source note into individual vault files")
+    .requiredOption("--items <json>", "JSON array of {type, title, content}")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (source: string, opts: { items: string; project?: string }) => {
+      try {
+        const { extractCommand } = await import("./commands/extract.js");
+        const items = parseJsonObjectArray(opts.items, "--items") as Array<{ type: string; title: string; content: string }>;
+        const result = await extractCommand({ source, items, project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── capture ──────────────────────────────────────────
+  program
+    .command("capture")
+    .description("Batch-capture insights into individual vault items")
+    .requiredOption("--items <json>", "JSON array of {type, title, content, tags?, confidence?}")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (opts: { items: string; project?: string }) => {
+      try {
+        const { captureCommand } = await import("./commands/capture.js");
+        const items = parseJsonObjectArray(opts.items, "--items") as Array<{
+          type: string;
+          title: string;
+          content: string;
+          tags?: string[];
+          confidence?: "high" | "medium" | "low";
+        }>;
+        const result = await captureCommand({ items, project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── template ─────────────────────────────────────────
+  program
+    .command("template [type]")
+    .description("List vault item templates or render one (adr, prd, learning, spec, ...)")
+    .option("--variables <json>", "JSON object of variables to substitute")
+    .action(async (type: string | undefined, opts: { variables?: string }) => {
+      try {
+        const { listTemplates, applyTemplate } = await import("./lib/templates.js");
+        if (!type) {
+          console.log(listTemplates().join("\n"));
+          return;
+        }
+        let variables: Record<string, string> = {};
+        if (opts.variables) {
+          const parsed: unknown = JSON.parse(opts.variables);
+          if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("--variables must be a JSON object");
+          }
+          variables = parsed as Record<string, string>;
+        }
+        const result = applyTemplate(type, variables);
+        if (!result) throw new Error(`No template found for type: ${type}`);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── snapshot ─────────────────────────────────────────
+  program
+    .command("snapshot")
+    .description("Snapshot repository state (branch, dirty files, last commit) into the vault")
+    .option("-b, --branch <name>", "Current git branch")
+    .option("--dirty-files <paths...>", "Dirty/uncommitted files")
+    .option("--last-commit <hash>", "Last commit hash or message")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (opts: { branch?: string; dirtyFiles?: string[]; lastCommit?: string; project?: string }) => {
+      try {
+        const { snapshotRepoState } = await import("./commands/snapshot.js");
+        const result = await snapshotRepoState({
+          project: opts.project,
+          branch: opts.branch,
+          dirty_files: opts.dirtyFiles,
+          last_commit: opts.lastCommit,
+        }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── env-facts ────────────────────────────────────────
+  const envFactsCmd = program
+    .command("env-facts")
+    .description("Store and query stable environment facts (not secrets)");
+
+  envFactsCmd
+    .command("add <key> <value>")
+    .description("Add or update an environment fact")
+    .option("--context <text>", "Additional context for the fact")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (key: string, value: string, opts: { context?: string; project?: string }) => {
+      try {
+        const { envFactsCommand } = await import("./commands/snapshot.js");
+        const result = await envFactsCommand({
+          action: "add",
+          key,
+          value,
+          context: opts.context,
+          project: opts.project,
+        }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  envFactsCmd
+    .command("list")
+    .description("List stored environment facts")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (opts: { project?: string }) => {
+      try {
+        const { envFactsCommand } = await import("./commands/snapshot.js");
+        const result = await envFactsCommand({ action: "list", project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── cred-refs ────────────────────────────────────────
+  const credRefsCmd = program
+    .command("cred-refs")
+    .description("Store pointers to where credentials are documented (not the credentials themselves)");
+
+  credRefsCmd
+    .command("add <name> <location>")
+    .description("Add or update a credential reference")
+    .option("--notes <text>", "Additional notes")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (name: string, location: string, opts: { notes?: string; project?: string }) => {
+      try {
+        const { credRefsCommand } = await import("./commands/snapshot.js");
+        const result = await credRefsCommand({
+          action: "add",
+          name,
+          location,
+          notes: opts.notes,
+          project: opts.project,
+        }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  credRefsCmd
+    .command("list")
+    .description("List credential references")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (opts: { project?: string }) => {
+      try {
+        const { credRefsCommand } = await import("./commands/snapshot.js");
+        const result = await credRefsCommand({ action: "list", project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── rollback ─────────────────────────────────────────
+  const rollbackCmd = program
+    .command("rollback")
+    .description("Manage rollback checkpoints (commit hash + purpose)");
+
+  rollbackCmd
+    .command("add <commit-hash>")
+    .description("Store a rollback checkpoint")
+    .requiredOption("--purpose <text>", "Purpose of the checkpoint")
+    .option("--scope <text>", "Scope of changes in the checkpoint")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (commitHash: string, opts: { purpose: string; scope?: string; project?: string }) => {
+      try {
+        const { rollbackCommand } = await import("./commands/snapshot.js");
+        const result = await rollbackCommand({
+          action: "add",
+          commit_hash: commitHash,
+          purpose: opts.purpose,
+          scope: opts.scope,
+          project: opts.project,
+        }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  rollbackCmd
+    .command("list")
+    .description("List rollback checkpoints")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (opts: { project?: string }) => {
+      try {
+        const { rollbackCommand } = await import("./commands/snapshot.js");
+        const result = await rollbackCommand({ action: "list", project: opts.project }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  rollbackCmd
+    .command("mark-follow-up <checkpoint-id>")
+    .description("Mark that follow-up work started after a checkpoint")
+    .option("-p, --project <slug>", "Project slug")
+    .action(async (checkpointId: string, opts: { project?: string }) => {
+      try {
+        const { rollbackCommand } = await import("./commands/snapshot.js");
+        const result = await rollbackCommand({
+          action: "mark-follow-up",
+          checkpoint_id: checkpointId,
+          project: opts.project,
+        }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
@@ -942,12 +1257,19 @@ export function createProgram(): Command {
     .action(async (task: string | undefined, opts: { skillId?: string }) => {
       try {
         const result = await activateSkills({ task, skill_id: opts.skillId }, await createScopedCtx());
+        const writeWarnings = () => {
+          for (const warning of result.warnings) {
+            process.stderr.write(`${warning}\n`);
+          }
+        };
         if (!result.success && result.error) {
+          writeWarnings();
           process.stderr.write(`Error: ${result.error}\n`);
           process.exit(1);
         }
         if (result.skills_loaded.length === 0) {
           process.stderr.write(result.content ? result.content + "\n" : `No skills matched for: "${task}"\n`);
+          writeWarnings();
           return;
         }
         process.stderr.write(`Loaded ${result.skills_loaded.length} skill(s)\n`);
@@ -955,6 +1277,7 @@ export function createProgram(): Command {
           process.stderr.write(`  -> ${s.id} (${s.source})\n`);
         }
         process.stderr.write(`  ~${result.total_tokens} tokens\n`);
+        writeWarnings();
         process.stdout.write(result.content);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -1054,8 +1377,17 @@ export function createProgram(): Command {
     .action(async () => {
       try {
         const result = await statusCommand({}, await createScopedCtx());
+        const writeAlerts = () => {
+          if (result.unaudited_count > 0) {
+            process.stderr.write(`Unaudited skills (${result.unaudited_count}): ${result.unaudited_skills.join(", ")}\n`);
+          }
+          for (const warning of result.warnings) {
+            process.stderr.write(`${warning}\n`);
+          }
+        };
         if (!result.initialized) {
           console.log("Superskill not initialized. Run: superskill skill init");
+          writeAlerts();
           return;
         }
         console.log(`Project: stack=[${result.project?.stack.join(", ") ?? ""}] tools=[${result.project?.tools.join(", ") ?? ""}] phase=${result.project?.phase}`);
@@ -1072,6 +1404,7 @@ export function createProgram(): Command {
         }
         console.log(`\nTotal activations: ${result.total_activations}`);
         console.log(`Graph: ${result.graph_path}`);
+        writeAlerts();
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);

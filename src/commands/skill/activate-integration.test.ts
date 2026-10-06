@@ -3,19 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdir, rm, writeFile, readFile, utimes } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { activateSkills } from "./activate.js";
+import { activateSkills, installedSkillNameForId } from "./activate.js";
+import { _resetInstallDir, _setInstallDir } from "../../lib/skill-installer.js";
 import type { CommandContext } from "../../core/types.js";
 import type { Graph } from "../../lib/graph/schema.js";
-
-vi.mock("../../lib/skills-sh/cli.js", () => ({
-  findSkills: async () => [],
-}));
-
-vi.mock("../../lib/skills-sh/audit-cache.js", () => ({
-  getAudit: async () => null,
-  isStale: () => true,
-  refreshAudit: async () => null,
-}));
 
 function createMockCtx(projectDir: string): CommandContext {
   return {
@@ -68,14 +59,30 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     projectDir = join(tmpdir(), `superskill-activate-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(projectDir, { recursive: true });
     await mkdir(join(projectDir, ".superskill"), { recursive: true });
+    _setInstallDir(join(projectDir, "installed-skills"));
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
   });
 
   afterEach(async () => {
+    _resetInstallDir();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await rm(projectDir, { recursive: true, force: true }).catch(() => {});
   });
+
+  async function installSkillDir(name: string, unaudited: boolean): Promise<string> {
+    const dir = join(projectDir, "installed-skills", name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "SKILL.md"),
+      `---\nname: ${name}\ndescription: ${name} installed\n---\n# ${name}`,
+      "utf-8",
+    );
+    if (unaudited) {
+      await writeFile(join(dir, ".unaudited-superskill"), JSON.stringify({ unaudited: true }), "utf-8");
+    }
+    return dir;
+  }
 
   it("returns error when graph is empty", async () => {
     const emptyGraph: Graph = { nodes: [], edges: [] };
@@ -265,5 +272,51 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
       expect.objectContaining({ id: skillId, stale: true }),
     );
     expect(result.warnings.some((w) => w.includes("stale"))).toBe(true);
+  });
+
+  it("warns when an activated skill was installed without a skills.sh audit", async () => {
+    const skillId = "owner/repo@unaudited-skill";
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(createTestGraph([{ id: skillId, w: 0.9 }])),
+    );
+    const cacheDir = join(projectDir, ".superskill", "skill-cache", "owner", "repo", "unaudited-skill");
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, "SKILL.md"), "# Unaudited skill\n\nBody marker.", "utf-8");
+    await installSkillDir("unaudited-skill", true);
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: skillId }, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.skills_loaded.map((s) => s.id)).toContain(skillId);
+    expect(result.warnings.some((w) => w.includes("without a skills.sh audit"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes(skillId))).toBe(true);
+  });
+
+  it("stays clean when an activated skill has no unaudited marker", async () => {
+    const skillId = "owner/repo@audited-skill";
+    await writeFile(
+      join(projectDir, ".superskill", "graph.json"),
+      JSON.stringify(createTestGraph([{ id: skillId, w: 0.9 }])),
+    );
+    const cacheDir = join(projectDir, ".superskill", "skill-cache", "owner", "repo", "audited-skill");
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, "SKILL.md"), "# Audited skill\n\nBody marker.", "utf-8");
+    await installSkillDir("audited-skill", false);
+
+    const ctx = createMockCtx(projectDir);
+    const result = await activateSkills({ skill_id: skillId }, ctx);
+
+    expect(result.success).toBe(true);
+    expect(result.skills_loaded.map((s) => s.id)).toContain(skillId);
+    expect(result.warnings.some((w) => w.includes("without a skills.sh audit"))).toBe(false);
+  });
+
+  it("maps skill ids to installed skill directory names", () => {
+    expect(installedSkillNameForId("native/marked-native")).toBe("marked-native");
+    expect(installedSkillNameForId("owner/repo@unaudited-skill")).toBe("unaudited-skill");
+    expect(installedSkillNameForId("owner/repo@nested@name")).toBe("nested@name");
+    expect(installedSkillNameForId("code/react-patterns")).toBeNull();
   });
 });

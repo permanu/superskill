@@ -28,6 +28,7 @@ import {
 import type { ParsedPrinciple, PrinciplesIndex } from "../../rules/principles.js";
 import { route } from "../../rules/router.js";
 import { buildActivationEvent, recordTelemetryEvent } from "../../telemetry/recorder.js";
+import { findUnauditedInstalledSkills, UNAUDITED_MARKER } from "./status.js";
 
 const FALLBACK_CONTEXT_WINDOW = 128_000;
 
@@ -148,6 +149,12 @@ function layerTokens(items: ReadonlyArray<{ id: string; tokens: number }>, ids: 
     if (ids.has(item.id)) used += item.tokens;
   }
   return used;
+}
+
+export function installedSkillNameForId(skillId: string): string | null {
+  if (skillId.startsWith("native/")) return skillId.slice("native/".length);
+  const at = skillId.indexOf("@");
+  return at === -1 ? null : skillId.slice(at + 1);
 }
 
 export async function activateSkills(
@@ -398,6 +405,19 @@ export async function activateSkills(
         source: "graph",
         ...(staleIds.has(item.id) ? { stale: true } : {}),
       }));
+
+    if (loadedSkills.length > 0) {
+      const unauditedInstalled = new Set(await findUnauditedInstalledSkills());
+      for (const skill of loadedSkills) {
+        const installedName = installedSkillNameForId(skill.id);
+        if (installedName !== null && unauditedInstalled.has(installedName)) {
+          warnings.push(
+            `WARN: ${skill.id} was installed without a skills.sh audit (${UNAUDITED_MARKER}); treat it as untrusted until audited`,
+          );
+        }
+      }
+    }
+
     const finalContent = items.map((item) => item.content).join("\n\n---\n\n");
 
     let updatedGraph = graph;

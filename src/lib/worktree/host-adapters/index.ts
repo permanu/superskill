@@ -18,8 +18,8 @@ export {
   readTextSafe,
   writeJsonAtomic,
   writeTextAtomic,
-} from "./claude.js";
-export type { HookAdapterSpec } from "./claude.js";
+} from "./helpers.js";
+export type { HookAdapterSpec } from "./helpers.js";
 
 const LOG_PREFIX = "[host-adapters]";
 

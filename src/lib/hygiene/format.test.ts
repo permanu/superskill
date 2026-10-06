@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatHygieneReport } from "./format.js";
+import { formatHygieneReport } from "./format.js";
 import type { HygieneReport } from "./types.js";
 
 const GB = 1024 ** 3;
@@ -78,19 +78,6 @@ const report: HygieneReport = {
   },
   skipped: [{ probe: "xcode", reason: "xcode-select not found" }],
 };
-
-describe("formatBytes", () => {
-  it("mirrors the worktree audit formatting", () => {
-    expect(formatBytes(null)).toBe("unknown");
-    expect(formatBytes(Number.NaN)).toBe("unknown");
-    expect(formatBytes(0)).toBe("0 B");
-    expect(formatBytes(512)).toBe("512 B");
-    expect(formatBytes(1024)).toBe("1 KB");
-    expect(formatBytes(1536)).toBe("1.5 KB");
-    expect(formatBytes(100 * MB)).toBe("100 MB");
-    expect(formatBytes(12.5 * GB)).toBe("12.5 GB");
-  });
-});
 
 describe("formatHygieneReport", () => {
   it("renders the header, grouped items, plans, skips, and footer", () => {

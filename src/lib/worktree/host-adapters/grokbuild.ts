@@ -2,7 +2,7 @@
 import { rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { backupOnce, isSuperskillBootstrapCommand, readJsonSafe, writeJsonAtomic } from "./index.js";
+import { backupOnce, isSuperskillBootstrapCommand, readJsonSafe, writeJsonAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "grokbuild";

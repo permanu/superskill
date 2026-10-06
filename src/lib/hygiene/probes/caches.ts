@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
+import { formatBytes } from "../../format-bytes.js";
 import { probeDirAge, probeDirSize } from "../../worktree/audit.js";
 import {
   inferTool,
@@ -45,19 +46,6 @@ interface DefaultCacheEntry {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function formatBytes(bytes: number | null): string {
-  if (bytes === null || !Number.isFinite(bytes)) return "unknown size";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
 }
 
 function quoteShell(value: string): string {
@@ -108,7 +96,7 @@ function managedItem(
     due: isDue(candidate.tier, bytes, candidate.ageDays, policy),
     reason:
       candidate.tier === "consent"
-        ? `large cache (${formatBytes(bytes)}), ${ageLabel(candidate.ageDays)} — consent required`
+        ? `large cache (${formatBytes(bytes, { nullLabel: "unknown size", maxUnit: "TB" })}), ${ageLabel(candidate.ageDays)} — consent required`
         : `rebuildable cache, ${ageLabel(candidate.ageDays)} (auto tier)`,
     plan,
     meta: { repoId: candidate.repoId, tool: candidate.tool, tier: candidate.tier },

@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createHookAdapter } from "./claude.js";
+import { createHookAdapter } from "./helpers.js";
 import type { HostAdapter } from "./types.js";
 
 export const codexAdapter: HostAdapter = createHookAdapter({

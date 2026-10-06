@@ -111,7 +111,7 @@ async function collectSkillFiles(
   }
 }
 
-async function parseNativeSkillFile(filePath: string): Promise<{
+export interface ParsedNativeSkill {
   name: string;
   audits?: AuditResult;
   installs?: number;
@@ -121,24 +121,61 @@ async function parseNativeSkillFile(filePath: string): Promise<{
   langs?: string[];
   triggers?: string[];
   always?: boolean;
-} | null> {
+}
+
+const TRIGGER_STOPWORDS: ReadonlySet<string> = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "some", "any", "all",
+  "both", "each", "every", "no", "not", "only", "own", "same", "such",
+  "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
+  "through", "during", "before", "after", "above", "below", "between", "out",
+  "off", "over", "under", "about", "up", "to",
+  "and", "or", "but", "if", "while", "because", "so", "than", "then", "when",
+  "where", "why", "how", "once", "again", "further",
+  "it", "its", "my", "me", "i", "we", "our", "you", "your", "he", "she",
+  "they", "them", "their", "his", "her",
+  "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+  "do", "does", "did", "will", "would", "could", "should", "may", "might",
+  "shall", "can", "must", "need",
+  "use", "uses", "used", "using", "user", "users", "want", "wants", "wanted",
+  "ask", "asks", "asked", "help", "helps", "helping", "make", "makes",
+  "making", "get", "gets", "give", "gives", "let", "lets", "try", "tries",
+  "find", "finds", "show", "shows", "provide", "provides", "including",
+  "include", "includes", "ensure", "ensures", "allow", "allows", "enable",
+  "enables", "support", "supports", "also", "via", "like", "well", "skill",
+  "skills", "whenever",
+]);
+
+const SHORT_TRIGGER_ALLOWLIST: ReadonlySet<string> = new Set([
+  "ui", "ux", "ai", "qa", "db", "ci", "ml", "xr", "vr", "ar", "3d",
+]);
+
+const MAX_DERIVED_TRIGGERS = 24;
+
+export function deriveTriggers(name: string, description: string): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  const tokens = `${name} ${description}`.toLowerCase().split(/[^a-z0-9]+/);
+
+  for (const token of tokens) {
+    if (token === "" || seen.has(token)) continue;
+    if (token.length < 3 && !SHORT_TRIGGER_ALLOWLIST.has(token)) continue;
+    if (TRIGGER_STOPWORDS.has(token)) continue;
+    seen.add(token);
+    terms.push(token);
+    if (terms.length >= MAX_DERIVED_TRIGGERS) break;
+  }
+
+  return terms;
+}
+
+export async function parseNativeSkillFile(filePath: string): Promise<ParsedNativeSkill | null> {
   try {
     const content = await readFile(filePath, "utf-8");
     const { data } = matter(content);
     const name = typeof data.name === "string" ? data.name : "";
     if (!name) return null;
 
-    const result: {
-      name: string;
-      audits?: AuditResult;
-      installs?: number;
-      stars?: number;
-      source?: string;
-      pack?: SkillPack;
-      langs?: string[];
-      triggers?: string[];
-      always?: boolean;
-    } = { name };
+    const result: ParsedNativeSkill = { name };
 
     if (data.audits && typeof data.audits === "object") {
       const a = data.audits as Record<string, unknown>;
@@ -154,7 +191,15 @@ async function parseNativeSkillFile(filePath: string): Promise<{
     if (typeof data.source === "string") result.source = data.source;
     if (typeof data.pack === "string") result.pack = data.pack as SkillPack;
     if (Array.isArray(data.langs)) result.langs = data.langs.filter((v): v is string => typeof v === "string");
-    if (Array.isArray(data.triggers)) result.triggers = data.triggers.filter((v): v is string => typeof v === "string");
+    const explicitTriggers = Array.isArray(data.triggers)
+      ? data.triggers.filter((v): v is string => typeof v === "string")
+      : [];
+    if (explicitTriggers.length > 0) {
+      result.triggers = explicitTriggers;
+    } else if (typeof data.description === "string" && data.description.trim() !== "") {
+      const derived = deriveTriggers(name, data.description);
+      if (derived.length > 0) result.triggers = derived;
+    }
     if (data.always === true) result.always = true;
 
     return result;

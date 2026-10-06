@@ -8,7 +8,7 @@ import {
   isSuperskillBootstrapCommand,
   readJsonSafe,
   writeJsonAtomic,
-} from "./index.js";
+} from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "cursor";

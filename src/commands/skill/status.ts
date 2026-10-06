@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph } from "../../lib/graph/store.js";
 import { findNodes, findNode } from "../../lib/graph/store.js";
+import { listInstalledSkills } from "../../lib/skill-installer.js";
 import type { SkillNode, ProjectNode, SessionNode } from "../../lib/graph/schema.js";
+
+export const UNAUDITED_MARKER = ".unaudited-superskill";
 
 export interface StatusResult {
   initialized: boolean;
@@ -25,6 +29,25 @@ export interface StatusResult {
   }>;
   total_activations: number;
   graph_path: string;
+  unaudited_count: number;
+  unaudited_skills: string[];
+  warnings: string[];
+}
+
+export async function findUnauditedInstalledSkills(): Promise<string[]> {
+  const names: string[] = [];
+  for (const skill of await listInstalledSkills()) {
+    try {
+      await stat(join(skill.dir, UNAUDITED_MARKER));
+      names.push(skill.name);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        console.error(`[skill-status] failed to check ${UNAUDITED_MARKER} for ${skill.name}: ${(err as Error).message}`);
+      }
+    }
+  }
+  return names.sort();
 }
 
 function auditSummary(audits: { gen: string; socket: string; snyk: string }): string {
@@ -41,6 +64,10 @@ export async function statusCommand(
 ): Promise<StatusResult> {
   const projectDir = process.cwd();
   const graph = await loadGraph(projectDir);
+  const unauditedSkills = await findUnauditedInstalledSkills();
+  const warnings = unauditedSkills.length > 0
+    ? [`WARN: ${unauditedSkills.length} installed skill(s) were installed without a skills.sh audit: ${unauditedSkills.join(", ")}. Audit before use.`]
+    : [];
 
   if (graph.nodes.length === 0) {
     return {
@@ -51,6 +78,9 @@ export async function statusCommand(
       sessions: [],
       total_activations: 0,
       graph_path: join(projectDir, ".superskill", "graph.json"),
+      unaudited_count: unauditedSkills.length,
+      unaudited_skills: unauditedSkills,
+      warnings,
     };
   }
 
@@ -88,5 +118,8 @@ export async function statusCommand(
     sessions,
     total_activations: totalActivations,
     graph_path: join(projectDir, ".superskill", "graph.json"),
+    unaudited_count: unauditedSkills.length,
+    unaudited_skills: unauditedSkills,
+    warnings,
   };
 }
