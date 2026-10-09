@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, readdir, stat, open } from "fs/promises";
+import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, readdir, stat, utimes, realpath } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { SessionRegistryManager } from "./session-registry.js";
@@ -163,8 +163,7 @@ describe("SessionRegistryManager", () => {
     });
 
     it("returns empty array when no active sessions", async () => {
-      const active = await manager.listActive();
-      expect(active).toEqual([]);
+      expect(await manager.listActive()).toEqual([]);
     });
 
     it("deletes stale sessions and persists the change", async () => {
@@ -203,15 +202,47 @@ describe("SessionRegistryManager", () => {
       expect(parsed.sessions.length).toBe(5);
     });
 
-    it("removes stale locks", async () => {
-      const locksDir = join(vaultRoot, "coordination/locks");
-      await mkdir(locksDir, { recursive: true });
-      
-      const lockPath = join(locksDir, "session-registry.lock");
-      await fspWriteFile(lockPath, JSON.stringify({ pid: 999999999, timestamp: new Date().toISOString() }));
-      
-      const { session_id } = await manager.register("claude-code", "proj");
-      expect(session_id).toBeDefined();
+    it("leaves abandoned locks intact and reports the recovery path", async () => {
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
+      const content = JSON.stringify({ pid: 999999999, token: "abandoned" });
+      await fspWriteFile(lockPath, content);
+      await expect(manager.register("claude-code", "proj")).rejects.toThrow(lockPath);
+      expect(await fspReadFile(lockPath, "utf-8")).toBe(content);
+    });
+
+    it("does not steal an old live lock from another promise in the same process", async () => {
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      const withLock = (manager as unknown as { withLock<T>(fn: () => Promise<T>): Promise<T> }).withLock.bind(manager);
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const owner = withLock(async () => {
+        const old = new Date(Date.now() - 60_000);
+        await utimes(lockPath, old, old);
+        entered();
+        await held;
+      });
+      await started;
+      let secondEntered = false;
+      const contender = withLock(async () => { secondEntered = true; });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const stolen = secondEntered;
+      release();
+      await Promise.all([owner, contender]);
+      expect(stolen).toBe(false);
+      expect(secondEntered).toBe(true);
+    });
+
+    it("does not release another acquisition with the same PID and different token", async () => {
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
+      const content = JSON.stringify({ pid: process.pid, token: "new-owner" });
+      await fspWriteFile(lockPath, content);
+      const releaseLock = (manager as unknown as { releaseLock(path: string, token: string): Promise<void> }).releaseLock.bind(manager);
+      await releaseLock(lockPath, "old-owner");
+      expect(await fspReadFile(lockPath, "utf-8")).toBe(content);
     });
 
     it("allows sequential acquisitions and releases the lock", async () => {
@@ -226,7 +257,14 @@ describe("SessionRegistryManager", () => {
   });
 
   describe("readRegistry validation", () => {
-    it("handles malformed session entries", async () => {
+    it("fails closed when the registry cannot be read", async () => {
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      await mkdir(registryPath, { recursive: true });
+      await expect(manager.get("missing")).rejects.toMatchObject({ code: "EISDIR" });
+      expect((await stat(registryPath)).isDirectory()).toBe(true);
+    });
+
+    it("rejects malformed session entries without dropping evidence", async () => {
       const registryPath = join(vaultRoot, "coordination/session-registry.json");
       await mkdir(join(vaultRoot, "coordination"), { recursive: true });
       
@@ -243,11 +281,8 @@ describe("SessionRegistryManager", () => {
       
       await fspWriteFile(registryPath, JSON.stringify(malformedData));
       
-      const active = await manager.listActive();
-      
-      const validIds = active.map(s => s.id);
-      expect(validIds).toContain("valid-1");
-      expect(validIds).not.toContain("valid-2");
+      await expect(manager.listActive()).rejects.toThrow(/session registry/i);
+      expect(JSON.parse(await fspReadFile(registryPath, "utf-8"))).toEqual(malformedData);
     });
 
     it("handles non-array sessions field", async () => {
@@ -255,8 +290,7 @@ describe("SessionRegistryManager", () => {
       await mkdir(join(vaultRoot, "coordination"), { recursive: true });
       await fspWriteFile(registryPath, JSON.stringify({ sessions: "not-an-array" }));
       
-      const active = await manager.listActive();
-      expect(active).toEqual([]);
+      await expect(manager.listActive()).rejects.toThrow(/session registry/i);
     });
 
     it("handles missing sessions field", async () => {
@@ -264,31 +298,136 @@ describe("SessionRegistryManager", () => {
       await mkdir(join(vaultRoot, "coordination"), { recursive: true });
       await fspWriteFile(registryPath, JSON.stringify({}));
       
-      const active = await manager.listActive();
-      expect(active).toEqual([]);
+      await expect(manager.listActive()).rejects.toThrow(/session registry/i);
     });
 
-    it("preserves a corrupt registry and starts fresh", async () => {
-      const coordinationDir = join(vaultRoot, "coordination");
-      const registryPath = join(coordinationDir, "session-registry.json");
-      await mkdir(coordinationDir, { recursive: true });
-      await fspWriteFile(registryPath, "{ this is not json");
+    it("preserves corrupt registry bytes and requires explicit repair", async () => {
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      await mkdir(join(vaultRoot, "coordination"), { recursive: true });
+      const raw = "{ this is not json";
+      await fspWriteFile(registryPath, raw);
+      await expect(manager.listActive()).rejects.toThrow(/session registry/i);
+      await expect(manager.register("claude-code", "proj")).rejects.toThrow(/session registry/i);
+      expect(await fspReadFile(registryPath, "utf-8")).toBe(raw);
+    });
 
-      const active = await manager.listActive();
-      expect(active).toEqual([]);
-
-      const entries = await readdir(coordinationDir);
-      const quarantined = entries.filter((name) => name.startsWith("session-registry.json.corrupt-"));
-      expect(quarantined).toHaveLength(1);
-      expect(await fspReadFile(join(coordinationDir, quarantined[0]), "utf-8")).toBe("{ this is not json");
-
-      const result = await manager.register("claude-code", "proj");
-      expect(result.session_id).toBeDefined();
-
-      const parsed = JSON.parse(await fspReadFile(registryPath, "utf-8"));
-      expect(parsed.sessions).toHaveLength(1);
+    it("never removes malformed active workspace evidence before maintenance", async () => {
+      const workspace = join(vaultRoot, "workspace");
+      await mkdir(workspace);
+      const completed = await manager.register("codex", "proj", null, [], workspace);
+      await manager.complete(completed.session_id);
+      const path = join(vaultRoot, "coordination/session-registry.json");
+      const registry = JSON.parse(await fspReadFile(path, "utf-8"));
+      registry.sessions.push({ ...registry.sessions[0], id: "active-malformed", status: "active", completed_at: null, files_touched: null });
+      const raw = JSON.stringify(registry);
+      await fspWriteFile(path, raw);
+      for (const operation of [
+        () => manager.register("other", "proj"),
+        () => manager.heartbeat(completed.session_id),
+        () => manager.complete(completed.session_id),
+        () => manager.listActive(),
+        () => manager.get(completed.session_id),
+        () => manager.acknowledgeWorkspaceRemoval(workspace),
+      ]) {
+        await expect(operation()).rejects.toThrow(/session registry/i);
+        expect(await fspReadFile(path, "utf-8")).toBe(raw);
+      }
+      await expect(manager.listForMaintenance()).rejects.toThrow(/session registry/i);
     });
   });
+  describe("workspace maintenance provenance", () => {
+    it("retains workspace active and completed sessions across expiry", async () => {
+      const activePath = join(await realpath(vaultRoot), "active");
+      const completedPath = join(await realpath(vaultRoot), "completed");
+      await mkdir(activePath);
+      await mkdir(completedPath);
+      const active = await manager.register("codex", "proj", null, [], activePath);
+      const completed = await manager.register("codex", "proj", null, [], completedPath);
+      const ordinary = await manager.register("codex", "proj");
+      await manager.complete(completed.session_id);
+      const path = join(vaultRoot, "coordination/session-registry.json");
+      const registry = JSON.parse(await fspReadFile(path, "utf-8"));
+      for (const session of registry.sessions) {
+        session.last_heartbeat = "2000-01-01T00:00:00.000Z";
+        if (session.status === "completed") session.completed_at = session.last_heartbeat;
+      }
+      await fspWriteFile(path, JSON.stringify(registry));
+      const before = await fspReadFile(path, "utf-8");
+      expect(await manager.listForMaintenance()).toHaveLength(3);
+      expect(await fspReadFile(path, "utf-8")).toBe(before);
+      expect((await manager.listActive()).map(s => s.id)).toContain(active.session_id);
+      expect((await manager.listActive()).map(s => s.id)).not.toContain(ordinary.session_id);
+      await manager.register("other", "proj");
+      expect((await manager.get(completed.session_id))?.workspace_path).toBe(completedPath);
+      await manager.acknowledgeWorkspaceRemoval(completedPath);
+      await manager.acknowledgeWorkspaceRemoval(activePath);
+      expect((await manager.get(active.session_id))?.workspace_path).toBe(activePath);
+      await manager.register("other", "proj");
+      expect(await manager.get(completed.session_id)).toBeNull();
+    });
+
+    it("holds the registry lock until maintenance finishes", async () => {
+      const workspace = join(vaultRoot, "workspace");
+      await mkdir(workspace);
+      const session = await manager.register("codex", "proj", null, [], workspace);
+      let enter!: () => void;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const maintenance = manager.withMaintenanceSessions(async sessions => {
+        expect(sessions).toHaveLength(1);
+        enter();
+        await gate;
+        return "done";
+      });
+      await entered;
+      let registered = false;
+      let heartbeat = false;
+      const other = new SessionRegistryManager(vaultRoot, 1);
+      const registration = other.register("other", "proj").then(() => { registered = true; });
+      const beat = other.heartbeat(session.session_id).then(() => { heartbeat = true; });
+      await new Promise(resolve => setTimeout(resolve, 70));
+      expect(registered).toBe(false);
+      expect(heartbeat).toBe(false);
+      release();
+      expect(await maintenance).toBe("done");
+      await Promise.all([registration, beat]);
+      expect(registered && heartbeat).toBe(true);
+    });
+
+    it("rejects registration when maintenance removed its previously existing workspace", async () => {
+      const workspace = join(vaultRoot, "workspace");
+      await mkdir(workspace);
+      let enter!: () => void;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const maintenance = manager.withMaintenanceSessions(async () => {
+        enter();
+        await gate;
+        await rm(workspace, { recursive: true });
+      });
+      await entered;
+      const registration = manager.register("codex", "proj", null, [], workspace);
+      const rejected = expect(registration).rejects.toThrow(/workspace_path/);
+      release();
+      await maintenance;
+      await rejected;
+      expect(await manager.listForMaintenance()).toEqual([]);
+    });
+
+    it("fails closed for corrupt maintenance snapshots without modifying evidence", async () => {
+      const dir = join(vaultRoot, "coordination");
+      const path = join(dir, "session-registry.json");
+      await mkdir(dir, { recursive: true });
+      for (const raw of ["not json", JSON.stringify({ sessions: [{id:"unsafe",workspace_path:"/work/repo"}] })]) {
+        await fspWriteFile(path, raw);
+        await expect(manager.listForMaintenance()).rejects.toThrow(/registry/i);
+        expect(await fspReadFile(path, "utf-8")).toBe(raw);
+      }
+    });
+  });
+
 });
 
 

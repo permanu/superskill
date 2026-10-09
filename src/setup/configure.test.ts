@@ -35,7 +35,7 @@ describe("buildMcpEntry", () => {
     const entry = buildMcpEntry("string", "env", "~/Vaults/ai");
     expect(entry).toEqual({
       command: "npx",
-      args: ["-y", "superskill"],
+      args: ["-y", "--prefer-online", "superskill@latest"],
       env: { VAULT_PATH: "~/Vaults/ai" },
     });
   });
@@ -44,7 +44,7 @@ describe("buildMcpEntry", () => {
     const entry = buildMcpEntry("array", "environment", "~/Vaults/ai", { type: "local" });
     expect(entry).toEqual({
       type: "local",
-      command: ["npx", "-y", "superskill"],
+      command: ["npx", "-y", "--prefer-online", "superskill@latest"],
       environment: { VAULT_PATH: "~/Vaults/ai" },
     });
   });
@@ -92,6 +92,18 @@ describe("configureClient", () => {
     const result = configureClient(makeDetected("codex"), "~/Vaults/ai");
     expect(result.mcpConfigured).toBe(true);
     expect(writeFileSync).toHaveBeenCalled();
+  });
+
+  it("escapes vault paths as a single TOML string value", () => {
+    mockExists.mockReturnValue(false);
+    vi.mocked(insertTomlBlock).mockReturnValue("toml content");
+    const path = '~/Vaults/a"b\\c\n[mcp_servers.injected]\u007f';
+    configureClient(makeDetected("codex"), path);
+    const block = vi.mocked(insertTomlBlock).mock.calls[0][1];
+    expect(block.split("\n")).toHaveLength(6);
+    const encoded = block.split("\n").at(-1)!.slice("VAULT_PATH = ".length);
+    expect(JSON.parse(encoded)).toBe(path);
+    expect(encoded).not.toContain("\u007f");
   });
 
   it("skips TOML when block already exists", () => {

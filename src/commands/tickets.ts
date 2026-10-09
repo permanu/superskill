@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { serializeFrontmatter, createFrontmatter, mergeFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { claimNumberedFile, getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedBatch, getNextNumber, slugify } from "../lib/auto-number.js";
 import {
   normalizeAcceptance,
   validateAcceptance,
@@ -107,35 +107,34 @@ export async function ticketsCommand(
         }
       }
 
-      const created: Array<{ ticket_id: string; title: string; path: string }> = [];
-
-      for (const { input, number, acceptance, blockedBy } of planned) {
-        const fm = createFrontmatter({
-          type: "ticket",
-          project: projectSlug,
-          spec: specPath,
-          spec_hash: loadedSpec.hash,
-          status: "backlog",
-          blocked_by: blockedBy,
-          requires_review: input.requiresReview === true,
-          acceptance,
-          evidence: [],
-        });
-
-        const claim = await claimNumberedFile(
-          ctx.vaultFs,
-          ticketsDir,
-          (_number, padded) => `ticket-${padded}-${slugify(input.title)}.md`,
-          () => serializeFrontmatter(fm, `# ${input.title.trim()}\n`),
-          { startAt: number },
-        );
-
-        created.push({
-          ticket_id: `ticket-${String(claim.number).padStart(3, "0")}`,
-          title: input.title.trim(),
-          path: claim.path,
-        });
-      }
+      const claims = await claimNumberedBatch(
+        ctx.vaultFs,
+        ticketsDir,
+        planned.length,
+        (index, _number, padded) => `ticket-${padded}-${slugify(planned[index].input.title)}.md`,
+        (index, reserved) => {
+          const { input, acceptance, blockedBy } = planned[index];
+          const actualIds = new Map(planned.map((entry, position) => [entry.id, `ticket-${String(reserved[position].number).padStart(3, "0")}`]));
+          const fm = createFrontmatter({
+            type: "ticket",
+            project: projectSlug,
+            spec: specPath,
+            spec_hash: loadedSpec.hash,
+            status: "backlog",
+            blocked_by: blockedBy.map((id) => actualIds.get(id) ?? id),
+            requires_review: input.requiresReview === true,
+            acceptance,
+            evidence: [],
+          });
+          return serializeFrontmatter(fm, `# ${input.title.trim()}\n`);
+        },
+        { startAt: startNumber },
+      );
+      const created = claims.map((claim, index) => ({
+        ticket_id: `ticket-${String(claim.number).padStart(3, "0")}`,
+        title: planned[index].input.title.trim(),
+        path: claim.path,
+      }));
 
       return { spec: specPath, spec_hash: loadedSpec.hash, created };
     }
@@ -165,23 +164,18 @@ export async function ticketsCommand(
       }
 
       const path = await resolveTicketPath(ctx.vaultFs, ticketsDir, args.ticketId);
-      const content = await ctx.vaultFs.read(path);
-      const ticket = parseTicket(content, path);
-      if (!ticket) throw new Error(`Not a ticket: ${path}`);
-
+      let ticketId = args.ticketId;
       const updatedFields: string[] = [];
-      const { data, content: body } = parseFrontmatter(content);
-      if (args.status) {
-        data.status = args.status;
+      await ctx.vaultFs.update(path, (content) => {
+        const ticket = parseTicket(content, path);
+        if (!ticket) throw new Error(`Not a ticket: ${path}`);
+        ticketId = ticket.id;
+        if (!args.status) return content;
+        const { data, content: body } = parseFrontmatter(content);
         updatedFields.push("status");
-      }
-
-      if (updatedFields.length > 0) {
-        const fm = mergeFrontmatter(data, {});
-        await ctx.vaultFs.write(path, serializeFrontmatter(fm, body));
-      }
-
-      return { ticket_id: ticket.id, path, updated_fields: updatedFields };
+        return serializeFrontmatter(mergeFrontmatter(data, { status: args.status }), body);
+      });
+      return { ticket_id: ticketId, path, updated_fields: updatedFields };
     }
 
     default:

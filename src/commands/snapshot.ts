@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
 import { resolveProject } from "../config.js";
-import { slugify } from "../lib/auto-number.js";
 import { createFrontmatter, serializeFrontmatter, parseFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
-import { getNextNumber } from "../lib/auto-number.js";
 
 // ── Repo State ──────────────────────────────────────────
 
@@ -101,39 +99,37 @@ export async function envFactsCommand(
   const fact: EnvFact = { key: args.key, value: args.value, context: args.context };
 
   let facts: EnvFact[] = [];
-  let existingFm: Record<string, unknown> = {};
 
-  const exists = await ctx.vaultFs.exists(filePath);
-  if (exists) {
-    const content = await ctx.vaultFs.read(filePath);
-    const { data } = parseFrontmatter(content);
-    existingFm = data;
-    if (Array.isArray(data.facts)) {
-      facts = (data.facts as Array<Record<string, unknown>>).map((f) => ({
-        key: String(f.key ?? ""),
-        value: String(f.value ?? ""),
-        context: typeof f.context === "string" ? f.context : undefined,
-      }));
+  await ctx.vaultFs.update(filePath, (content) => {
+    if (content) {
+      const { data } = parseFrontmatter(content);
+      if (Array.isArray(data.facts)) {
+        facts = (data.facts as Array<Record<string, unknown>>).map((f) => ({
+          key: String(f.key ?? ""),
+          value: String(f.value ?? ""),
+          context: typeof f.context === "string" ? f.context : undefined,
+        }));
+      }
     }
-  }
 
-  const existingIdx = facts.findIndex((f) => f.key === fact.key);
-  if (existingIdx >= 0) {
-    facts[existingIdx] = fact;
-  } else {
-    facts.push(fact);
-  }
+    const existingIdx = facts.findIndex((f) => f.key === fact.key);
+    if (existingIdx >= 0) {
+      facts[existingIdx] = fact;
+    } else {
+      facts.push(fact);
+    }
 
-  const fm = createFrontmatter({
-    type: "env-facts",
-    project: projectSlug,
-    status: "active",
-    facts: facts.map((f) => ({ key: f.key, value: f.value, ...(f.context ? { context: f.context } : {}) })),
-  });
+    const fm = createFrontmatter({
+      type: "env-facts",
+      project: projectSlug,
+      status: "active",
+      facts: facts.map((f) => ({ key: f.key, value: f.value, ...(f.context ? { context: f.context } : {}) })),
+    });
 
-  const body = `# Environment Facts\n\n${facts.map((f) => `- **${f.key}**: ${f.value}${f.context ? ` (${f.context})` : ""}`).join("\n")}\n`;
+    const body = `# Environment Facts\n\n${facts.map((f) => `- **${f.key}**: ${f.value}${f.context ? ` (${f.context})` : ""}`).join("\n")}\n`;
 
-  await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
+    return serializeFrontmatter(fm, body);
+  }, { create: true });
   return { path: filePath, facts };
 }
 
@@ -188,36 +184,36 @@ export async function credRefsCommand(
 
   let refs: CredRef[] = [];
 
-  const exists = await ctx.vaultFs.exists(filePath);
-  if (exists) {
-    const content = await ctx.vaultFs.read(filePath);
-    const { data } = parseFrontmatter(content);
-    if (Array.isArray(data.references)) {
-      refs = (data.references as Array<Record<string, unknown>>).map((r) => ({
-        name: String(r.name ?? ""),
-        location: String(r.location ?? ""),
-        notes: typeof r.notes === "string" ? r.notes : undefined,
-      }));
+  await ctx.vaultFs.update(filePath, (content) => {
+    if (content) {
+      const { data } = parseFrontmatter(content);
+      if (Array.isArray(data.references)) {
+        refs = (data.references as Array<Record<string, unknown>>).map((r) => ({
+          name: String(r.name ?? ""),
+          location: String(r.location ?? ""),
+          notes: typeof r.notes === "string" ? r.notes : undefined,
+        }));
+      }
     }
-  }
 
-  const existingIdx = refs.findIndex((r) => r.name === ref.name);
-  if (existingIdx >= 0) {
-    refs[existingIdx] = ref;
-  } else {
-    refs.push(ref);
-  }
+    const existingIdx = refs.findIndex((r) => r.name === ref.name);
+    if (existingIdx >= 0) {
+      refs[existingIdx] = ref;
+    } else {
+      refs.push(ref);
+    }
 
-  const fm = createFrontmatter({
-    type: "credential-reference",
-    project: projectSlug,
-    status: "active",
-    references: refs.map((r) => ({ name: r.name, location: r.location, ...(r.notes ? { notes: r.notes } : {}) })),
-  });
+    const fm = createFrontmatter({
+      type: "credential-reference",
+      project: projectSlug,
+      status: "active",
+      references: refs.map((r) => ({ name: r.name, location: r.location, ...(r.notes ? { notes: r.notes } : {}) })),
+    });
 
-  const body = `# Credential References\n\n> These are pointers to where credentials are documented, not the credentials themselves.\n\n${refs.map((r) => `- **${r.name}**: ${r.location}${r.notes ? ` — ${r.notes}` : ""}`).join("\n")}\n`;
+    const body = `# Credential References\n\n> These are pointers to where credentials are documented, not the credentials themselves.\n\n${refs.map((r) => `- **${r.name}**: ${r.location}${r.notes ? ` — ${r.notes}` : ""}`).join("\n")}\n`;
 
-  await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
+    return serializeFrontmatter(fm, body);
+  }, { create: true });
   return { path: filePath, references: refs };
 }
 
@@ -250,62 +246,63 @@ export async function rollbackCommand(
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const filePath = `projects/${projectSlug}/_state/rollback-points.md`;
 
-  let checkpoints: RollbackPoint[] = [];
-
-  const exists = await ctx.vaultFs.exists(filePath);
-  if (exists) {
-    const content = await ctx.vaultFs.read(filePath);
+  const parseCheckpoints = (content: string): RollbackPoint[] => {
     const { data } = parseFrontmatter(content);
-    if (Array.isArray(data.checkpoints)) {
-      checkpoints = (data.checkpoints as Array<Record<string, unknown>>).map((c) => ({
-        commit_hash: String(c.commit_hash ?? ""),
-        purpose: String(c.purpose ?? ""),
-        scope: typeof c.scope === "string" ? c.scope : undefined,
-        created_at: String(c.created_at ?? ""),
-        follow_up_started: Boolean(c.follow_up_started),
-      }));
-    }
-  }
-
+    return Array.isArray(data.checkpoints) ? (data.checkpoints as Array<Record<string, unknown>>).map((c) => ({
+      commit_hash: String(c.commit_hash ?? ""),
+      purpose: String(c.purpose ?? ""),
+      scope: typeof c.scope === "string" ? c.scope : undefined,
+      created_at: String(c.created_at ?? ""),
+      follow_up_started: Boolean(c.follow_up_started),
+    })) : [];
+  };
   if (args.action === "list") {
-    return { path: filePath, checkpoints };
-  }
-
-  if (args.action === "mark-follow-up") {
-    if (!args.checkpoint_id) throw new Error("checkpoint_id required for mark-follow-up");
-    const idx = checkpoints.findIndex(
-      (c) => c.commit_hash === args.checkpoint_id || c.created_at === args.checkpoint_id,
-    );
-    if (idx < 0) throw new Error(`Checkpoint not found: ${args.checkpoint_id}`);
-    checkpoints[idx].follow_up_started = true;
-  } else if (args.action === "add") {
-    if (!args.commit_hash || !args.purpose) {
-      throw new Error("commit_hash and purpose required for rollback add");
-    }
-    checkpoints.push({
-      commit_hash: args.commit_hash,
-      purpose: args.purpose,
-      scope: args.scope,
-      created_at: new Date().toISOString(),
-      follow_up_started: false,
+    const content = await ctx.vaultFs.read(filePath).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "FILE_NOT_FOUND") return "";
+      throw error;
     });
+    return { path: filePath, checkpoints: parseCheckpoints(content) };
   }
+  let checkpoints: RollbackPoint[] = [];
+  await ctx.vaultFs.update(filePath, (content) => {
+    checkpoints = parseCheckpoints(content);
 
-  const fm = createFrontmatter({
-    type: "rollback-points",
-    project: projectSlug,
-    status: "active",
-    checkpoints: checkpoints.map((c) => ({
-      commit_hash: c.commit_hash,
-      purpose: c.purpose,
-      ...(c.scope ? { scope: c.scope } : {}),
-      created_at: c.created_at,
-      follow_up_started: c.follow_up_started,
-    })),
-  });
+    if (args.action === "mark-follow-up") {
+      if (!args.checkpoint_id) throw new Error("checkpoint_id required for mark-follow-up");
+      const idx = checkpoints.findIndex(
+        (c) => c.commit_hash === args.checkpoint_id || c.created_at === args.checkpoint_id,
+      );
+      if (idx < 0) throw new Error(`Checkpoint not found: ${args.checkpoint_id}`);
+      checkpoints[idx].follow_up_started = true;
+    } else if (args.action === "add") {
+      if (!args.commit_hash || !args.purpose) {
+        throw new Error("commit_hash and purpose required for rollback add");
+      }
+      checkpoints.push({
+        commit_hash: args.commit_hash,
+        purpose: args.purpose,
+        scope: args.scope,
+        created_at: new Date().toISOString(),
+        follow_up_started: false,
+      });
+    }
 
-  const body = `# Rollback Points\n\n${checkpoints.map((c) => `- **${c.commit_hash.slice(0, 8)}** (${c.created_at.slice(0, 10)}): ${c.purpose}${c.follow_up_started ? " [follow-up started]" : ""}${c.scope ? ` — scope: ${c.scope}` : ""}`).join("\n")}\n`;
+    const fm = createFrontmatter({
+      type: "rollback-points",
+      project: projectSlug,
+      status: "active",
+      checkpoints: checkpoints.map((c) => ({
+        commit_hash: c.commit_hash,
+        purpose: c.purpose,
+        ...(c.scope ? { scope: c.scope } : {}),
+        created_at: c.created_at,
+        follow_up_started: c.follow_up_started,
+      })),
+    });
 
-  await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
+    const body = `# Rollback Points\n\n${checkpoints.map((c) => `- **${c.commit_hash.slice(0, 8)}** (${c.created_at.slice(0, 10)}): ${c.purpose}${c.follow_up_started ? " [follow-up started]" : ""}${c.scope ? ` — scope: ${c.scope}` : ""}`).join("\n")}\n`;
+
+    return serializeFrontmatter(fm, body);
+  }, { create: true });
   return { path: filePath, checkpoints };
 }

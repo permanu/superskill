@@ -33,7 +33,27 @@ describe("learnCommand", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it("counts every simultaneous learning captured by one session", async () => {
+    const path = "projects/test-project/sessions/shared.md";
+    await vaultFs.write(path, "---\ntype: session\nsession_id: session-shared\nlearnings_captured: 0\n---\nSession body\n");
+    await Promise.all(Array.from({ length: 8 }, (_, i) => learnCommand({ action: "add", title: `Discovery ${i}`, discovery: "Useful evidence", project: "test-project", sessionId: "session-shared" }, ctx)));
+    expect(await vaultFs.read(path)).toContain("learnings_captured: 8");
+  });
+
   describe("add learning", () => {
+    it("rejects a secret in learning frontmatter", async () => {
+      await expect(learnCommand({ action: "add", title: "Safe title", discovery: "Safe body", project: "test-project", source: `ghp_${"A".repeat(36)}` }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect((await learnCommand({ action: "list", project: "test-project" }, ctx)).learnings).toEqual([]);
+    });
+    it("updates the matching session note returned by the vault listing", async () => {
+      const path = "projects/test-project/sessions/existing.md";
+      await vaultFs.write(path, "---\ntype: session\nsession_id: session-abc123\nlearnings_captured: 2\n---\nSession body\n");
+      await learnCommand({ action: "add", title: "Captured", discovery: "Useful evidence", project: "test-project", sessionId: "session-abc123" }, ctx);
+      const stored = await vaultFs.read(path);
+      expect(stored).toContain("learnings_captured: 3");
+      expect(stored).toContain("Session body");
+    });
+
     it("creates new learning with auto-numbering", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project/learnings"), { recursive: true });

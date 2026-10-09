@@ -107,3 +107,32 @@ describe("removeMcpEntry", () => {
     expect(result.removed).toBe(false);
   });
 });
+
+
+describe("managed launcher upgrades", () => {
+  const latest = { command: "npx", args: ["-y", "--prefer-online", "superskill@latest"], env: { VAULT_PATH: "/new" } };
+  it("upgrades old generated launcher while preserving vault and custom settings", () => {
+    const old = { command: "npx", args: ["-y", "superskill"], env: { VAULT_PATH: "/existing", EXTRA: "keep" }, timeout: 123 };
+    const result = addMcpEntry({ mcpServers: { superskill: old, other: { command: "keep" } } }, "mcpServers", "superskill", latest);
+    expect(result.alreadyExists).toBe(false);
+    expect(result.config.mcpServers.superskill).toEqual({ ...old, args: latest.args });
+    expect(result.config.mcpServers.other.command).toBe("keep");
+  });
+  it("upgrades the generated OpenCode command array only", () => {
+    const old = { type: "local", command: ["npx", "-y", "superskill"], environment: { VAULT_PATH: "/existing", EXTRA: "keep" } };
+    const next = { type: "local", command: ["npx", "-y", "--prefer-online", "superskill@latest"], environment: { VAULT_PATH: "/new" } };
+    const result = addMcpEntry({ mcp: { superskill: old } }, "mcp", "superskill", next);
+    expect(result.alreadyExists).toBe(false);
+    expect(result.config.mcp.superskill).toEqual({ ...old, command: next.command });
+  });
+  it.each([
+    { command: "superskill", env: { VAULT_PATH: "/existing" } },
+    { command: "npx", args: ["-y", "superskill@0.9.0"], env: { VAULT_PATH: "/existing" } },
+    { command: "npx", args: ["-y", "superskill", "--custom"], env: { VAULT_PATH: "/existing" } },
+    { command: "npx", args: ["-y", "superskill"] },
+  ])("preserves custom or pinned launchers", old => {
+    const result = addMcpEntry({ mcpServers: { superskill: old } }, "mcpServers", "superskill", latest);
+    expect(result.alreadyExists).toBe(true);
+    expect(result.config.mcpServers.superskill).toEqual(old);
+  });
+});

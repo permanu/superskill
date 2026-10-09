@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 import {
   hashSpec,
   listSpecFiles,
@@ -86,21 +86,14 @@ export async function specCommand(
         throw new Error(`Invalid spec: ${errors.join("; ")}`);
       }
 
-      const nextNumber = await getNextNumber(ctx.vaultFs, specsDir);
-      const padded = String(nextNumber).padStart(3, "0");
-      const filePath = `${specsDir}/${padded}-${slugify(args.title)}.md`;
       const hash = hashSpec(spec);
-
-      const fm = createFrontmatter({
-        type: "spec",
-        project: projectSlug,
-        status: "draft",
-        spec_id: padded,
-        title: args.title.trim(),
-        hash,
+      const title = args.title;
+      const claim = await claimNumberedFile(ctx.vaultFs, specsDir, (_number, padded) => `${padded}-${slugify(title)}.md`, (_number, padded) => {
+        const fm = createFrontmatter({ type: "spec", project: projectSlug, status: "draft", spec_id: padded, title: title.trim(), hash });
+        return serializeFrontmatter(fm, renderSpec(spec, title));
       });
-
-      await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, renderSpec(spec, args.title)));
+      const filePath = claim.path;
+      const padded = String(claim.number).padStart(3, "0");
 
       return {
         path: filePath,
@@ -135,56 +128,63 @@ export async function specCommand(
     case "approve": {
       if (!args.spec) throw new Error("Spec reference required for approve");
       const path = await resolveSpecPath(ctx.vaultFs, specsDir, args.spec);
-      const loaded = await loadSpec(ctx.vaultFs, path);
+      let result!: { path: string; status: SpecStatus; hash: string; already_frozen?: boolean };
+      await ctx.vaultFs.update(path, async (current) => {
+        const loaded = await loadSpec(ctx.vaultFs, path);
 
-      if (loaded.status === "frozen") {
-        throw new Error(`Spec is frozen and immutable: ${path}`);
-      }
+        if (loaded.status === "frozen") {
+          throw new Error(`Spec is frozen and immutable: ${path}`);
+        }
 
-      const errors = validateSpec(loaded.spec);
-      const gaps = specGaps(loaded.spec);
-      if (errors.length > 0 || gaps.length > 0) {
-        const lines = [
-          ...errors.map((error) => `- invalid: ${error}`),
-          ...gaps.map((gap) => `- gap: ${gap.field} (${gap.reason})`),
-        ];
-        throw new Error(`Spec has unresolved gaps:\n${lines.join("\n")}`);
-      }
+        const errors = validateSpec(loaded.spec);
+        const gaps = specGaps(loaded.spec);
+        if (errors.length > 0 || gaps.length > 0) {
+          const lines = [
+            ...errors.map((error) => `- invalid: ${error}`),
+            ...gaps.map((gap) => `- gap: ${gap.field} (${gap.reason})`),
+          ];
+          throw new Error(`Spec has unresolved gaps:\n${lines.join("\n")}`);
+        }
 
-      const hash = hashSpec(loaded.spec);
-      const fm = mergeFrontmatter(loaded.frontmatter, { status: "approved", hash });
-      await ctx.vaultFs.write(path, serializeFrontmatter(fm, loaded.body));
-
-      return { path, status: "approved", hash };
+        const hash = hashSpec(loaded.spec);
+        const fm = mergeFrontmatter(loaded.frontmatter, { status: "approved", hash });
+        result = { path, status: "approved", hash };
+        return serializeFrontmatter(fm, loaded.body);
+      });
+      return result;
     }
 
     case "freeze": {
       if (!args.spec) throw new Error("Spec reference required for freeze");
       const path = await resolveSpecPath(ctx.vaultFs, specsDir, args.spec);
-      const loaded = await loadSpec(ctx.vaultFs, path);
+      let result!: { path: string; status: SpecStatus; hash: string; already_frozen?: boolean };
+      await ctx.vaultFs.update(path, async (current) => {
+        const loaded = await loadSpec(ctx.vaultFs, path);
 
-      if (loaded.status === "frozen") {
-        if (!loaded.hashMatches) {
-          throw new Error(`Frozen spec content was modified: ${path}`);
+        if (loaded.status === "frozen") {
+          if (!loaded.hashMatches) {
+            throw new Error(`Frozen spec content was modified: ${path}`);
+          }
+          result = { path, status: "frozen", hash: loaded.hash, already_frozen: true };
+          return current;
         }
-        return { path, status: "frozen", hash: loaded.hash, already_frozen: true };
-      }
 
-      if (loaded.status !== "approved") {
-        throw new Error(`Spec must be approved before freezing (current status: ${loaded.status}): ${path}`);
-      }
-      if (loaded.storedHash !== null && loaded.storedHash !== loaded.hash) {
-        throw new Error(`Spec content changed after approval; run approve again: ${path}`);
-      }
+        if (loaded.status !== "approved") {
+          throw new Error(`Spec must be approved before freezing (current status: ${loaded.status}): ${path}`);
+        }
+        if (loaded.storedHash !== null && loaded.storedHash !== loaded.hash) {
+          throw new Error(`Spec content changed after approval; run approve again: ${path}`);
+        }
 
-      const fm = mergeFrontmatter(loaded.frontmatter, {
-        status: "frozen",
-        hash: loaded.hash,
-        frozen_at: new Date().toISOString(),
+        const fm = mergeFrontmatter(loaded.frontmatter, {
+          status: "frozen",
+          hash: loaded.hash,
+          frozen_at: new Date().toISOString(),
       });
-      await ctx.vaultFs.write(path, serializeFrontmatter(fm, loaded.body));
-
-      return { path, status: "frozen", hash: loaded.hash, already_frozen: false };
+      result = { path, status: "frozen", hash: loaded.hash, already_frozen: false };
+      return serializeFrontmatter(fm, loaded.body);
+      });
+      return result;
     }
 
     case "list": {

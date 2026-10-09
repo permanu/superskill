@@ -1,13 +1,17 @@
+import { assessWorktreeLifecycle, type WorktreeLifecycleAssessment } from "../../lib/worktree/lifecycle.js";
 // SPDX-License-Identifier: Apache-2.0
 
+import { packagedCatalogVersion } from "../../lib/catalog.js";
+import { initProject, type InitResult } from "./init.js";
 import type { CommandContext } from "../../core/types.js";
-import { loadGraph, writeGraph } from "../../lib/graph/store.js";
-import { matchTask, alwaysOnSkillIds, getPhaseForTask } from "../../lib/graph/router.js";
+import { loadGraph, mutateGraph } from "../../lib/graph/store.js";
+import { matchTask, alwaysOnSkillIds, getPhaseForTask, routingStack } from "../../lib/graph/router.js";
 import { loadNeighborhood, loadContent, formatSystemBrief } from "../../lib/graph/loader.js";
 import { findNode } from "../../lib/graph/store.js";
 import { planDelegation, type Orchestration } from "../../lib/orchestrate.js";
-import type { ProjectNode } from "../../lib/graph/schema.js";
+import type { ProjectNode, ProjectPhase } from "../../lib/graph/schema.js";
 import { findOrCreateSession, recordActivation } from "../../lib/graph/learner.js";
+import { estimateTokens } from "../../lib/token-estimator.js";
 import { getPhaseBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
 import type { BudgetItem, DroppedItem } from "../../lib/context-budget.js";
 import { scanForPromptInjection } from "../../lib/security-scanner.js";
@@ -31,11 +35,15 @@ import { buildActivationEvent, recordTelemetryEvent } from "../../telemetry/reco
 import { findUnauditedInstalledSkills, UNAUDITED_MARKER } from "./status.js";
 
 const FALLBACK_CONTEXT_WINDOW = 128_000;
+const CONTENT_SEPARATOR = "\n\n---\n\n";
 
 export interface ActivateArgs {
   task?: string;
   skill_id?: string;
   files?: string[];
+  max_tokens?: number;
+  session_id?: string;
+  phase?: ProjectPhase;
 }
 
 export interface ActivateOptions {
@@ -59,6 +67,8 @@ export interface PrinciplesPlan {
 }
 
 export interface ActivateResult {
+  initialization?: Pick<InitResult, "success" | "graph_path" | "skills_discovered" | "error">;
+  worktree?: WorktreeLifecycleAssessment & { workspacePath: string };
   success: boolean;
   skills_loaded: Array<{ id: string; source: string; stale?: boolean }>;
   content: string;
@@ -72,6 +82,7 @@ export interface ActivateResult {
   principles_plan: PrinciplesPlan;
   orchestration?: Orchestration;
   error?: string;
+  graph_session_id?: string;
 }
 
 let cachedRulesIndex: Promise<RulesIndex> | undefined;
@@ -157,48 +168,66 @@ export function installedSkillNameForId(skillId: string): string | null {
   return at === -1 ? null : skillId.slice(at + 1);
 }
 
-export async function activateSkills(
+export async function activateSkills(args: ActivateArgs, ctx: CommandContext, options: ActivateOptions = {}): Promise<ActivateResult> {
+  const result = await activateSkillsContent(args, ctx, options);
+  const workspacePath = ctx.workspacePath ?? process.cwd();
+  const assessment = await assessWorktreeLifecycle(workspacePath, { phase: "activation" });
+  return { ...result, worktree: { ...assessment, workspacePath } };
+}
+
+async function activateSkillsContent(
   args: ActivateArgs,
   ctx: CommandContext,
   options: ActivateOptions = {},
 ): Promise<ActivateResult> {
-  const projectDir = process.cwd();
+  const projectDir = ctx.workspacePath ?? process.cwd();
   const task = args.task ?? "";
+  let initialization: ActivateResult["initialization"];
 
   try {
-    const graph = await loadGraph(projectDir);
-
-    if (graph.nodes.length === 0) {
-      return {
-        success: false,
-        skills_loaded: [],
-        content: "No knowledge graph found. Run `superskill skill init` first.",
-        matched_skill_ids: [],
-        total_tokens: 0,
-        usedTokens: 0,
-        allocatedTokens: 0,
-        dropped: [],
-        warnings: [],
-        rules_plan: emptyRulesPlan(),
-        principles_plan: emptyPrinciplesPlan(),
-        error: "Graph not initialized. Run `superskill skill init` first.",
+    if (args.phase !== undefined && !["explore", "implement", "review", "ship"].includes(args.phase)) {
+      throw new Error("phase must be explore, implement, review, or ship");
+    }
+    if (args.max_tokens !== undefined && (!Number.isInteger(args.max_tokens) || args.max_tokens < 256 || args.max_tokens > 50_000)) {
+      throw new Error("max_tokens must be an integer between 256 and 50000 (content budget)");
+    }
+    if (args.session_id !== undefined) {
+      const session = await ctx.sessionRegistry.get(args.session_id);
+      if (!session || session.status !== "active" || session.project !== (ctx.projectSlug ?? null)) throw new Error("session_id must identify an active session for this project");
+    }
+    let graph = await loadGraph(projectDir);
+    if (graph.nodes.length === 0 || graph.catalogVersion !== packagedCatalogVersion) {
+      if (ctx.projectSlug === null) throw new Error("Cannot initialize without a resolved project scope");
+      const initialized = await initProject({}, ctx, { startup: true });
+      initialization = {
+        success: initialized.success,
+        graph_path: initialized.graph_path,
+        skills_discovered: initialized.skills_discovered,
+        ...(initialized.error ? { error: initialized.error } : {}),
       };
+      if (!initialized.success) throw new Error(`Graph initialization failed: ${initialized.error ?? "unknown error"}`);
+      graph = await loadGraph(projectDir);
+      if (graph.nodes.length === 0) throw new Error("Graph initialization failed: graph remains empty");
     }
 
-    const phase = getPhaseForTask(task);
+    const phase = args.phase ?? getPhaseForTask(task);
     const project = findNode<ProjectNode>(graph, "project", "project");
-    const stack = project?.stack ?? [];
-    const orchestration = planDelegation(task, stack);
+    const stack = routingStack(project?.stack ?? [], args.files);
+    const routingContext = { files: args.files, phase };
+    const orchestration = planDelegation(task, stack, routingContext);
     const contextWindow = detectTool().contextWindow ?? FALLBACK_CONTEXT_WINDOW;
     const budget = getPhaseBudget(phase, contextWindow);
 
+    if (args.max_tokens !== undefined) budget.totalBudget = args.max_tokens;
+
     const rulesIndex = options.rulesIndex ?? (await rulesIndexForProcess());
     const principlesIndex = options.principlesIndex ?? (await principlesIndexForProcess());
-    const plan = route({ prompt: task, stack, files: args.files }, rulesIndex, {
+    const plan = route({ prompt: task, stack, files: args.files, phase }, rulesIndex, {
       budgetTokens: budget.totalBudget,
       principlesIndex,
     });
     const warnings: string[] = [];
+    const missing: DroppedItem[] = [];
     const ruleContents = await loadRuleContent(
       plan.rules.map((rule) => rule.id),
       options.rulesRoot ?? rulesCatalogRoot(),
@@ -210,6 +239,7 @@ export async function activateSkills(
       const content = ruleContents.get(rule.id);
       if (content === undefined) {
         warnings.push(`WARN: rule content not found: ${rule.id}`);
+        missing.push({ id: rule.id, reason: "content unavailable", tokens: 0 });
         continue;
       }
       ruleItems.push({ id: rule.id, content: formatRuleBlock(rule.id, content) });
@@ -237,6 +267,7 @@ export async function activateSkills(
       const content = principleContents.get(principle.id);
       if (content === undefined) {
         warnings.push(`WARN: principle content not found: ${principle.id}`);
+        missing.push({ id: principle.id, reason: "content unavailable", tokens: 0 });
         continue;
       }
       principleItems.push({
@@ -252,23 +283,27 @@ export async function activateSkills(
       budget: { allocated: budget.totalBudget, used: 0 },
     };
 
-    // Local, opt-in telemetry: no-op unless `superskill telemetry enable`
-    // (or SUPERSKILL_TELEMETRY=1) was set. Designed never to fail the caller.
-    void recordTelemetryEvent(
-      buildActivationEvent({
-        tool: detectTool().tool,
-        project: ctx.projectSlug ?? null,
-        prompt: task,
-        phase,
-        stack,
-        langs: plan.langs,
-        budget: { allocated: plan.budget.allocated, used: plan.budget.used },
-        selected: plan.rules.map((rule) => rule.id),
-        principles: plan.principles.map((principle) => principle.id),
-        dropped: plan.budget.dropped.map((drop) => drop.id),
+    const finalizePlans = (items: ReadonlyArray<{ id: string; tokens: number }>, dropped: DroppedItem[], usedTokens: number): void => {
+      const included = new Set(items.map((item) => item.id));
+      rulesPlan.selected = plan.rules.filter((rule) => included.has(rule.id));
+      rulesPlan.explain = plan.explain.filter((entry) => included.has(entry.id)).map((entry) => {
+        const rule = rulesIndex.byId.get(entry.id);
+        return rule ? formatRuleDerivation(entry, rule) : `rule ${entry.id} selected`;
+      });
+      rulesPlan.budget.used = layerTokens(items, ruleIds);
+      rulesPlan.dropped = [...plan.budget.dropped, ...missing.filter((item) => ruleIds.has(item.id)), ...dropped.filter((item) => ruleIds.has(item.id))];
+      principlesPlan.selected = plan.principles.filter((entry) => included.has(entry.id));
+      principlesPlan.explain = principlesPlan.selected.map((entry) => formatPrincipleDerivation(entry, principlesIndex.byId.get(entry.id)));
+      principlesPlan.budget.used = layerTokens(items, principleIds);
+      void recordTelemetryEvent(buildActivationEvent({
+        tool: detectTool().tool, project: ctx.projectSlug ?? null, prompt: task, phase, stack,
+        langs: plan.langs, budget: { allocated: budget.totalBudget, used: usedTokens },
+        selected: rulesPlan.selected.map((entry) => entry.id),
+        principles: principlesPlan.selected.map((entry) => entry.id),
+        dropped: [...new Set([...plan.budget.dropped, ...missing, ...dropped].map((entry) => entry.id))],
         rulesTotal: rulesIndex.rules.length,
-      }),
-    );
+      }));
+    };
 
     const graphSkillIds = new Set(
       graph.nodes.filter((n) => n.type === "skill").map((n) => n.id),
@@ -279,24 +314,25 @@ export async function activateSkills(
     if (args.skill_id) {
       if (!graphSkillIds.has(args.skill_id)) {
         return {
+          ...(initialization ? { initialization } : {}),
           success: false,
           skills_loaded: [],
-          content: `Skill not found in this project's graph: ${args.skill_id}`,
+          content: "",
           matched_skill_ids: [],
           total_tokens: 0,
           usedTokens: 0,
           allocatedTokens: budget.totalBudget,
           dropped: [],
           warnings: [`WARN: skill not in graph: ${args.skill_id}`],
-          rules_plan: rulesPlan,
-          principles_plan: principlesPlan,
+          rules_plan: emptyRulesPlan(budget.totalBudget),
+          principles_plan: emptyPrinciplesPlan(budget.totalBudget),
           error: `Skill not in graph: ${args.skill_id}`,
         };
       }
       matchedIds = [args.skill_id];
     } else {
-      const matched = matchTask(task, graph);
-      const always = alwaysOnSkillIds(graph, task);
+      const matched = matchTask(task, graph, routingContext);
+      const always = alwaysOnSkillIds(graph, task, routingContext);
       const delegated = orchestration.specialists
         .map((s) => s.pack)
         .filter((id) => graphSkillIds.has(id));
@@ -314,17 +350,19 @@ export async function activateSkills(
           ...ruleItems,
         ],
         budget.totalBudget,
+        CONTENT_SEPARATOR,
       );
-      principlesPlan.budget.used = layerTokens(items, principleIds);
+      finalizePlans(items, dropped, usedTokens);
       return {
+        ...(initialization ? { initialization } : {}),
         success: true,
         skills_loaded: [],
-        content: items.map((item) => item.content).join("\n\n---\n\n"),
+        content: items.map((item) => item.content).join(CONTENT_SEPARATOR),
         matched_skill_ids: [],
         total_tokens: usedTokens,
         usedTokens,
         allocatedTokens: budget.totalBudget,
-        dropped,
+        dropped: [...plan.budget.dropped, ...missing, ...dropped],
         warnings,
         rules_plan: rulesPlan,
         principles_plan: principlesPlan,
@@ -348,17 +386,18 @@ export async function activateSkills(
 
     if (safeIds.length === 0) {
       return {
+        ...(initialization ? { initialization } : {}),
         success: false,
         skills_loaded: [],
-        content: "All matched skills were blocked by security audit.",
+        content: "",
         matched_skill_ids: matchedIds,
         total_tokens: 0,
         usedTokens: 0,
         allocatedTokens: budget.totalBudget,
         dropped: [],
         warnings,
-        rules_plan: rulesPlan,
-        principles_plan: principlesPlan,
+        rules_plan: emptyRulesPlan(budget.totalBudget),
+        principles_plan: emptyPrinciplesPlan(budget.totalBudget),
         error: "All skills blocked by security audit",
       };
     }
@@ -393,9 +432,8 @@ export async function activateSkills(
     const { items, dropped, usedTokens } = fitSkillsToBudget(
       budgetItems,
       budget.totalBudget,
+      CONTENT_SEPARATOR,
     );
-    principlesPlan.budget.used = layerTokens(items, principleIds);
-
     const isSkillItem = (id: string): boolean =>
       !id.startsWith("system/") && !ruleIds.has(id) && !principleIds.has(id);
     const loadedSkills = items
@@ -418,26 +456,54 @@ export async function activateSkills(
       }
     }
 
-    const finalContent = items.map((item) => item.content).join("\n\n---\n\n");
+    const finalContent = items.map((item) => item.content).join(CONTENT_SEPARATOR);
 
-    let updatedGraph = graph;
-    const { graph: sessionGraph, sessionId } = findOrCreateSession(graph, task);
-    updatedGraph = sessionGraph;
-    for (const item of items) {
-      if (!isSkillItem(item.id)) continue;
-      updatedGraph = recordActivation(updatedGraph, sessionId, item.id, []);
+    if (args.skill_id && !loadedSkills.some((skill) => skill.id === args.skill_id)) {
+      const reason = dropped.find((item) => item.id === args.skill_id)?.reason
+        ?? warnings.find((warning) => warning.includes(args.skill_id!))
+        ?? "content unavailable";
+      const error = `Requested skill ${args.skill_id} was not delivered: ${reason}`;
+      warnings.push(error);
+      finalizePlans(items, dropped, usedTokens);
+      return {
+        ...(initialization ? { initialization } : {}),
+        success: false,
+        skills_loaded: [],
+        content: finalContent,
+        matched_skill_ids: safeIds,
+        total_tokens: usedTokens,
+        usedTokens,
+        allocatedTokens: budget.totalBudget,
+        dropped: [...plan.budget.dropped, ...missing, ...dropped],
+        warnings,
+        rules_plan: rulesPlan,
+        principles_plan: principlesPlan,
+        orchestration,
+        error,
+      };
     }
-    await writeGraph(projectDir, updatedGraph);
+
+    let sessionId: string | undefined;
+    await mutateGraph(projectDir, (latest) => {
+      const session = findOrCreateSession(latest, task, args.session_id);
+      sessionId = session.sessionId;
+      let updated = session.graph;
+      for (const skill of loadedSkills) updated = recordActivation(updated, session.sessionId, skill.id, args.files ?? []);
+      return updated;
+    });
+    finalizePlans(items, dropped, usedTokens);
 
     return {
+      ...(initialization ? { initialization } : {}),
       success: true,
       skills_loaded: loadedSkills,
+      graph_session_id: sessionId,
       content: finalContent,
       matched_skill_ids: safeIds,
       total_tokens: usedTokens,
       usedTokens,
       allocatedTokens: budget.totalBudget,
-      dropped,
+      dropped: [...plan.budget.dropped, ...missing, ...dropped],
       warnings,
       rules_plan: rulesPlan,
       principles_plan: principlesPlan,
@@ -447,6 +513,7 @@ export async function activateSkills(
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[skill-activate] activateSkills failed: ${msg}`);
     return {
+      ...(initialization ? { initialization } : {}),
       success: false,
       skills_loaded: [],
       content: "",
@@ -461,4 +528,45 @@ export async function activateSkills(
       error: msg,
     };
   }
+}
+
+export function compactActivationResult(result: ActivateResult) {
+  const droppedIds = [...new Set(result.dropped.map((item) => item.id))];
+  const warningPriority = (warning: string): number => /^BLOCKED:/i.test(warning) ? 0
+    : /security|audit|untrusted|prompt injection/i.test(warning) ? 1 : 2;
+  const selectedWarnings = [...result.warnings].sort((a, b) => warningPriority(a) - warningPriority(b)).slice(0, 3);
+  const shorten = (text: string, limit: number): string => text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+  const dropped = droppedIds.slice(0, 8).map((id) => shorten(id, 160));
+  const warnings = selectedWarnings.map((warning) => shorten(warning, 240));
+  const diagnosticsTruncated = droppedIds.length > dropped.length || result.warnings.length > warnings.length
+    || droppedIds.slice(0, 8).some((id) => id.length > 160)
+    || selectedWarnings.some((warning) => warning.length > 240);
+  const response = {
+    success: result.success,
+    ...(result.initialization ? { initialization: result.initialization } : {}),
+    ...(result.worktree ? { worktree: result.worktree } : {}),
+    content: result.content,
+    skills_loaded: result.skills_loaded.map((skill) => skill.id),
+    rules_loaded: result.rules_plan.selected.map((rule) => rule.id),
+    principles_loaded: result.principles_plan.selected.map((principle) => principle.id),
+    budget: {
+      scope: "content" as const,
+      allocated_tokens: result.allocatedTokens,
+      content_estimated_tokens: estimateTokens(result.content),
+      response_estimated_tokens: 0,
+    },
+    dropped,
+    dropped_count: droppedIds.length,
+    warnings,
+    warnings_count: result.warnings.length,
+    diagnostics_truncated: diagnosticsTruncated,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.graph_session_id ? { graph_session_id: result.graph_session_id } : {}),
+  };
+  for (let pass = 0; pass < 5; pass++) {
+    const estimate = estimateTokens(JSON.stringify(response));
+    if (estimate === response.budget.response_estimated_tokens) break;
+    response.budget.response_estimated_tokens = estimate;
+  }
+  return response;
 }

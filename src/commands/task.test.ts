@@ -33,7 +33,25 @@ describe("taskCommand", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it("preserves independent simultaneous task field changes", async () => {
+    const task = await taskCommand({ action: "add", title: "Shared task", project: "test-project" }, ctx);
+    await Promise.all([
+      taskCommand({ action: "update", taskId: task.task_id, status: "in-progress", project: "test-project" }, ctx),
+      taskCommand({ action: "update", taskId: task.task_id, assignedTo: "agent-b", project: "test-project" }, ctx),
+      taskCommand({ action: "update", taskId: task.task_id, priority: "p0", project: "test-project" }, ctx),
+    ]);
+    const result = await taskCommand({ action: "list", project: "test-project" }, ctx);
+    expect(result.tasks![0]).toMatchObject({ status: "in-progress", priority: "p0", assigned_to: "agent-b" });
+  });
+
   describe("add task", () => {
+    it("gives concurrent different task titles unique IDs", async () => {
+      const results = await Promise.all(["First", "Second"].map((title) =>
+        taskCommand({ action: "add", title, project: "test-project" }, ctx),
+      ));
+      expect(results.map((result) => result.task_id).sort()).toEqual(["task-001", "task-002"]);
+      for (const result of results) expect(await vaultFs.read(result.path!)).toContain("type: task");
+    });
     it("creates new task with auto-numbering", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project/tasks"), { recursive: true });

@@ -45,5 +45,10 @@ Enterprise factory (learned from Superpowers, Matt Pocock, Google/Cloudflare —
 ## Delegate
 Work as that specialist while the pack is in context. If the pack is missing, call `superskill` with that need. Do not dump the catalog.
 
+## Local integration and cleanup
+The coordinator keeps related dependent work in an ordered local branch/PR stack. Workers return local changes and verification evidence; they do not independently push or create PRs by default. Validate each layer and the combined top before a batch push. Keep independent parallel work separate. Publish or merge remotely only with existing authorization and required review/CI; local stacking is not permission to merge blindly.
+
+After merge into main, complete the owning sessions and consume the lifecycle cleanup result. The built-in cleanup may remove only clean, idle, session-owned worktrees proven merged into main and eligible under its checks. Preserve active, uncertain or ineligible worktrees and report the reason; no forced shell cleanup. Cache apply/GC and other manual mutations still require authorization.
+
 ## Agent-first
 Follow the `orchestration` JSON in the result: `defaults`, `specialists[].agent`, `loop`. Humans can open the graph HTML; agents should prefer that JSON + mermaid.

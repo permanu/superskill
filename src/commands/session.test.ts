@@ -6,6 +6,9 @@ import { sessionCommand } from "./session.js";
 import { SessionRegistryManager } from "../lib/session-registry.js";
 import { VaultFS } from "../lib/vault-fs.js";
 import type { CommandContext } from "../core/types.js";
+import * as lifecycle from "../lib/worktree/lifecycle.js";
+import * as graphStore from "../lib/graph/store.js";
+import type { Graph, SessionNode } from "../lib/graph/schema.js";
 
 function createCommandContext(vaultFs: VaultFS, overrides?: Partial<CommandContext>): CommandContext {
   return {
@@ -31,10 +34,67 @@ describe("sessionCommand", () => {
     vaultFs = new VaultFS(vaultRoot);
     registry = new SessionRegistryManager(vaultRoot, 24);
     ctx = createCommandContext(vaultFs, { sessionRegistry: registry });
+    vi.spyOn(lifecycle, "assessWorktreeLifecycle").mockResolvedValue({ status: "not_repo", worktreeCount: null, currentLinked: null, policyInstalled: null, safety: "not_assessed", nextActions: [] });
+    vi.spyOn(graphStore, "mutateGraph").mockImplementation(async (_root, update) => update({ nodes: [], edges: [] }));
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(vaultRoot, { recursive: true, force: true });
+  });
+
+  it("automatically assesses the actual workspace at register and completion", async () => {
+    ctx.workspacePath = vaultRoot;
+    const registered = await sessionCommand({ action: "register", tool: "codex", project: "test-project" }, ctx);
+    expect(registered.worktree?.status).toBe("not_repo");
+    expect(lifecycle.assessWorktreeLifecycle).toHaveBeenLastCalledWith(vaultRoot, { phase: "register" });
+    expect((await registry.get(registered.session_id!))?.workspace_path).toBe(vaultRoot);
+    const completed = await sessionCommand({ action: "complete", sessionId: registered.session_id }, ctx);
+    expect(completed.worktree?.status).toBe("not_repo");
+    expect(lifecycle.assessWorktreeLifecycle).toHaveBeenLastCalledWith(vaultRoot, { phase: "complete" });
+  });
+
+  it("preserves captured learning counts when completion rewrites the same session note", async () => {
+    const registered = await registry.register("codex", "test-project");
+    const first = await sessionCommand({ action: "complete", sessionId: registered.session_id, project: "test-project", outcome: "Initial result" }, ctx);
+    await vaultFs.update(first.session_note_path!, (current) => current.replace("learnings_captured: 0", "learnings_captured: 3"));
+    await sessionCommand({ action: "complete", sessionId: registered.session_id, project: "test-project", outcome: "Updated result" }, ctx);
+    expect(await vaultFs.read(first.session_note_path!)).toContain("learnings_captured: 3");
+  });
+
+  it("settles only the graph session linked to the completing coordination session", async () => {
+    const registered = await registry.register("codex", "test-project");
+    const node = (id: string, ts: number): SessionNode => ({ type: "session", id, coordinationSessionId: id, intent: "task", skills: [], files: [], outcome: null, insights: [], ts });
+    let graph: Graph = { nodes: [node(registered.session_id, 1), node("other-agent", 2)], edges: [] };
+    vi.mocked(graphStore.mutateGraph).mockImplementation(async (_root, update) => {
+      graph = await update(graph);
+      return graph;
+    });
+    await sessionCommand({ action: "complete", sessionId: registered.session_id, outcome: "done" }, ctx);
+    expect((graph.nodes.find((node) => node.id === registered.session_id) as SessionNode).outcome).toBe("success");
+    expect((graph.nodes.find((node) => node.id === "other-agent") as SessionNode).outcome).toBeNull();
+  });
+
+  it("leaves unrelated legacy graph sessions open", async () => {
+    const registered = await registry.register("codex", "test-project");
+    let graph: Graph = { nodes: [{ type: "session", id: "s_legacy", intent: "task", skills: [], files: [], outcome: null, insights: [], ts: Date.now() }], edges: [] };
+    vi.mocked(graphStore.mutateGraph).mockImplementation(async (_root, update) => {
+      graph = await update(graph);
+      return graph;
+    });
+    await sessionCommand({ action: "complete", sessionId: registered.session_id, outcome: "done" }, ctx);
+    expect((graph.nodes[0] as SessionNode).outcome).toBeNull();
+  });
+
+  it("preserves explicit blockers when the outcome prose contains completed", async () => {
+    const registered = await registry.register("codex", "test-project");
+    let graph: Graph = { nodes: [{ type: "session", id: registered.session_id, coordinationSessionId: registered.session_id, intent: "task", skills: [], files: [], outcome: null, insights: [], ts: Date.now() }], edges: [] };
+    vi.mocked(graphStore.mutateGraph).mockImplementation(async (_root, update) => {
+      graph = await update(graph);
+      return graph;
+    });
+    await sessionCommand({ action: "complete", sessionId: registered.session_id, outcome: "Completed implementation", blocked: ["Verification failing"] }, ctx);
+    expect((graph.nodes[0] as SessionNode).outcome).toBe("partial");
   });
 
   describe("register", () => {
@@ -123,7 +183,7 @@ describe("sessionCommand", () => {
         taskSummary: "Completed task",
       }, ctx);
 
-      expect(result).toEqual({});
+      expect(result.worktree?.status).toBe("not_repo");
     });
 
     it("persists session note when vault and project provided", async () => {

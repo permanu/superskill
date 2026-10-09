@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { findNode, findNodes, loadGraph } from "./store.js";
 import { alwaysOnSkillIds, matchTask, packsToLoad } from "./router.js";
@@ -10,12 +10,13 @@ import { catalogRoot, loadCatalog } from "../catalog.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { rulesCatalogRoot } from "../../rules/loader.js";
 import { keywordKeys, normalizeTerms, simpleStem } from "../../rules/index-builder.js";
-import { scanImportGraph } from "../code-graph.js";
+import { scanRepo, DEFAULT_SKIP_DIRS } from "../codegraph/scan.js";
+import { languageForFile } from "../codegraph/grammars.js";
 import { ensureProjectIndex, indexPathFor } from "../knowledge-index.js";
 import { VaultError } from "../vault-fs.js";
 import type { VaultFS } from "../vault-fs.js";
 
-export const TRAVERSE_INDEX_VERSION = 1;
+export const TRAVERSE_INDEX_VERSION = 2;
 export const DEFAULT_OPEN_BYTES = 4096;
 export const DEFAULT_CHILDREN_LIMIT = 100;
 export const DEFAULT_RESOLVE_LIMIT = 30;
@@ -46,7 +47,9 @@ export type TraverseEdgeType =
   | "skill_rule_trigger"
   | "skill_coactivation"
   | "project_skill"
-  | "code_import";
+  | "code_import"
+  | "code_call"
+  | "code_reference";
 
 export interface TraverseEdge {
   from: string;
@@ -54,6 +57,7 @@ export interface TraverseEdge {
   type: TraverseEdgeType;
   w?: number;
   label?: string;
+  confidence?: "EXTRACTED" | "INFERRED";
 }
 
 export interface TraverseIndexData {
@@ -94,7 +98,7 @@ export interface TraverseChildrenResult {
 
 export interface TraverseResolveItem {
   id: string;
-  kind: "skill" | "rule" | "vault";
+  kind: "skill" | "rule" | "vault" | "code";
   path?: string;
   bytes: number;
   tokens: number;
@@ -216,17 +220,8 @@ function deriveRulePrefix(id: string, lang: string): string {
   return dash === -1 ? stripped : stripped.slice(0, dash);
 }
 
-function isTrackedCodeFile(name: string): boolean {
-  return (
-    name.endsWith(".ts") &&
-    !name.endsWith(".d.ts") &&
-    !name.endsWith(".test.ts") &&
-    !name.endsWith(".spec.ts") &&
-    !name.startsWith("test-helpers.")
-  );
-}
 
-function listFiles(dir: string, accept: (name: string) => boolean, skipDirs: ReadonlySet<string> = new Set()): string[] {
+function listFiles(dir: string, accept: (name: string) => boolean, skipDirs: ReadonlySet<string> = new Set(), includeHidden = false): string[] {
   const out: string[] = [];
   const stack = [dir];
   while (stack.length > 0) {
@@ -238,7 +233,7 @@ function listFiles(dir: string, accept: (name: string) => boolean, skipDirs: Rea
       continue;
     }
     for (const entry of entries) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+      if ((!includeHidden && entry.name.startsWith(".")) || entry.name === "node_modules" || entry.name === "dist") continue;
       const abs = join(current, entry.name);
       if (entry.isDirectory()) {
         if (!skipDirs.has(entry.name)) stack.push(abs);
@@ -284,7 +279,8 @@ function dirStats(dir: string, accept: (name: string) => boolean, skipDirs: Read
 function computeFingerprint(ctx: TraverseContext): string {
   const rules = dirStats(ctx.rulesDir, (name) => name.endsWith(".md"));
   const catalog = dirStats(ctx.catalogDir, (name) => name.endsWith(".md"), new Set(["rules"]));
-  const src = dirStats(join(ctx.root, "src"), isTrackedCodeFile, new Set(["__fixtures__"]));
+  const src = listFiles(ctx.root, name => languageForFile(name) !== null, new Set(DEFAULT_SKIP_DIRS), true)
+    .map(path => ({ path: relative(ctx.root, path), ...statFile(path) }));
   const graph = statFile(join(ctx.root, ".superskill", "graph.json"));
   const vault =
     ctx.vaultPath && ctx.projectSlug
@@ -358,7 +354,7 @@ class Builder {
       if (node.parent) childCounts.set(node.parent, (childCounts.get(node.parent) ?? 0) + 1);
     }
     for (const node of this.nodes.values()) {
-      if (node.kind !== "container") {
+      if (node.kind !== "container" && !node.meta?.symbol) {
         let parentId = node.parent;
         while (parentId) {
           const parent = this.nodes.get(parentId);
@@ -370,7 +366,7 @@ class Builder {
       }
     }
     for (const node of this.nodes.values()) {
-      if (node.kind === "container") node.childrenCount = childCounts.get(node.id) ?? 0;
+      if (node.kind === "container" || childCounts.has(node.id)) node.childrenCount = childCounts.get(node.id) ?? 0;
     }
   }
 }
@@ -588,30 +584,33 @@ function ensureCodeDirs(builder: Builder, relPath: string): string {
   return current;
 }
 
-function addCodeSection(builder: Builder, ctx: TraverseContext): void {
+async function addCodeSection(builder: Builder, ctx: TraverseContext): Promise<void> {
   builder.addContainer("code", "code", "graph", "code");
-  const dump = scanImportGraph(ctx.root, "src");
-  for (const file of dump.nodes) {
-    const abs = join(ctx.root, file.id);
+  const { graph } = await scanRepo(ctx.root);
+  const ids = new Map<string, string>();
+  const sources = new Map<string, string[]>();
+  for (const file of graph.nodes.filter(node => node.kind === "module")) {
+    const abs = join(ctx.root, file.file);
     const bytes = statSize(abs);
-    builder.addNode({
-      id: `code:${file.id}`,
-      kind: "code",
-      label: file.title,
-      parent: ensureCodeDirs(builder, file.id),
-      path: file.id,
-      file: abs,
-      bytes,
-      tokens: traverseTokensForBytes(bytes),
-      meta: {},
-    });
+    const id = `code:${file.file}`;
+    ids.set(file.id, id);
+    builder.addNode({ id, kind: "code", label: file.file.split("/").pop()!, parent: ensureCodeDirs(builder, file.file), path: file.file, file: abs, bytes, tokens: traverseTokensForBytes(bytes), meta: { language: file.language } });
+    try { sources.set(file.file, readFileSync(abs, "utf8").split("\n")); }
+    catch (error) { console.error(`[traverse] cannot read ${file.file}:`, messageOf(error)); }
   }
-  for (const edge of dump.edges) {
-    builder.addEdge({
-      from: `code:${edge.from}`,
-      to: `code:${edge.to}`,
-      type: "code_import",
-    });
+  for (const node of graph.nodes) {
+    if (node.kind === "module" || node.kind === "import-source") continue;
+    const id = `symbol:${node.id}`;
+    const content = (sources.get(node.file) ?? []).slice(node.span.startLine - 1, node.span.endLine).join("\n");
+    const bytes = Buffer.byteLength(content, "utf8");
+    ids.set(node.id, id);
+    builder.addNode({ id, kind: "code", label: node.name, parent: `code:${node.file}`, path: node.file, file: join(ctx.root, node.file), bytes, tokens: traverseTokensForBytes(bytes), meta: { symbol: true, kind: node.kind, language: node.language, ...node.span } });
+  }
+  for (const edge of graph.edges) {
+    const from = ids.get(edge.from);
+    const to = ids.get(edge.to);
+    const type = edge.kind === "imports" ? "code_import" : edge.kind === "calls" ? "code_call" : edge.kind === "references" ? "code_reference" : null;
+    if (from && to && type) builder.addEdge({ from, to, type, confidence: edge.confidence });
   }
 }
 
@@ -724,7 +723,7 @@ async function buildIndexData(ctx: TraverseContext, graph: Graph, fingerprint: s
   builder.addContainer("graph", "graph", undefined, "root");
   addVaultSection(builder, ctx);
   addRulesSection(builder, ctx);
-  addCodeSection(builder, ctx);
+  await addCodeSection(builder, ctx);
   await addSkillsSection(builder, ctx, graph);
   addSkillRuleEdges(builder);
   addRuleRelatedEdges(builder);
@@ -838,6 +837,19 @@ function localSkillMatches(
   return scored.slice(0, 3).map((entry) => entry.id);
 }
 
+const CODE_QUERY_STOPWORDS = new Set(["fix", "bug", "change", "update", "implement", "add", "remove", "code", "function", "file", "the", "and", "for", "with", "from", "this", "that", "how", "does", "work"]);
+
+function codeQueryTerms(text: string): string[] {
+  return text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length > 2 && !CODE_QUERY_STOPWORDS.has(term));
+}
+
+function truncateUtf8(content: string, maxBytes: number): string {
+  const buffer = Buffer.from(content, "utf8");
+  let end = Math.min(maxBytes, buffer.length);
+  while (end > 0 && end < buffer.length && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString("utf8");
+}
+
 export class Traverser {
   private readonly byId: Map<string, TraverseNode>;
   private readonly childIndex: Map<string, TraverseNode[]>;
@@ -918,7 +930,7 @@ export class Traverser {
 
   children(id: string, options: { limit?: number } = {}): TraverseChildrenResult {
     const parent = this.lookup(id);
-    if (!parent || parent.kind !== "container") return { id, total: 0, children: [] };
+    if (!parent) return { id, total: 0, children: [] };
     const all = this.childIndex.get(parent.id) ?? [];
     const limit = options.limit === undefined ? DEFAULT_CHILDREN_LIMIT : Math.max(0, Math.floor(options.limit));
     return {
@@ -977,6 +989,22 @@ export class Traverser {
         reason,
       });
     };
+
+    const codeTerms = new Set(codeQueryTerms(text));
+    const taskWords = new Set(text.toLowerCase().split(/[^a-z0-9_./-]+/).filter(Boolean));
+    const codeMatches: Array<{ node: TraverseNode; score: number }> = [];
+    for (const node of this.byId.values()) {
+      if (node.kind !== "code") continue;
+      const label = node.label.toLowerCase();
+      const exactPath = node.path && taskWords.has(node.path.toLowerCase());
+      const exactLabel = taskWords.has(label) && !CODE_QUERY_STOPWORDS.has(label);
+      const nodeTerms = new Set(codeQueryTerms(node.meta?.symbol ? node.label : node.path ?? node.label));
+      const hits = [...codeTerms].filter(term => nodeTerms.has(term)).length;
+      const score = exactPath && !node.meta?.symbol ? 100 : exactLabel ? 80 : hits > 0 ? hits * 10 + (node.meta?.symbol ? 1 : 0) : 0;
+      if (score > 0) codeMatches.push({ node, score });
+    }
+    codeMatches.sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
+    for (const match of codeMatches.slice(0, 10)) push(match.node, `code match: ${match.node.label}`);
 
     const graphSkills = findNodes<SkillNode>(this.graph, "skill");
     let matchedSkillIds: string[];
@@ -1062,7 +1090,15 @@ export class Traverser {
       }
     } else {
       if (!node.file) throw new VaultError("FILE_NOT_FOUND", `No source file for ${node.id}`);
+      if (node.kind === "code") {
+        const realRoot = realpathSync(this.ctx.root);
+        const rel = relative(realRoot, realpathSync(node.file));
+        if (rel === ".." || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== realpathSync(node.file)) {
+          throw new VaultError("PERMISSION_DENIED", `Code path escapes project: ${node.path}`);
+        }
+      }
       content = readFileSync(node.file, "utf8");
+      if (node.meta?.symbol) content = content.split("\n").slice(Number(node.meta.startLine) - 1, Number(node.meta.endLine)).join("\n");
     }
 
     const bytes = Buffer.byteLength(content, "utf8");
@@ -1075,7 +1111,7 @@ export class Traverser {
       bytes,
       tokens: traverseTokensForBytes(bytes),
       truncated,
-      content: truncated ? content.slice(0, maxBytes) : content,
+      content: truncated ? truncateUtf8(content, maxBytes) : content,
     };
   }
 }

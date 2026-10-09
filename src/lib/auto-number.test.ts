@@ -79,6 +79,21 @@ describe("auto-number", () => {
   });
 
   describe("claimNumberedFile", () => {
+    it("reserves numbers across concurrent different titles", async () => {
+      const claims = await Promise.all(["alpha", "beta", "gamma"].map((slug) =>
+        claimNumberedFile(vaultFs, "projects/project-123/tasks", (_number, padded) => `${padded}-${slug}.md`, () => slug, { startAt: 1 }),
+      ));
+      expect(claims.map((claim) => claim.number).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+      expect(await getNextNumber(vaultFs, "projects/project-123/tasks")).toBe(4);
+    });
+
+    it("does not reuse an existing number with a different title", async () => {
+      await vaultFs.write("claims/001-old.md", "old");
+      const claim = await claimNumberedFile(vaultFs, "claims", (_number, padded) => `${padded}-new.md`, () => "new", { startAt: 1 });
+      expect(claim.number).toBe(2);
+      expect(await vaultFs.read("claims/001-old.md")).toBe("old");
+    });
+
     it("exclusively creates the first numbered file", async () => {
       await mkdir(join(vaultRoot, "claims"), { recursive: true });
 

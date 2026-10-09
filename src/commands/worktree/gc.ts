@@ -103,7 +103,7 @@ export async function worktreeGcCommand(args: WorktreeGcArgs, ctx: CommandContex
   const wantsAll = args.all === true;
   const worktreeValue = args.worktree?.trim() ?? "";
   const worktreePath = worktreeValue.length > 0 ? resolve(worktreeValue) : null;
-  const target = worktreePath !== null && existsSync(worktreePath) ? worktreePath : process.cwd();
+  const target = worktreePath !== null && existsSync(worktreePath) ? worktreePath : (ctx.workspacePath ?? process.cwd());
   const built = await buildProviderContext(target);
 
   if (args.undo !== undefined && args.undo.trim().length > 0) {

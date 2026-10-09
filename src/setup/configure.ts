@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { legacyMcpEntry, removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, SetupResult } from "./types.js";
 import { INSTRUCTION_TEXT } from "./types.js";
 import { readJsonConfig, writeJsonConfig, addMcpEntry, removeMcpEntry } from "./json-config.js";
@@ -20,10 +21,10 @@ export function buildMcpEntry(
   const base: Record<string, unknown> = { ...extraFields };
 
   if (commandType === "array") {
-    base.command = ["npx", "-y", "superskill"];
+    base.command = ["npx", "-y", "--prefer-online", "superskill@latest"];
   } else {
     base.command = "npx";
-    base.args = ["-y", "superskill"];
+    base.args = ["-y", "--prefer-online", "superskill@latest"];
   }
 
   base[envKey] = { VAULT_PATH: vaultPath };
@@ -33,10 +34,10 @@ export function buildMcpEntry(
 function buildTomlBlock(vaultPath: string): string {
   return `[mcp_servers.superskill]
 command = "npx"
-args = ["-y", "superskill"]
+args = ["-y", "--prefer-online", "superskill@latest"]
 
 [mcp_servers.superskill.env]
-VAULT_PATH = "${vaultPath}"`;
+VAULT_PATH = ${JSON.stringify(vaultPath).replace(/\x7f/g, "\\u007f")}`;
 }
 
 export function configureClient(
@@ -50,6 +51,11 @@ export function configureClient(
     mcpConfigured: false,
     instructionConfigured: false,
   };
+
+  if (config.support === "unsupported") {
+    result.error = config.supportNote ?? "Native MCP setup is unsupported. Use superskill-cli instead.";
+    return result;
+  }
 
   try {
     // 0. Migrate: remove old obsidian-mcp / obsidian-kb entries
@@ -78,12 +84,16 @@ export function configureClient(
           result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
           return result;
         }
-        const entry = buildMcpEntry(
+        let entry = buildMcpEntry(
           config.commandType,
           config.envKey,
           vaultPath,
           config.extraFields
         );
+        if (!existing[config.rootKey]?.superskill && !options.force) {
+          const legacy = legacyMcpEntry(detected);
+          if (legacy) entry = { ...legacy, command: entry.command, args: entry.args };
+        }
         const merged = addMcpEntry(
           existing,
           config.rootKey,
@@ -153,6 +163,8 @@ export function configureClient(
       writeFileSync(instructionPath, INSTRUCTION_TEXT + "\n", "utf-8");
       result.instructionConfigured = true;
     }
+
+    if (!options.dryRun) removeLegacySetup(detected);
 
     // 3. Install host-native slash commands (/review, /worktree, /superskill)
     if (config.commandPaths) {

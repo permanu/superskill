@@ -3,10 +3,9 @@
 // Operations on .superskill/ use raw fs (not VaultFS) because .superskill/ is
 // project-local, not inside the vault. VaultFS enforces vault-specific security policies.
 
-import { readFile, writeFile, rename, mkdir, appendFile } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, appendFile, open, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { GRAPH_SCHEMA_VERSION } from "./schema.js";
 import type {
@@ -57,6 +56,7 @@ export async function ensureSuperskillDir(projectDir: string): Promise<string> {
 function migrateGraph(parsed: Partial<Graph>): Graph {
   return {
     version: GRAPH_SCHEMA_VERSION,
+    ...(typeof parsed.catalogVersion === "string" ? { catalogVersion: parsed.catalogVersion } : {}),
     nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
     edges: Array.isArray(parsed.edges) ? parsed.edges : [],
   };
@@ -78,24 +78,72 @@ export async function loadGraph(projectDir: string): Promise<Graph> {
   }
 }
 
-export async function writeGraph(projectDir: string, graph: Graph): Promise<void> {
-  const targetPath = join(projectDir, GRAPH_FILE);
-  const dir = dirname(targetPath);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
+async function withGraphLock<T>(projectDir: string, action: () => Promise<T>, timeoutMs = 5000): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("Invalid graph lock timeout");
+  const dir = join(projectDir, ".superskill");
+  await mkdir(dir, { recursive: true });
+  const lockPath = join(dir, "graph.lock");
+  const deadline = Date.now() + timeoutMs;
+  let handle;
+  while (!handle) {
+    try {
+      handle = await open(lockPath, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) throw new Error(`Timed out acquiring graph lock: ${lockPath}`);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+    }
   }
-  const tmpPath = join(
-    tmpdir(),
-    `graph-${randomUUID()}.json`,
-  );
+  try {
+    await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    return await action();
+  } finally {
+    await handle.close();
+    await unlink(lockPath);
+  }
+}
+
+async function persistGraph(projectDir: string, graph: Graph): Promise<void> {
+  const targetPath = join(projectDir, GRAPH_FILE);
+  const tmpPath = join(dirname(targetPath), `.graph-${randomUUID()}.tmp`);
   const persisted: Graph = { ...graph, version: GRAPH_SCHEMA_VERSION };
   try {
-    await writeFile(tmpPath, JSON.stringify(persisted, null, 2), "utf-8");
+    await writeFile(tmpPath, JSON.stringify(persisted, null, 2), { encoding: "utf-8", flag: "wx", mode: 0o600 });
     await rename(tmpPath, targetPath);
-  } catch (err) {
-    console.error("[graph-store] failed to write graph:", (err as Error).message);
-    throw err;
+  } finally {
+    try {
+      await unlink(tmpPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
+}
+
+export async function writeGraph(projectDir: string, graph: Graph): Promise<void> {
+  await withGraphLock(projectDir, () => persistGraph(projectDir, graph));
+}
+
+export async function mutateGraph(
+  projectDir: string,
+  mutate: (graph: Graph) => Graph | Promise<Graph>,
+  options: { timeoutMs?: number } = {},
+): Promise<Graph> {
+  return withGraphLock(projectDir, async () => {
+    let graph: Graph;
+    try {
+      const parsed = JSON.parse(await readFile(join(projectDir, GRAPH_FILE), "utf-8")) as Partial<Graph>;
+      if (!parsed || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+        throw new Error("Invalid graph structure");
+      }
+      graph = migrateGraph(parsed);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      graph = createEmptyGraph();
+    }
+    const updated = await mutate(graph);
+    await persistGraph(projectDir, updated);
+    return updated;
+  }, options.timeoutMs);
 }
 
 export function findNode<T extends Node>(

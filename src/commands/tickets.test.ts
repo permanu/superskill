@@ -42,6 +42,34 @@ describe("ticketsCommand", () => {
   });
 
   describe("create", () => {
+    it("maps dependency references to actual IDs after an abandoned reservation", async () => {
+      await createFrozenSpec(ctx);
+      await vaultFs.write("projects/test-project/tickets/.number-claims/001", "reserved by an interrupted capture");
+      const result = await ticketsCommand({ action: "create", spec: "001", project: "test-project", tickets: [
+        { title: "First", blockedBy: ["ticket-002"] },
+        { title: "Second" },
+        { title: "Third", blockedBy: ["ticket-001"] },
+      ] }, ctx);
+      expect(result.created!.map((entry) => entry.ticket_id)).toEqual(["ticket-002", "ticket-003", "ticket-004"]);
+      const listed = await ticketsCommand({ action: "list", project: "test-project" }, ctx);
+      expect(listed.tickets!.find((ticket) => ticket.title === "First")!.blocked_by).toEqual(["ticket-003"]);
+      expect(listed.tickets!.find((ticket) => ticket.title === "Third")!.blocked_by).toEqual(["ticket-002"]);
+    });
+
+    it("keeps each concurrent batch dependency attached to its own claimed ticket", async () => {
+      await createFrozenSpec(ctx);
+      const results = await Promise.all(["Alpha", "Beta"].map((prefix) => ticketsCommand({ action: "create", spec: "001", project: "test-project", tickets: [
+        { title: `${prefix} first` },
+        { title: `${prefix} second`, blockedBy: ["ticket-001"] },
+      ] }, ctx)));
+      const listed = await ticketsCommand({ action: "list", project: "test-project" }, ctx);
+      for (const result of results) {
+        const first = result.created![0];
+        const second = listed.tickets!.find((ticket) => ticket.id === result.created![1].ticket_id)!;
+        expect(second.blocked_by).toEqual([first.ticket_id]);
+      }
+    });
+
     it("refuses to create tickets from an unfrozen spec", async () => {
       await specCommand(
         { action: "create", title: "Draft", project: "test-project" },

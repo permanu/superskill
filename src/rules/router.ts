@@ -3,6 +3,7 @@
 import { formatMatchClause } from "./explain.js";
 import {
   countSymbolOccurrences,
+  isProseWord,
   matchGlob,
   normalizeFilePath,
   normalizeTerms,
@@ -73,7 +74,7 @@ const PROMPT_TOKEN = /[a-z0-9][a-z0-9._#+-]*/g;
 
 const PHASE_KEYWORDS: ReadonlyArray<{ phase: RulePhase; words: readonly string[] }> = [
   { phase: "ship", words: ["deploy", "release", "ship", "publish", "bump", "tag", "version"] },
-  { phase: "review", words: ["review", "refactor", "audit", "diff", "verify", "validate", "check", "inspect"] },
+  { phase: "review", words: ["review", "refactor", "audit", "diff", "verify", "validate", "check", "inspect", "defect", "critique"] },
   {
     phase: "implement",
     words: [
@@ -212,22 +213,32 @@ function buildCandidates(
   const symbolHits: HitMap = new Map();
   const fileHits: HitMap = new Map();
 
-  for (const token of tokenizePrompt(prompt)) {
-    for (const term of normalizeTerms(token)) {
-      const key = simpleStem(term);
-      const postings = index.keywordIndex.get(key);
-      if (!postings) continue;
-      for (const ruleId of postings) {
-        const rule = index.byId.get(ruleId);
-        if (!rule || !eligible(rule)) continue;
-        bump(keywordHits, ruleId, term);
+  const promptTerms = tokenizePrompt(prompt).flatMap(normalizeTerms).map(simpleStem);
+  const candidateIds = new Set<string>();
+  for (const term of promptTerms) {
+    if (isProseWord(term)) continue;
+    for (const ruleId of index.keywordIndex.get(term) ?? []) candidateIds.add(ruleId);
+  }
+  for (const ruleId of candidateIds) {
+    const rule = index.byId.get(ruleId);
+    if (!rule || !eligible(rule)) continue;
+    for (const keyword of new Set(rule.triggers.keywords)) {
+      const terms = normalizeTerms(keyword).map(simpleStem);
+      if (terms.length === 0 || terms.every(isProseWord)) continue;
+      let count = 0;
+      for (let i = 0; i <= promptTerms.length - terms.length; i++) {
+        if (terms.every((term, j) => promptTerms[i + j] === term)) count++;
       }
+      if (count > 0) bump(keywordHits, ruleId, keyword.toLowerCase(), count);
     }
   }
 
   for (const [symbolKey, postings] of index.symbolIndex) {
     if (postings.length === 0) continue;
-    const count = countSymbolOccurrences(prompt, symbolKey);
+    const symbolPrompt = isProseWord(symbolKey)
+      ? [...prompt.matchAll(/`+([^`]+)`+|\b([a-z]+)\.[a-z_$][\w$]*/gi)].map((match) => match[1] ?? match[2]).join("\n")
+      : prompt;
+    const count = countSymbolOccurrences(symbolPrompt, symbolKey);
     if (count === 0) continue;
     for (const posting of postings) {
       const rule = index.byId.get(posting.ruleId);

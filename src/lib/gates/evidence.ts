@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFile } from "node:child_process";
-import { appendFile, mkdir, open } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { VaultFS } from "../vault-fs.js";
 
@@ -38,40 +36,8 @@ export async function appendEvidence(
   return { path, record };
 }
 
-/**
- * Append a line atomically. The file is created when missing; a newline is
- * inserted only when the existing content does not already end with one.
- */
 async function appendLine(vaultFs: VaultFS, relativePath: string, line: string): Promise<void> {
-  const abs = resolve(vaultFs.root, vaultFs.jailPath(relativePath));
-  const rel = relative(vaultFs.root, abs);
-  if (rel.startsWith("..") || rel.startsWith("/") || rel === "") {
-    throw new Error(`Evidence path escapes vault: ${relativePath}`);
-  }
-
-  await vaultFs.verifyNoSymlinkEscape(relativePath);
-  await mkdir(dirname(abs), { recursive: true });
-
-  const separator = (await endsWithNewline(abs)) ? "" : "\n";
-  await appendFile(abs, separator + line, "utf-8");
-}
-
-async function endsWithNewline(absPath: string): Promise<boolean> {
-  try {
-    const handle = await open(absPath, "r");
-    try {
-      const { size } = await handle.stat();
-      if (size === 0) return true;
-      const lastByte = Buffer.alloc(1);
-      await handle.read(lastByte, 0, 1, size - 1);
-      return lastByte[0] === 0x0a;
-    } finally {
-      await handle.close();
-    }
-  } catch (e: any) {
-    if (e?.code === "ENOENT") return true;
-    throw e;
-  }
+  await vaultFs.update(relativePath, (current) => current + (current && !current.endsWith("\n") ? "\n" : "") + line, { create: true });
 }
 
 export async function readEvidence(

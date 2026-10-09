@@ -30,44 +30,21 @@ export async function writeCommand(
     throw new VaultError("SECRET_REJECTED", formatSecretWarnings(secretMatches));
   }
 
-  if (mode === "append" || mode === "prepend") {
-    const fileExists = await vaultFs.exists(path);
-    if (!fileExists) {
-      const created = await createNewFile(vaultFs, path, content, fmOverrides);
-      await syncIndex(ctx, path);
-      return created;
+  const result = await vaultFs.update(path, async (existing) => {
+    if ((mode === "append" || mode === "prepend") && existing) {
+      const { data, content: body } = parseFrontmatter(existing);
+      const updatedFm = mergeFrontmatter(data, fmOverrides ?? {});
+      const newBody = mode === "append" ? body.trimEnd() + "\n" + content : content + "\n" + body;
+      return serializeFrontmatter(updatedFm, newBody);
     }
-    const existing = await vaultFs.read(path);
-    const { data, content: body } = parseFrontmatter(existing);
-    const updatedFm = mergeFrontmatter(data, fmOverrides ?? {});
-    const newBody = mode === "append"
-      ? body.trimEnd() + "\n" + content
-      : content + "\n" + body;
-    const result = await vaultFs.write(path, serializeFrontmatter(updatedFm, newBody));
-    await syncIndex(ctx, path);
-    return { written: true, ...result };
-  }
-
-  const fm = fmOverrides
-    ? createFrontmatter(fmOverrides)
-    : createFrontmatter({});
-
-  const errors = validateFrontmatter(fm);
-  if (errors.length > 0) {
-    throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
-  }
-
-  const fullContent = serializeFrontmatter(fm, content);
-
-  const fileExists = await vaultFs.exists(path);
-  if (fileExists) {
-    const existing = await vaultFs.read(path);
-    await snapshotVersion(vaultFs, ctx.vaultPath, path, existing);
-  }
-
-  const result = await vaultFs.write(path, fullContent);
+    const fm = createFrontmatter(fmOverrides ?? {});
+    const errors = validateFrontmatter(fm);
+    if (errors.length > 0) throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
+    if (mode === "overwrite" && existing) await snapshotVersion(vaultFs, ctx.vaultPath, vaultFs.jailPath(path), existing);
+    return serializeFrontmatter(fm, content);
+  }, { create: true });
   await syncIndex(ctx, path);
-  return { written: true, ...result };
+  return { written: true, path: result.path, bytes: result.bytes };
 }
 
 async function syncIndex(ctx: CommandContext, path: string): Promise<void> {
@@ -78,19 +55,4 @@ async function syncIndex(ctx: CommandContext, path: string): Promise<void> {
   } catch (e: unknown) {
     console.error("[knowledge-index] sync skipped:", e instanceof Error ? e.message : e);
   }
-}
-
-async function createNewFile(
-  vaultFs: import("../lib/vault-fs.js").VaultFS,
-  path: string,
-  content: string,
-  fmOverrides?: Partial<Frontmatter>
-): Promise<{ written: boolean; path: string; bytes: number }> {
-  const fm = fmOverrides ? createFrontmatter(fmOverrides) : createFrontmatter({});
-  const errors = validateFrontmatter(fm);
-  if (errors.length > 0) {
-    throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
-  }
-  const result = await vaultFs.write(path, serializeFrontmatter(fm, content));
-  return { written: true, ...result };
 }

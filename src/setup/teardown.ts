@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js";
 import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";
 import { removeTomlBlock } from "./toml-config.js";
@@ -79,6 +80,8 @@ export function teardownClient(
       result.instructionRemoved = true;
     }
 
+    if (!options.dryRun) removeLegacySetup(detected);
+
     // 3. Remove host-native slash commands
     if (config.commandPaths) {
       if (options.dryRun) {
@@ -98,6 +101,8 @@ export function teardownClient(
 export async function teardownAll(
   options: TeardownOptions = {}
 ): Promise<TeardownResult[]> {
+  const unknown = options.clients?.filter(slug => !CLIENT_REGISTRY.some(client => client.slug === slug));
+  if (unknown?.length) throw new Error(`Unknown client(s): ${unknown.join(", ")}`);
   const results: TeardownResult[] = [];
   const targets = options.clients
     ? CLIENT_REGISTRY.filter((c) => options.clients!.includes(c.slug))

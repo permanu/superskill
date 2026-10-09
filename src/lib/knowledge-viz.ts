@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { VaultFS, VaultError } from "./vault-fs.js";
 import { ensureProjectIndex, upsertVaultFile } from "./knowledge-index.js";
-import { scanImportGraph } from "./code-graph.js";
-import { attachCodeBodies, buildVizModel, mermaidFlowchart, type VizModel } from "./viz-model.js";
+import { scanRepo } from "./codegraph/scan.js";
+import { buildProjectVizModel, attachProjectSources } from "./project-viz-model.js";
+import { mermaidFlowchart, type VizModel } from "./viz-model.js";
 
 export const GENERATED_MARKER = "<!-- superskill:generated -->";
 
@@ -354,6 +355,12 @@ const CLIENT_JS = String.raw`
     modules: ["The program", "Layers hold modules. Click a layer to collapse it."]
   };
   var DOC_OF_VIEW = { hla: "diag:high", lla: "diag:low", erd: "diag:erd", flow: "diag:flow" };
+  var GRAPH_OF_VIEW = { graph: "root", modules: "impl", rules: "rules" };
+  if (model.navigation) model.navigation.forEach(function (item) {
+    VIEW_HEAD[item.id] = [item.label, ""];
+    if (item.doc) DOC_OF_VIEW[item.id] = item.doc;
+    if (item.graph) GRAPH_OF_VIEW[item.id] = item.graph;
+  });
 
   var state = {
     view: "graph",
@@ -365,6 +372,8 @@ const CLIENT_JS = String.raw`
     query: "",
     hidden: {},
     cy: null,
+    layout: null,
+    fullSource: false,
     libOk: false
   };
   function currentGraphId() { return state.stack[state.stack.length - 1]; }
@@ -390,7 +399,7 @@ const CLIENT_JS = String.raw`
       "label": "data(title)",
       "color": "#e9e7e2",
       "font-family": "Space Grotesk, sans-serif",
-      "font-size": 12,
+      "font-size": 14,
       "text-wrap": "wrap",
       "text-max-width": 200,
       "text-valign": "center",
@@ -426,7 +435,7 @@ const CLIENT_JS = String.raw`
       "width": 1.3,
       "line-color": "data(ecolor)",
       "target-arrow-color": "data(ecolor)",
-      "opacity": 0.72,
+      "opacity": 0.95,
       "target-arrow-shape": "triangle",
       "arrow-scale": 0.9,
       "curve-style": "taxi",
@@ -435,12 +444,12 @@ const CLIENT_JS = String.raw`
       "taxi-turn-min-distance": 8,
       "label": "data(etype)",
       "font-family": "JetBrains Mono, monospace",
-      "font-size": 9,
-      "color": "#8f96a3",
+      "font-size": 11,
+      "color": "#b3b0a8",
       "text-background-color": "#0f1116",
       "text-background-opacity": 0.85,
       "text-background-padding": 2,
-      "text-rotation": "autorotate",
+      "text-rotation": "none",
       "transition-property": "opacity",
       "transition-duration": "160ms"
     }},
@@ -472,9 +481,10 @@ const CLIENT_JS = String.raw`
         minZoom: 0.15,
         maxZoom: 2.5
       });
+      state.cy.on("zoom", function () { $("zoom-level").textContent = Math.round(state.cy.zoom() * 100) + "%"; });
       state.cy.on("tap", "node", function (ev) {
         if (ev.target.data("role") === "layer") toggleLayer(ev.target);
-        selectNode(ev.target.data("id"));
+        activateNode(ev.target.data("id"));
       });
       state.cy.on("mouseover", "node", function (ev) {
         if (ev.target.hasClass("f-hidden")) return;
@@ -546,6 +556,7 @@ const CLIENT_JS = String.raw`
   }
 
   function runLayout(cy) {
+    if (state.layout) state.layout.stop();
     var eles = cy.elements().not(".c-hidden, .f-hidden");
     if (!eles.length) return;
     var options = { name: "breadthfirst", directed: true, padding: 40, spacingFactor: 1.15, animate: false, fit: true, eles: eles };
@@ -567,22 +578,63 @@ const CLIENT_JS = String.raw`
       }
       options = { name: "elk", animate: false, fit: true, padding: 40, eles: eles, elk: elk };
     }
+    if (!eles.edges().length) {
+      options = { name: "grid", animate: false, fit: false, avoidOverlap: true, condense: true, padding: 40,
+        cols: Math.max(1, Math.round(Math.sqrt(eles.nodes().length * cy.width() / Math.max(1, cy.height())))) };
+    }
+    options.stop = fitView;
     try {
-      cy.layout(options).run();
+      state.layout = cy.layout(options);
+      state.layout.run();
     } catch (err) {
       console.error(err);
       try { cy.layout({ name: "breadthfirst", directed: true, padding: 40, animate: false, fit: true, eles: eles }).run(); } catch (e2) { console.error(e2); }
     }
-    cy.one("layoutstop", function () { fitView(); });
   }
 
   function fitView() {
+    if (!$("doc-slot").hidden) {
+      var svg = $("doc-slot").querySelector("svg");
+      if (svg && svg.viewBox.baseVal.width) setDiagramScale(Math.min(1, ($("doc-slot").clientWidth - 64) / svg.viewBox.baseVal.width));
+      $("doc-slot").scrollTop = 0;
+      $("doc-slot").scrollLeft = 0;
+      return;
+    }
     if (!state.cy) return;
     var visible = state.cy.elements().not(".f-hidden, .c-hidden");
-    try { state.cy.fit(visible.length ? visible : state.cy.elements(), 48); } catch (e) { console.error(e); }
+    try {
+      state.cy.fit(visible.length ? visible : state.cy.elements(), window.innerWidth < 700 ? 24 : 56);
+      if (state.cy.zoom() > 1.2) { state.cy.zoom(1.2); state.cy.center(visible); }
+    } catch (e) { console.error(e); }
+  }
+
+  function zoomBy(factor) {
+    if (!$("doc-slot").hidden) { setDiagramScale((state.diagramScale || 1) * factor); return; }
+    if (!state.cy || !state.libOk) return;
+    state.cy.zoom({ level: state.cy.zoom() * factor, renderedPosition: { x: state.cy.width() / 2, y: state.cy.height() / 2 } });
+  }
+
+  function setDiagramScale(scale) {
+    state.diagramScale = Math.max(0.01, Math.min(4, scale));
+    Array.prototype.forEach.call($("doc-slot").querySelectorAll("svg"), function (svg) {
+      svg.style.width = svg.viewBox.baseVal.width * state.diagramScale + "px";
+      svg.style.maxWidth = "none";
+    });
+    $("zoom-level").textContent = Math.round(state.diagramScale * 100) + "%";
+  }
+
+  function clearFilters() {
+    state.query = "";
+    state.hidden = {};
+    $("search").value = "";
   }
 
   function resetView() {
+    if (!$("doc-slot").hidden) { fitView(); return; }
+    clearFilters();
+    renderChips(currentGraph());
+    applyFilters();
+    updateStats(currentGraph());
     if (!state.cy) { renderFallbackList(); return; }
     runLayout(state.cy);
   }
@@ -606,7 +658,10 @@ const CLIENT_JS = String.raw`
     var visible = visibleCount(g);
     var nodeText = visible === total ? total + " nodes" : visible + " of " + total + " nodes";
     $("stats").textContent = nodeText + " · " + g.edges.length + " edges";
-    $("empty").hidden = !(total > 0 && visible === 0);
+    $("empty").hidden = visible > 0;
+    $("empty-message").textContent = total === 0 ? "No nodes yet" : "No matching nodes";
+    $("empty-hint").textContent = total === 0 ? "Notes added to this project will appear here when you regenerate the graph." : "Try a different search or show all node types.";
+    $("clear-filters").hidden = total === 0;
   }
 
   function applyFilters() {
@@ -664,20 +719,16 @@ const CLIENT_JS = String.raw`
       button.onclick = function () {
         var type = button.getAttribute("data-type");
         state.hidden[type] = !state.hidden[type];
-        renderChips(g);
+        button.setAttribute("aria-pressed", state.hidden[type] ? "false" : "true");
         applyFilters();
         updateStats(g);
       };
     });
   }
 
-  function renderLegend(g) {
+  function renderLegend() {
     var host = $("legend");
-    var html = "<div class=\"legend-title\">Legend</div><div class=\"legend-items\">";
-    presentTypes(g).forEach(function (type) {
-      html += "<span class=\"legend-item\">" + dot(type) + esc(typeLabel(type)) + "</span>";
-    });
-    html += "</div><div class=\"legend-note\">Dashed outline opens a nested view \u00b7 click a layer to collapse it</div>";
+    var html = "<span>Drag to pan · scroll to zoom</span><span>Open directories · select files to read source</span>";
     host.innerHTML = html;
     host.hidden = false;
   }
@@ -694,20 +745,20 @@ const CLIENT_JS = String.raw`
 
   function wireNodeButtons(root) {
     Array.prototype.forEach.call(root.querySelectorAll("[data-qa='node']"), function (button) {
-      button.onclick = function () { selectNode(button.getAttribute("data-id")); };
+      button.onclick = function () { activateNode(button.getAttribute("data-id")); };
     });
   }
 
   function renderOverview(g) {
     var panel = $("panel");
     var viewDoc = model.docs["view:" + currentGraphId()];
-    var intro = viewDoc ? "<div class=\"doc-body view-doc\">" + md(viewDoc.body) + "</div>" : "";
+    var intro = viewDoc ? "<details class=\"view-guide\"><summary>About this view</summary><div class=\"doc-body view-doc\">" + md(viewDoc.body) + "</div></details>" : "";
     if (!state.libOk) {
       panel.innerHTML = "<div class=\"panel-head\"><h2>" + esc(g.title) + "</h2><p class=\"hint\">" + esc(g.subtitle || "") + "</p></div>" +
         intro + "<p class=\"hint\">Select a node from the index to read it.</p>";
       return;
     }
-    var html = "<div class=\"panel-head\"><h2>" + esc(g.title) + "</h2><p class=\"hint\">" + esc(g.subtitle || "") + "</p></div>";
+    var html = "<div class=\"panel-head\"><h2>Browse nodes</h2><p class=\"hint\">Select a node to read its document and explore connections.</p></div>";
     html += intro;
     html += g.nodes.length ? "<div class=\"node-list\">" + g.nodes.map(nodeButton).join("") + "</div>"
       : "<p class=\"hint\">Nothing stored here yet.</p>";
@@ -734,7 +785,7 @@ const CLIENT_JS = String.raw`
       relMap[key].count++;
     });
     var relations = relOrder.map(function (k) { return relMap[k]; });
-    var html = "<div class=\"detail anim\">";
+    var html = "<button type=\"button\" id=\"all-nodes\" class=\"btn\">All nodes</button><div class=\"detail anim\">";
     html += "<div class=\"detail-meta\">" + dot(node.type) + "<span class=\"chip-type\">" + esc(typeLabel(node.type)) + "</span></div>";
     html += "<h2>" + esc(node.title || node.id) + "</h2>";
     html += "<div class=\"detail-path\">" + esc(node.id) + "</div>";
@@ -760,12 +811,25 @@ const CLIENT_JS = String.raw`
       }).join("") + "</ul>";
     }
     html += "<h3>Document</h3>";
-    html += doc ? "<div class=\"doc-body\">" + md(stripMermaids(doc.body)) + "</div>"
+    html += doc ? "<div class=\"doc-body\">" + md(stripMermaids(doc.body)) + "</div>" + sourceContent(doc)
       : "<p class=\"hint\">No document stored for this node.</p>";
     html += "</div>";
     var panel = $("panel");
     panel.innerHTML = html;
     panel.scrollTop = 0;
+    if ($("read-full-source")) $("read-full-source").onclick = function () { state.fullSource = true; renderDetail(g, node); };
+    $("all-nodes").onclick = function () {
+      var selected = state.selected;
+      state.selected = null;
+      if (state.cy) { state.cy.nodes().unselect(); refreshEmphasis(); }
+      renderOverview(g);
+      $("back").disabled = state.stack.length <= 1;
+      var buttons = panel.querySelectorAll("[data-id]");
+      Array.prototype.some.call(buttons, function (button) {
+        if (button.getAttribute("data-id") !== selected) return false;
+        button.focus(); return true;
+      });
+    };
     Array.prototype.forEach.call(panel.querySelectorAll("[data-open-graph]"), function (button) {
       button.onclick = function () { openGraph(button.getAttribute("data-open-graph")); };
     });
@@ -777,6 +841,45 @@ const CLIENT_JS = String.raw`
     });
   }
 
+  function sourceContent(doc) {
+    if (!doc.source) return "";
+    if (doc.source.unavailableReason) return "<p class=\"hint\">" + esc(doc.source.unavailableReason) + "</p>";
+    var source = (model.sources || {})[doc.source.path];
+    if (!source) return "<p class=\"hint\">Source snapshot is unavailable. Regenerate this graph from the project directory.</p>";
+    var span = doc.source.startLine && !state.fullSource;
+    var text = span ? source.text.split("\n").slice(doc.source.startLine - 1, doc.source.endLine).join("\n") : source.text;
+    return "<div class=\"source-head\"><span>" + esc(doc.source.path) + (span ? ":" + doc.source.startLine + "–" + doc.source.endLine : " · complete file") + "</span>" +
+      (span ? "<button type=\"button\" id=\"read-full-source\" class=\"btn\">Read full file</button>" : "") + "</div>" +
+      (source.truncated ? "<p class=\"hint\">Source snapshot limited to 1 MB.</p>" : "") +
+      "<pre class=\"code source-code\" tabindex=\"0\"><code>" + esc(text) + "</code></pre>";
+  }
+
+  function activateNode(id) {
+    var g = currentGraph();
+    var node = g && g.nodes.find(function (item) { return item.id === id; });
+    if (model.navigation && node && node.type !== "code" && node.open && node.open.kind === "graph") {
+      openGraph(node.open.id);
+      return;
+    }
+    selectNode(id);
+  }
+
+  function renderBreadcrumbs() {
+    var host = $("breadcrumbs");
+    host.innerHTML = state.stack.map(function (id, index) {
+      var graph = model.graphs[id];
+      return "<button type=\"button\" data-depth=\"" + index + "\"" + (index === state.stack.length - 1 ? " aria-current=\"location\"" : "") + ">" + esc(graph ? graph.title : id) + "</button>";
+    }).join("<span aria-hidden=\"true\">/</span>");
+    Array.prototype.forEach.call(host.querySelectorAll("button"), function (button) {
+      button.onclick = function () {
+        state.stack = state.stack.slice(0, Number(button.getAttribute("data-depth")) + 1);
+        clearFilters();
+        if (currentGraphId() === "root") state.tab = "graph";
+        renderGraphView();
+      };
+    });
+  }
+
   function selectNode(id) {
     var g = currentGraph();
     if (!g) return;
@@ -784,6 +887,8 @@ const CLIENT_JS = String.raw`
     g.nodes.forEach(function (n) { if (n.id === id) node = n; });
     if (!node) return;
     state.selected = id;
+    state.fullSource = false;
+    $("back").disabled = false;
     if (state.cy) {
       state.cy.nodes().unselect();
       var el = state.cy.getElementById(id);
@@ -791,10 +896,13 @@ const CLIENT_JS = String.raw`
       refreshEmphasis();
     }
     renderDetail(g, node);
+    $("all-nodes").focus({ preventScroll: true });
+    if (window.innerWidth <= 760) $("panel").scrollIntoView({ block: "start", behavior: "instant" });
   }
 
   function openGraph(id) {
     if (!model.graphs[id] || currentGraphId() === id) return;
+    clearFilters();
     state.stack.push(id);
     state.selected = null;
     renderGraphView();
@@ -805,6 +913,7 @@ const CLIENT_JS = String.raw`
     if (g && g.nodes.some(function (n) { return n.id === id; })) { selectNode(id); return; }
     var owner = nodeOwner[id];
     if (!owner || !model.graphs[owner]) return;
+    clearFilters();
     state.stack.push(owner);
     state.tab = owner.indexOf("rules") === 0 ? "rules" : state.tab;
     renderGraphView();
@@ -836,16 +945,19 @@ const CLIENT_JS = String.raw`
     state.selected = null;
     state.hovered = null;
     renderChips(g);
-    renderLegend(g);
+    renderLegend();
     updateStats(g);
     $("doc-slot").hidden = true;
     $("doc-slot").innerHTML = "";
     $("fallback").hidden = true;
     $("fallback").innerHTML = "";
+    $("zoom-controls").hidden = false;
     var cy = ensureCy();
     if (!cy) {
       state.libOk = false;
       $("graph").hidden = true;
+      $("zoom-controls").hidden = true;
+      $("legend").hidden = true;
       $("fit").disabled = true;
       $("reset").disabled = true;
       renderFallback(g);
@@ -858,6 +970,7 @@ const CLIENT_JS = String.raw`
     $("fit").disabled = false;
     $("reset").disabled = false;
     try { cy.resize(); } catch (e) { console.error(e); }
+    if (state.layout) { state.layout.stop(); state.layout = null; }
     cy.elements().remove();
     state.denseLabels =
       currentGraphId() !== "root" &&
@@ -906,6 +1019,9 @@ const CLIENT_JS = String.raw`
     var g = model.graphs[id];
     if (!g) { go("graph", false); return; }
     $("toolbar").hidden = false;
+    $("breadcrumbs").hidden = false;
+    renderBreadcrumbs();
+    $("back").disabled = state.stack.length <= 1;
     $("title").textContent = g.title;
     $("sub").textContent = g.subtitle || "";
     setNav(state.tab);
@@ -922,6 +1038,10 @@ const CLIENT_JS = String.raw`
     $("sub").textContent = head[1];
     setNav(view);
     $("toolbar").hidden = true;
+    $("breadcrumbs").hidden = true;
+    $("empty").hidden = true;
+    $("zoom-controls").hidden = true;
+    $("back").disabled = true;
     $("chips").innerHTML = "";
     $("legend").hidden = true;
     $("fit").disabled = true;
@@ -934,12 +1054,12 @@ const CLIENT_JS = String.raw`
     slot.hidden = false;
     var codes = (doc ? extractMermaids(doc.body) : []).map(meaningfulDiagram).filter(Boolean);
     if (!codes.length) {
-      slot.innerHTML = "<p class=\"empty\">No diagram stored for this view yet.</p>";
+      slot.innerHTML = "<div class=\"doc-body\">" + (doc ? md(doc.body) : "<p>No diagram is available for this view.</p>") + "</div>";
     } else if (typeof mermaid === "undefined") {
       slot.innerHTML = "<p class=\"empty\">Mermaid did not load. Showing the diagram source.</p>" +
         codes.map(function (c) { return "<pre class=\"code\"><code>" + esc(c) + "</code></pre>"; }).join("");
     } else {
-      var stamp = Date.now();
+      var stamp = Date.now() + "-" + Math.random().toString(36).slice(2);
       slot.innerHTML = codes.map(function (c, i) {
         return "<div class=\"diagram\" id=\"diagram-" + stamp + "-" + i + "\"><p class=\"empty\">Rendering diagram\u2026</p></div>";
       }).join("");
@@ -950,7 +1070,16 @@ const CLIENT_JS = String.raw`
         }
         try {
           mermaid.render("mmd" + stamp + "_" + i, code).then(function (res) {
-            if (host) host.innerHTML = res.svg;
+            if (host) {
+              host.innerHTML = res.svg;
+              var svg = host.querySelector("svg");
+              if (svg && svg.viewBox.baseVal.width) {
+                $("zoom-controls").hidden = false;
+                $("fit").disabled = false;
+                $("reset").disabled = false;
+                fitView();
+              }
+            }
           }).catch(function (err) { console.error(err); showSource(); });
         } catch (err) {
           console.error(err);
@@ -966,10 +1095,19 @@ const CLIENT_JS = String.raw`
   }
 
   function setNav(view) {
+    var item = model.navigation && model.navigation.find(function (entry) { return entry.id === view; });
+    var section = item && item.section || view;
     Array.prototype.forEach.call(document.querySelectorAll("#nav [data-view]"), function (button) {
-      if (button.getAttribute("data-view") === view) button.setAttribute("aria-current", "page");
+      if (button.getAttribute("data-view") === section) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
     });
+    var picker = $("view-select");
+    if (picker && model.navigation) {
+      var choices = model.navigation.filter(function (entry) { return (entry.section || entry.id) === section; });
+      picker.innerHTML = choices.map(function (entry) { return "<option value=\"" + esc(entry.id) + "\">" + esc(entry.label) + "</option>"; }).join("");
+      picker.value = view;
+      $("view-picker").hidden = choices.length < 2;
+    }
   }
 
   function go(view, pushHash) {
@@ -979,20 +1117,22 @@ const CLIENT_JS = String.raw`
     }
     state.view = view;
     state.selected = null;
-    state.query = "";
-    $("search").value = "";
-    if (view === "hla" || view === "lla" || view === "erd" || view === "flow") {
+    clearFilters();
+    if (DOC_OF_VIEW[view]) {
       state.tab = view;
       state.stack = ["root"];
       renderDocView(view);
       return;
     }
-    state.tab = view === "modules" ? "modules" : view === "rules" ? "rules" : "graph";
-    state.stack = view === "modules" ? ["root", "impl"] : view === "rules" ? ["root", "rules"] : ["root"];
+    state.tab = GRAPH_OF_VIEW[view] ? view : "graph";
+    var graphId = GRAPH_OF_VIEW[state.tab];
+    state.stack = graphId === "root" ? ["root"] : ["root", graphId];
     renderGraphView();
   }
 
   function goBack() {
+    if (state.selected && $("all-nodes")) { $("all-nodes").click(); return; }
+    clearFilters();
     if (state.stack.length > 1) state.stack.pop();
     if (currentGraphId() === "root") { go("graph", false); return; }
     renderGraphView();
@@ -1001,6 +1141,10 @@ const CLIENT_JS = String.raw`
   Array.prototype.forEach.call(document.querySelectorAll("#nav [data-view]"), function (button) {
     button.onclick = function () { go(button.getAttribute("data-view")); };
   });
+  $("zoom-in").onclick = function () { zoomBy(1.25); };
+  if ($("view-select")) $("view-select").onchange = function () { go(this.value); };
+  $("zoom-out").onclick = function () { zoomBy(0.8); };
+  $("clear-filters").onclick = function () { resetView(); $("search").focus(); };
   $("fit").onclick = function () { fitView(); };
   $("reset").onclick = function () { resetView(); };
   $("back").onclick = function () { goBack(); };
@@ -1018,7 +1162,7 @@ const CLIENT_JS = String.raw`
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     var target = ev.target || {};
     var tag = target.tagName || "";
-    var typing = tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+    var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
     if (ev.key === "/" && !typing) { ev.preventDefault(); $("search").focus(); return; }
     if (ev.key === "Escape") {
       if (typing) { target.blur(); return; }
@@ -1041,6 +1185,9 @@ const CLIENT_JS = String.raw`
   var initial = location.hash.replace("#", "") || "graph";
   if (!VIEW_HEAD[initial]) initial = "graph";
   go(initial, false);
+  if (document.fonts) document.fonts.ready.then(function () {
+    if (state.cy) { state.cy.style().update(); if (!$("graph").hidden) fitView(); }
+  });
 })();
 `;
 
@@ -1049,6 +1196,13 @@ export function renderKnowledgeGraphHtml(model: VizModel): string {
   const legend = JSON.stringify(legendEntries(model)).replace(/</g, "\\u003c");
   const theme = JSON.stringify(MERMAID_THEME).replace(/</g, "\\u003c");
   const title = escapeHtml(model.graphs.root?.title ?? "Knowledge graph");
+  const nav = model.navigation ? [
+    { id: "graph", label: "Explore" }, { id: "hla", label: "Architecture" }, { id: "vault", label: "Knowledge" },
+  ] : [
+    { id: "graph", label: "Retrieval" }, { id: "hla", label: "Architecture" },
+    { id: "lla", label: "Dependencies" }, { id: "erd", label: "Data model" },
+    { id: "rules", label: "Rules" }, { id: "flow", label: "Flow" }, { id: "modules", label: "Modules" },
+  ];
   const brandIcon = inlineIcon(30);
   const favicon = iconFaviconHref();
   const script = CLIENT_JS.replace(/__SUPERSKILL_(MODEL|LEGEND|THEME)__/g, (token) => {
@@ -1082,12 +1236,12 @@ ${PALETTE_CSS}
   ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 8px; border: 2px solid var(--bg); }
   * { scrollbar-color: var(--line-strong) var(--bg); scrollbar-width: thin; }
 
-  #shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-  #topbar { display: flex; align-items: center; gap: 24px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+  #shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 600px; }
+  #topbar { flex: none; display: flex; align-items: center; gap: 24px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
   #brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
   #brand svg { display: block; flex: none; }
-  #nav { display: flex; gap: 4px; }
-  #nav button { padding: 6px 12px; border-radius: 999px; color: var(--ink-2); font-size: 13px; letter-spacing: -0.01em; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
+  #nav { display: flex; gap: 4px; min-width: 0; overflow-x: auto; padding: 3px; }
+  #nav button { flex: none; min-height: 36px; padding: 6px 12px; border-radius: 999px; color: var(--ink-2); font-size: 13px; letter-spacing: -0.01em; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   #nav button:hover { color: var(--ink); background: var(--bg-3); }
   #nav button[aria-current="page"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .kbd-hint { margin-left: auto; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); }
@@ -1095,12 +1249,17 @@ ${PALETTE_CSS}
 
   #app { display: flex; flex: 1; min-height: 0; }
   #stage { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-  #stage-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 20px 24px 12px; }
+  #breadcrumbs { display: flex; align-items: center; gap: 8px; padding: 14px 24px 0; font-size: 12px; color: var(--ink-3); overflow-x: auto; flex: none; }
+  #breadcrumbs button { white-space: nowrap; min-height: 32px; padding: 4px; }
+  #breadcrumbs button[aria-current] { color: var(--ink); }
+  .source-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 16px 8px; overflow-wrap: anywhere; font-size: 12px; color: var(--ink-2); }
+  .source-code { max-height: 65vh; tab-size: 2; }
+  #stage-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 20px 24px 12px; }
   #title { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.03em; }
   #sub { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; max-width: 70ch; }
-  #stage-actions { display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
-  #stats { margin-right: 8px; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-2); color: var(--ink-2); font-size: 12.5px; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
+  #stage-actions { flex-wrap: wrap; display: flex; align-items: center; gap: 8px; padding-bottom: 2px; }
+  #stats { font-variant-numeric: tabular-nums; margin-right: 8px; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-2); color: var(--ink-2); font-size: 12.5px; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   .btn:hover { color: var(--ink); border-color: var(--ink-3); background: var(--bg-3); }
   .btn:disabled { opacity: 0.45; cursor: default; }
   .btn:disabled:hover { color: var(--ink-2); border-color: var(--line-strong); background: var(--bg-2); }
@@ -1108,13 +1267,14 @@ ${PALETTE_CSS}
   #toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 0 24px 14px; }
   #search-wrap { display: flex; align-items: center; gap: 8px; min-width: 230px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-2); color: var(--ink-3); transition: border-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   #search-wrap:focus-within { border-color: var(--accent); }
-  #search { width: 100%; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 13px; }
+  #search { font-family: var(--f-body); caret-color: var(--accent); width: 100%; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 13px; }
   #search::placeholder { color: var(--ink-3); }
   #search::-webkit-search-cancel-button { -webkit-appearance: none; }
   #chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg-2); color: var(--ink-2); font-size: 12px; transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   .chip:hover { color: var(--ink); border-color: var(--ink-3); }
-  .chip[aria-pressed="false"] { opacity: 0.45; border-style: dashed; }
+  .chip[aria-pressed="false"] { color: var(--ink-3); border-style: dashed; background: var(--bg); }
+  .chip[aria-pressed="false"] .dot { background: transparent !important; border: 1px solid currentColor; }
   .count { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-3); }
   .dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
 
@@ -1123,21 +1283,29 @@ ${PALETTE_CSS}
   #doc-slot { position: absolute; inset: 0; overflow: auto; padding: 32px; }
   #doc-slot .empty { margin: 0 0 16px; color: var(--ink-2); font-size: 13px; }
   #doc-slot .diagram svg { max-width: 100%; height: auto; }
+  #view-picker { margin: 16px 24px 0; color: var(--ink-2); font-size: 13px; }
+  #view-select { margin-left: 8px; padding: 8px 12px; max-width: calc(100% - 50px); color: var(--ink); background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; }
   #doc-slot .diagram + .diagram { margin-top: 20px; }
   #fallback { position: absolute; inset: 0; overflow: auto; padding: 24px 28px; }
-  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: var(--ink-2); font-size: 13px; }
+  #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; background: var(--bg-2); color: var(--ink-2); font-size: 14px; }
+  #empty strong { color: var(--ink); font-size: 20px; font-weight: 500; }
+  #empty p { max-width: 38ch; }
   #fallback .fallback-note { margin: 0 0 4px; color: var(--ink-2); font-size: 13px; }
   #fallback .fallback-stats { margin: 0 0 24px; font-family: var(--f-mono); font-size: 11px; color: var(--ink-3); }
   .index-group { margin: 0 0 24px; }
   .index-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
 
-  #legend { position: absolute; left: 14px; bottom: 14px; max-width: 300px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(15, 17, 22, 0.92); }
-  .legend-title { margin-bottom: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
-  .legend-items { display: flex; flex-wrap: wrap; gap: 4px 12px; }
-  .legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
-  .legend-note { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-3); }
+  #legend { position: absolute; left: 16px; bottom: 16px; right: 190px; display: flex; flex-wrap: wrap; gap: 4px 16px; pointer-events: none; color: var(--ink-3); font-size: 11px; }
+  #zoom-controls { position: absolute; right: 16px; bottom: 16px; display: flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); }
+  #zoom-controls button { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 6px; }
+  #zoom-controls button:hover { background: var(--bg-3); }
+  #zoom-level { min-width: 48px; text-align: center; font: 11px var(--f-mono); color: var(--ink-2); }
+  .view-guide { margin: 16px 0; padding: 12px 0; border-block: 1px solid var(--line); }
+  .view-guide summary { cursor: pointer; color: var(--ink-2); }
+  .view-guide[open] summary { margin-bottom: 16px; }
+  .view-guide .doc-body { margin: 0; }
 
-  #panel { flex: none; width: min(540px, 42vw); min-width: 300px; overflow: auto; padding: 24px 24px 48px; border-left: 1px solid var(--line); background: var(--bg-2); }
+  #panel { flex: none; width: clamp(300px, 27vw, 380px); min-width: 0; overflow: auto; padding: 24px 24px 48px; border-left: 1px solid var(--line); background: var(--bg-2); }
   #panel h2 { margin: 16px 0 8px; font-size: 19px; font-weight: 600; letter-spacing: -0.025em; }
   #panel h3 { margin: 24px 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
   .hint { margin: 8px 0; color: var(--ink-2); font-size: 12.5px; }
@@ -1145,7 +1313,7 @@ ${PALETTE_CSS}
   .node-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
   .node-row { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-radius: 8px; transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1); }
   .node-row:hover { background: var(--bg-3); }
-  .node-item { display: flex; align-items: center; gap: 8px; text-align: left; }
+  .node-item { min-height: 32px; overflow-wrap: anywhere; width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; }
   .node-item-title { color: var(--ink); font-weight: 500; letter-spacing: -0.01em; }
   .node-item-snip { color: var(--ink-3); font-size: 12px; line-height: 1.45; padding-left: 16px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .detail-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -1166,10 +1334,45 @@ ${PALETTE_CSS}
   .doc-body code { padding: 1px 5px; border-radius: 4px; background: var(--bg-3); font-family: var(--f-mono); font-size: 11.5px; color: #d8d4cc; }
   .doc-body ul { margin: 0 0 12px; padding-left: 18px; }
   .doc-body li { margin-bottom: 4px; }
-  .doc-body a { color: var(--accent); }
+  .doc-body a { color: var(--accent); text-underline-offset: 3px; }
   .code { max-width: 100%; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow: auto; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.6; color: #d8d4cc; }
 
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (max-width: 1100px) {
+    #topbar { gap: 16px; padding-inline: 16px; }
+    .kbd-hint { display: none; }
+    #stage-head { padding: 20px 16px 12px; }
+    #toolbar { padding-inline: 16px; gap: 12px; }
+    #canvas-wrap { margin-inline: 16px; }
+    #panel { width: 300px; padding: 20px 18px; }
+  }
+  @media (max-width: 760px) {
+    #shell { height: auto; min-height: 100dvh; }
+    #topbar { flex-wrap: wrap; gap: 8px; padding: 12px 16px 8px; }
+    #nav { width: 100%; }
+    #nav button { min-height: 44px; }
+    #app { flex-direction: column; }
+    #stage { flex: none; }
+    #stage-head { gap: 12px; }
+    #title { font-size: 23px; }
+    #stage-actions { width: 100%; gap: 6px; }
+    #stats { margin-right: auto; }
+    #toolbar { align-items: stretch; }
+    #search-wrap { width: 100%; min-height: 44px; }
+    #search { font-size: 16px; }
+    #chips { flex-wrap: nowrap; overflow-x: auto; padding-block: 3px; }
+    .chip { flex: none; min-height: 44px; }
+    #canvas-wrap { flex: none; height: 480px; height: min(60dvh, 520px); min-height: 360px; margin-bottom: 16px; }
+    #legend { display: none; }
+    #zoom-controls button { width: 44px; height: 44px; }
+    #doc-slot { padding: 16px; }
+    #panel { width: 100%; overflow: visible; border-left: 0; border-top: 1px solid var(--line); padding: 24px 20px 40px; }
+    .btn, .node-item, .rel { min-height: 44px; }
+    .node-row { padding-inline: 0; }
+    .rel { flex-wrap: wrap; overflow-wrap: anywhere; }
+    .doc-body { overflow-wrap: anywhere; }
+  }
+
+  @keyframes rise { from { opacity: 0.65; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .anim { animation: rise 320ms cubic-bezier(0.16, 1, 0.3, 1) both; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -1185,26 +1388,22 @@ ${PALETTE_CSS}
       SuperSkill
     </span>
     <nav id="nav" aria-label="Views">
-      <button type="button" data-qa="nav" data-view="graph">Retrieval</button>
-      <button type="button" data-qa="nav" data-view="hla">HLA</button>
-      <button type="button" data-qa="nav" data-view="lla">LLA</button>
-      <button type="button" data-qa="nav" data-view="erd">ERD</button>
-      <button type="button" data-qa="nav" data-view="rules">Rules</button>
-      <button type="button" data-qa="nav" data-view="flow">Flow</button>
-      <button type="button" data-qa="nav" data-view="modules">Modules</button>
+      ${nav.map(item => `<button type="button" data-qa="nav" data-view="${escapeHtml(item.id)}">${escapeHtml(item.label)}</button>`).join("\n      ")}
     </nav>
     <span class="kbd-hint" aria-hidden="true">g h l e r f m · / search · esc back</span>
   </header>
   <div id="app">
     <main id="stage">
+      <nav id="breadcrumbs" aria-label="Graph path"></nav>
+      ${model.navigation ? '<label id="view-picker" hidden>View <select id="view-select" aria-label="View"></select></label>' : ""}
       <div id="stage-head">
         <div>
           <h1 id="title"></h1>
           <p id="sub"></p>
         </div>
         <div id="stage-actions">
-          <span id="stats" aria-live="polite"></span>
-          <button type="button" id="fit" class="btn">Fit</button>
+          <span id="stats" role="status" aria-live="polite"></span>
+          <button type="button" id="fit" class="btn">Fit view</button>
           <button type="button" id="reset" class="btn">Reset</button>
           <button type="button" id="back" class="btn">Back</button>
         </div>
@@ -1212,15 +1411,20 @@ ${PALETTE_CSS}
       <div id="toolbar">
         <label id="search-wrap" for="search">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.6 10.6L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-          <input id="search" type="search" placeholder="Search nodes by name" autocomplete="off" spellcheck="false"/>
+          <input id="search" aria-label="Search nodes" type="search" placeholder="Search nodes by name" autocomplete="off" spellcheck="false"/>
         </label>
         <div id="chips" role="group" aria-label="Filter by type"></div>
       </div>
       <div id="canvas-wrap">
-        <div id="graph"></div>
+        <div id="graph" role="img" aria-label="Interactive knowledge graph. Use Browse nodes to explore with a keyboard."></div>
         <div id="doc-slot" hidden></div>
         <div id="fallback" hidden></div>
-        <div id="empty" hidden>No nodes match the current search or filters.</div>
+        <div id="empty" hidden role="status"><strong id="empty-message"></strong><p id="empty-hint"></p><button type="button" id="clear-filters" class="btn">Clear search and filters</button></div>
+        <div id="zoom-controls" role="group" aria-label="Graph zoom">
+          <button type="button" id="zoom-out" aria-label="Zoom out"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" stroke="currentColor" stroke-width="1.5"/></svg></button>
+          <output id="zoom-level" aria-label="Zoom level">100%</output>
+          <button type="button" id="zoom-in" aria-label="Zoom in"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5"/></svg></button>
+        </div>
         <div id="legend" hidden></div>
       </div>
     </main>
@@ -1302,6 +1506,14 @@ export function renderArchitectureDiagramsHtml(model: VizModel): string {
       codes: mermaidCodes(model.docs["diag:flow"]?.body ?? ""),
     },
   ];
+  if (model.navigation) {
+    ["diag:high", "diag:low", "diag:erd", "diag:flow"].forEach((id, index) => {
+      const doc = model.docs[id];
+      if (!doc) return;
+      rows[index].title = doc.title;
+      rows[index].lede = doc.body.split("```mermaid")[0].trim();
+    });
+  }
   if (!rows[1].codes.length) {
     const fallback = meaningfulMermaid(
       mermaidFlowchart(model.graphs.impl ?? { nodes: [], edges: [], title: "", subtitle: "" }),
@@ -1462,8 +1674,8 @@ export function renderObsidianCanvas(
   return JSON.stringify({ nodes, edges }, null, 2);
 }
 
-export function writeKnowledgeGraphHtml(vaultRoot: string, slug: string): string {
-  return writeKnowledgeGraphFiles(vaultRoot, slug).html;
+export async function writeKnowledgeGraphHtml(vaultRoot: string, slug: string): Promise<string> {
+  return (await writeKnowledgeGraphFiles(vaultRoot, slug)).html;
 }
 
 function generatedNote(inner: string, related: string[]): string {
@@ -1476,53 +1688,37 @@ function withHeading(title: string, body: string): string {
   return trimmed.startsWith("#") ? trimmed : `# ${title}\n\n${trimmed}`;
 }
 
-function writeGeneratedNote(abs: string, content: string): boolean {
-  let existing: string | null = null;
-  try {
-    existing = readFileSync(abs, "utf-8");
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      console.error(`[knowledge-viz] keeping ${abs}: ${code ?? String(err)}`);
-      return false;
-    }
-  }
-  if (existing !== null && !existing.includes(GENERATED_MARKER)) return false;
-  writeFileSync(abs, content, "utf-8");
-  return true;
+async function writeGeneratedNote(vaultFs: VaultFS, path: string, content: string): Promise<boolean> {
+  let written = false;
+  await vaultFs.update(path, async (existing) => {
+    if (await vaultFs.exists(path) && !existing.includes(GENERATED_MARKER)) return existing;
+    written = true;
+    return content;
+  }, { create: true });
+  return written;
 }
 
-export function writeKnowledgeGraphFiles(
+export async function writeKnowledgeGraphFiles(
   vaultRoot: string,
   slug: string,
   opts?: { codeRoot?: string },
-): { html: string; canvas: string; diagrams: string; nodes: number; edges: number; kept: string[] } {
+): Promise<{ html: string; canvas: string; diagrams: string; nodes: number; edges: number; kept: string[] }> {
+  const vaultFs = new VaultFS(vaultRoot, { projectSlug: slug });
   const idx = ensureProjectIndex(vaultRoot, slug);
   const vaultDump = idx.graphDump();
-  const codeDump = opts?.codeRoot ? scanImportGraph(opts.codeRoot) : { nodes: [], edges: [] };
-  const model = buildVizModel({
-    slug,
-    vault: vaultDump,
-    docs: idx.noteDocs(),
-    code: codeDump,
-  });
-  if (opts?.codeRoot) {
-    attachCodeBodies(model, opts.codeRoot, (abs) => readFileSync(abs, "utf-8"));
-  }
-  const dir = join(vaultRoot, "projects", slug);
-  mkdirSync(dir, { recursive: true });
+  const codeRoot = opts?.codeRoot ?? process.cwd();
+  const scan = await scanRepo(codeRoot);
+  const model = buildProjectVizModel({ slug, vault: vaultDump, docs: idx.noteDocs(), scan });
+  await attachProjectSources(model, codeRoot);
   const htmlRel = `projects/${slug}/knowledge-graph.html`;
   const canvasRel = `projects/${slug}/knowledge-graph.canvas`;
-  const archDir = join(dir, "architecture");
-  mkdirSync(archDir, { recursive: true });
   const highRel = `projects/${slug}/architecture/high-level-architecture.md`;
   const lowRel = `projects/${slug}/architecture/low-level-architecture.md`;
   const erdRel = `projects/${slug}/architecture/data-model-erd.md`;
   const flowRel = `projects/${slug}/architecture/dataflow.md`;
-  const notes: Array<{ rel: string; abs: string; content: string }> = [
+  const notes: Array<{ rel: string; content: string }> = [
     {
       rel: highRel,
-      abs: join(archDir, "high-level-architecture.md"),
       content: generatedNote(
         withHeading(model.docs["diag:high"]?.title ?? "High-level architecture", model.docs["diag:high"]?.body ?? ""),
         [lowRel, erdRel, flowRel],
@@ -1530,7 +1726,6 @@ export function writeKnowledgeGraphFiles(
     },
     {
       rel: lowRel,
-      abs: join(archDir, "low-level-architecture.md"),
       content: generatedNote(
         withHeading(model.docs["diag:low"]?.title ?? "Low-level architecture", model.docs["diag:low"]?.body ?? `# Low-level architecture\n`),
         [highRel, erdRel, flowRel],
@@ -1538,7 +1733,6 @@ export function writeKnowledgeGraphFiles(
     },
     {
       rel: erdRel,
-      abs: join(archDir, "data-model-erd.md"),
       content: generatedNote(
         withHeading(model.docs["diag:erd"]?.title ?? "Data model (ERD)", model.docs["diag:erd"]?.body ?? ""),
         [highRel, lowRel, flowRel],
@@ -1546,7 +1740,6 @@ export function writeKnowledgeGraphFiles(
     },
     {
       rel: flowRel,
-      abs: join(archDir, "dataflow.md"),
       content: generatedNote(
         withHeading(model.docs["diag:flow"]?.title ?? "Dataflow", model.docs["diag:flow"]?.body ?? ""),
         [highRel, lowRel, erdRel],
@@ -1555,24 +1748,23 @@ export function writeKnowledgeGraphFiles(
   ];
   const kept: string[] = [];
   for (const note of notes) {
-    if (!writeGeneratedNote(note.abs, note.content)) kept.push(note.rel);
+    if (!(await writeGeneratedNote(vaultFs, note.rel, note.content))) kept.push(note.rel);
   }
   for (const note of notes) {
     if (kept.includes(note.rel)) continue;
     upsertVaultFile(vaultRoot, note.rel, note.content);
   }
   const diagramsRel = `projects/${slug}/architecture-diagrams.html`;
-  writeFileSync(join(dir, "knowledge-graph.html"), renderKnowledgeGraphHtml(model), "utf-8");
-  writeFileSync(join(dir, "architecture-diagrams.html"), renderArchitectureDiagramsHtml(model), "utf-8");
-  writeFileSync(
-    join(dir, "knowledge-graph.canvas"),
+  await vaultFs.write(htmlRel, renderKnowledgeGraphHtml(model));
+  await vaultFs.write(diagramsRel, renderArchitectureDiagramsHtml(model));
+  await vaultFs.write(
+    canvasRel,
     renderObsidianCanvas(vaultDump, [
       { file: highRel, color: "5" },
       { file: lowRel, color: "1" },
       { file: erdRel, color: "4" },
       { file: flowRel, color: "6" },
     ]),
-    "utf-8",
   );
   const root = model.graphs.root;
   return { html: htmlRel, canvas: canvasRel, diagrams: diagramsRel, nodes: root.nodes.length, edges: root.edges.length, kept };

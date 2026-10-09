@@ -2,6 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
+import { claimNumberedFile } from "./auto-number.js";
 
 export interface VersionResult {
   version_path: string;
@@ -23,31 +24,21 @@ export async function snapshotVersion(
     const baseName = filePath.replace(/^projects\/[^/]+\//, "").replace(/\.md$/, "");
     const versionDir = `projects/${projectSlug}/_versions/${baseName}`;
 
-    const files = await vaultFs.list(versionDir, 1).catch(() => []);
-    let nextNum = 1;
-    for (const f of files) {
-      const match = f.match(/(\d+)-/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num >= nextNum) nextNum = num + 1;
-      }
-    }
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+    const claim = await claimNumberedFile(vaultFs, versionDir, (_number, padded) => `${padded}-${timestamp}.md`, (number) => {
+      const versionFm = createFrontmatter({
+        type: "version",
+        project: projectSlug,
+        status: "archived",
+        original_path: filePath,
+        version: number,
+        original_type: data.type ?? "unknown",
+        original_updated: data.updated ?? null,
+      });
 
-    const versionPath = `${versionDir}/${String(nextNum).padStart(3, "0")}-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
-
-    const versionFm = createFrontmatter({
-      type: "version",
-      project: projectSlug,
-      status: "archived",
-      original_path: filePath,
-      version: nextNum,
-      original_type: data.type ?? "unknown",
-      original_updated: data.updated ?? null,
+      return serializeFrontmatter(versionFm, existingContent);
     });
-
-    await vaultFs.write(versionPath, serializeFrontmatter(versionFm, existingContent));
-
-    return { version_path: versionPath, version_number: nextNum };
+    return { version_path: claim.path, version_number: claim.number };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[versioning] Failed to snapshot version: ${msg}`);

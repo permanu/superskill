@@ -259,7 +259,7 @@ describe("recordActivation", () => {
 });
 
 describe("findOrCreateSession", () => {
-  it("reuses a recent open session", () => {
+  it("reuses a recent open session for the same intent", () => {
     const graph: Graph = {
       nodes: [
         makeProjectNode(),
@@ -277,9 +277,29 @@ describe("findOrCreateSession", () => {
       ],
       edges: [],
     };
-    const { graph: updated, sessionId } = findOrCreateSession(graph, "new work");
+    const { graph: updated, sessionId } = findOrCreateSession(graph, "old work");
     expect(sessionId).toBe("s_recent");
     expect(updated.nodes.filter((n) => n.type === "session")).toHaveLength(1);
+  });
+
+  it("isolates different intents and coordination session owners", () => {
+    const initial = startSession(makeBaseGraph("skill-a", 0.5), "first task");
+    const other = findOrCreateSession(initial.graph, "second task");
+    expect(other.sessionId).not.toBe(initial.sessionId);
+    const ownedA = findOrCreateSession(other.graph, "same task", "codex-a");
+    const ownedB = findOrCreateSession(ownedA.graph, "same task", "codex-b");
+    expect(ownedA.sessionId).toBe("codex-a");
+    expect(ownedB.sessionId).toBe("codex-b");
+    expect(findOrCreateSession(ownedB.graph, "next task", "codex-a").sessionId).toBe("codex-a");
+    const anonymous = findOrCreateSession(ownedB.graph, "same task");
+    expect(anonymous.sessionId).not.toBe("codex-a");
+    expect(anonymous.sessionId).not.toBe("codex-b");
+  });
+
+  it("does not reuse completed coordination sessions", () => {
+    const owned = findOrCreateSession(makeBaseGraph("skill-a", 0.5), "task", "codex-a");
+    const closed = endSession(owned.graph, "codex-a", "success", []);
+    expect(() => findOrCreateSession(closed, "new task", "codex-a")).toThrow(/completed/);
   });
 
   it("closes stale open sessions as partial and decays weights deterministically", () => {

@@ -34,6 +34,7 @@ export interface TraceToolCall {
   status: TraceCallStatus;
   /** Short summary of the input (command line, file path), capped. */
   inputSummary?: string;
+  inputSignature?: string;
   /** First bytes of an error message, capped; only set for errors. */
   errorText?: string;
   /** Size of the tool output in bytes when known. */

@@ -9,7 +9,23 @@ export function insertTomlBlock(
   const hasBlock =
     content.includes(MARKER_START_TOML) && content.includes(MARKER_END_TOML);
 
-  if (hasBlock && !force) return null;
+  if (hasBlock && !force) {
+    const blocks = [...content.matchAll(new RegExp(`${escapeRegex(MARKER_START_TOML)}\\n([\\s\\S]*?)\\n${escapeRegex(MARKER_END_TOML)}`, "g"))];
+    const oldArgs = 'args = ["-y", "superskill"]';
+    const latestArgs = 'args = ["-y", "--prefer-online", "superskill@latest"]';
+    const prefix = `[mcp_servers.superskill]\ncommand = "npx"\n${oldArgs}\n\n[mcp_servers.superskill.env]\nVAULT_PATH = `;
+    if (blocks.length !== 1 || !blocks[0][1].startsWith(prefix) || !block.includes(latestArgs)) return null;
+    const oldBlock = blocks[0];
+    const vaultLiteral = oldBlock[1].slice(prefix.length).split("\n")[0];
+    try {
+      if (typeof JSON.parse(vaultLiteral) !== "string") return null;
+    } catch {
+      return null;
+    }
+    const upgraded = oldBlock[0].replace(oldArgs, latestArgs);
+    return content.slice(0, oldBlock.index) + upgraded + content.slice(oldBlock.index! + oldBlock[0].length);
+  }
+  if (!hasBlock && /^\s*\[mcp_servers\.superskill(?:\.env)?\]\s*$/m.test(content)) return null;
 
   let base = content;
   if (hasBlock && force) {

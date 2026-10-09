@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdir, writeFile, readFile, rm, rename, utimes, symlink } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   KnowledgeIndex,
+  indexPathFor,
   extractKnowledgeLinks,
   rebuildProjectIndex,
   ensureProjectIndex,
@@ -35,6 +37,47 @@ describe("KnowledgeIndex", () => {
     return rm(dir, { recursive: true, force: true });
   });
 
+  it("fails clearly before schema writes and closes SQLite when FTS5 is unavailable", () => {
+    const path = join(dir, "unsupported.sqlite");
+    const prepare = DatabaseSync.prototype.prepare;
+    const capability = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      return prepare.call(this, sql.includes("sqlite_compileoption_used") ? "SELECT 0 AS enabled" : sql);
+    });
+    const writes = vi.spyOn(DatabaseSync.prototype, "exec");
+    const closed = vi.spyOn(DatabaseSync.prototype, "close");
+    let opened: KnowledgeIndex | undefined;
+    try {
+      expect(() => { opened = KnowledgeIndex.open(path); }).toThrow(/Node\.js 22\.16.*24.*FTS5/);
+      expect(writes).not.toHaveBeenCalled();
+      expect(closed).toHaveBeenCalledTimes(1);
+    } finally {
+      capability.mockRestore();
+      writes.mockRestore();
+      closed.mockRestore();
+      opened?.close();
+    }
+    KnowledgeIndex.open(path).close();
+  });
+
+  it("closes SQLite and preserves the error when schema initialization fails", () => {
+    const path = join(dir, "broken.sqlite");
+    const exec = DatabaseSync.prototype.exec;
+    const failure = new Error("schema initialization failed");
+    const writes = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (sql.includes("CREATE TABLE")) throw failure;
+      return exec.call(this, sql);
+    });
+    const closed = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      expect(() => KnowledgeIndex.open(path)).toThrow(failure);
+      expect(closed).toHaveBeenCalledTimes(1);
+    } finally {
+      writes.mockRestore();
+      closed.mockRestore();
+    }
+    KnowledgeIndex.open(path).close();
+  });
+
   it("treats hyphenated queries as tokens, not FTS operators", () => {
     index.upsert({
       path: "projects/p/n.md",
@@ -45,6 +88,12 @@ describe("KnowledgeIndex", () => {
     });
     expect(index.search("unique-needle", 10).map((h) => h.path)).toContain("projects/p/n.md");
     expect(index.search("zzz-nonexistent-xyzzy", 10)).toEqual([]);
+  });
+
+  it("treats path punctuation as search text", () => {
+    index.upsert({ path: "projects/p/path.md", title: "Path", type: "note", body: "src/lib/auth.ts authorize_payment foo@bar", related: [] });
+    expect(index.search("src/lib/auth.ts")).toHaveLength(1);
+    expect(index.search("foo@bar")).toHaveLength(1);
   });
 
   it("ranks stemmed FTS matches (authorize ~ authorization)", () => {
@@ -123,6 +172,41 @@ describe("index freshness", () => {
 
   afterEach(() => rm(vault, { recursive: true, force: true }));
 
+  it("rejects an index project root symlinked into another project", async () => {
+    await mkdir(join(vault, "projects", "beta"));
+    await writeFile(join(vault, "projects", "beta", "secret.md"), "private");
+    await rm(join(vault, "projects", slug), { recursive: true });
+    await symlink("beta", join(vault, "projects", slug));
+    expect(() => ensureProjectIndex(vault, slug)).toThrow(/escapes project/);
+  });
+
+  it("rolls back the entire rebuild when an insert fails", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "a.md"), "# Originalneedle\n[[z]]");
+    await writeFile(join(project, "z.md"), "# Oldtarget");
+    const index = ensureProjectIndex(vault, slug);
+    const original = index.graphDump();
+    const stampPath = `${indexPathFor(vault, slug)}.stamp`;
+    const stamp = await readFile(stampPath, "utf8");
+    const connection = new DatabaseSync(indexPathFor(vault, slug));
+    connection.exec(`CREATE TRIGGER fail_rebuild BEFORE INSERT ON notes WHEN new.title = 'Rejectneedle' BEGIN SELECT RAISE(ABORT, 'forced rebuild failure'); END`);
+    await writeFile(join(project, "a.md"), "# Replacementneedle");
+    await writeFile(join(project, "z.md"), "# Rejectneedle");
+    try {
+      expect(() => rebuildProjectIndex(vault, slug)).toThrow("forced rebuild failure");
+      expect(index.graphDump()).toEqual(original);
+      expect(index.search("Originalneedle")).toHaveLength(1);
+      expect(index.search("Replacementneedle")).toEqual([]);
+      expect(await readFile(stampPath, "utf8")).toBe(stamp);
+      connection.exec("DROP TRIGGER fail_rebuild");
+      expect(rebuildProjectIndex(vault, slug).notes).toBe(2);
+      expect(index.search("Replacementneedle")).toHaveLength(1);
+    } finally {
+      connection.close();
+      index.close();
+    }
+  });
+
   it("rebuilds when a note appears outside the write tool", async () => {
     await writeFile(join(vault, "projects", slug, "a.md"), "---\ntype: note\n---\n\nfirst", "utf-8");
     const first = ensureProjectIndex(vault, slug);
@@ -133,6 +217,27 @@ describe("index freshness", () => {
     const second = ensureProjectIndex(vault, slug);
     expect(JSON.stringify(second.graphDump())).toContain("b.md");
     second.close();
+  });
+
+  it("refreshes deletions and renames even when modification times do not increase", async () => {
+    const project = join(vault, "projects", slug);
+    const source = join(project, "a.md");
+    await writeFile(source, "# Retainedneedle");
+    ensureProjectIndex(vault, slug);
+    await rename(source, join(project, "renamed.md"));
+    expect(ensureProjectIndex(vault, slug).search("Retainedneedle").map(hit => hit.path)).toEqual([`projects/${slug}/renamed.md`]);
+    await rm(join(project, "renamed.md"));
+    expect(ensureProjectIndex(vault, slug).search("Retainedneedle")).toEqual([]);
+  });
+
+  it("discovers files with older timestamps", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "new.md"), "Newestneedle");
+    ensureProjectIndex(vault, slug);
+    const older = join(project, "old.md");
+    await writeFile(older, "Olderneedle");
+    await utimes(older, new Date(0), new Date(0));
+    expect(ensureProjectIndex(vault, slug).search("Olderneedle")).toHaveLength(1);
   });
 
   it("keeps incremental upserts fresh without waiting for a rebuild", async () => {

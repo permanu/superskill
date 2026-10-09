@@ -16,7 +16,7 @@ import { extractorFor } from "./extractors/index.js";
 import { externalNodeId, moduleNodeId } from "./extractors/common.js";
 import { CodeGraphStore } from "./store.js";
 
-const DEFAULT_SKIP_DIRS = [".git", "node_modules", "dist", "build"];
+export const DEFAULT_SKIP_DIRS = [".git", "node_modules", "dist", "build", ".superskill", ".venv", "venv", "target", ".next", ".turbo", "coverage", "vendor", "Pods", ".build"];
 const DEFAULT_MAX_FILE_SIZE = 1_000_000;
 
 interface FileEntry {
@@ -123,6 +123,10 @@ function resolveTs(fromFile: string, spec: string, index: FileIndex): string | n
       base,
       `${base}.ts`,
       `${base}.tsx`,
+      `${base}.js`,
+      `${base}.jsx`,
+      `${base}.mjs`,
+      `${base}.cjs`,
       `${base}.d.ts`,
       `${stripped}.ts`,
       `${stripped}.tsx`,
@@ -131,6 +135,8 @@ function resolveTs(fromFile: string, spec: string, index: FileIndex): string | n
       `${stripped}/index.tsx`,
       `${base}/index.ts`,
       `${base}/index.tsx`,
+      `${base}/index.js`,
+      `${base}/index.jsx`,
     ],
     index.files,
   );

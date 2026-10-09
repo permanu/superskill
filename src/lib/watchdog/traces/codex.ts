@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-import { open, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { recordInput } from "./codex-input.js";
+import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SessionTrace, TraceSessionRef } from "../types.js";
@@ -106,6 +108,7 @@ interface CodexLine {
     name?: string;
     call_id?: string;
     input?: unknown;
+    arguments?: unknown;
     output?: unknown;
     role?: string;
     content?: unknown;
@@ -122,15 +125,39 @@ interface CodexLine {
 
 function outputText(output: unknown): string {
   if (typeof output === "string") return output;
-  if (Array.isArray(output)) {
-    return output
-      .map((item) => {
-        if (item && typeof item === "object" && "text" in item && typeof item.text === "string") return item.text;
-        return "";
-      })
-      .join("\n");
+  if (Array.isArray(output)) return output.map(item => item && typeof item === "object" && "text" in item && typeof item.text === "string" ? item.text : "").join("\n");
+  return output && typeof output === "object" ? JSON.stringify(output) : "";
+}
+
+function outputState(output: unknown): { error: boolean; running: boolean; cell?: string } {
+  const state: { error: boolean; running: boolean; cell?: string } = { error: false, running: false };
+  let remaining = 2000;
+  function visit(value: unknown, depth: number): void {
+    if (depth > 8 || --remaining < 0) return;
+    if (typeof value === "string") {
+      try {
+        const parsed: unknown = JSON.parse(value);
+        if (typeof parsed !== "string") { visit(parsed, depth + 1); return; }
+      } catch {}
+      const envelope = value.split(/(?:^|\n)(?:Final )?Output:\s*\n/i, 1)[0];
+      const cell = /^Script running with cell ID ([\w-]+)/m.exec(envelope);
+      if (cell) { state.running = true; state.cell = cell[1]; }
+      if (/^(?:Process (?:exited|exit(?:ed)?) (?:with )?code:? [1-9]\d*|Script (?:failed|error)|Error executing)/m.test(envelope)) state.error = true;
+      for (const part of [value, ...value.split("\n").filter(line => /^[{[]/.test(line.trim()))]) {
+        try { const parsed: unknown = JSON.parse(part); if (parsed !== part) visit(parsed, depth + 1); } catch { continue; }
+      }
+      return;
+    }
+    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
+    if (!value || typeof value !== "object") return;
+    const obj = value as Record<string, unknown>;
+    if (obj.isError === true || obj.status === "failed" || obj.status === "error" || (typeof obj.exit_code === "number" && obj.exit_code !== 0) || (obj.success === false && obj.error !== undefined)) state.error = true;
+    if (obj.session_id !== undefined && (obj.exit_code === null || obj.exit_code === undefined)) state.running = true;
+    if ("exit_code" in obj || "session_id" in obj) return;
+    for (const key of ["content", "text", "output", "result", "results", "value"]) if (obj[key] !== undefined) visit(obj[key], depth + 1);
   }
-  return "";
+  visit(output, 0);
+  return state;
 }
 
 function messageText(payload: CodexLine["payload"]): string {
@@ -159,14 +186,19 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
   if (info && info.size > maxBytes) trace.truncated = true;
 
   let raw: string;
+  const handle = await open(ref.storagePath, "r").catch(() => null);
+  if (!handle) return trace;
   try {
-    raw = await readFile(ref.storagePath, "utf-8");
-  } catch {
-    return trace;
+    const buffer = Buffer.alloc(Math.min(info?.size ?? maxBytes, maxBytes));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    raw = buffer.toString("utf-8", 0, bytesRead);
+  } finally {
+    await handle.close();
   }
-  if (raw.length > maxBytes) raw = raw.slice(0, maxBytes);
 
   const pending = new Map<string, number>();
+  const cells = new Map<string, number>();
+  const waits = new Map<string, string>();
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheRead = 0;
@@ -206,26 +238,24 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
       const type = payload.type;
       if (type === "custom_tool_call" || type === "function_call") {
         const name = payload.name ?? "exec";
-        let summary: string | undefined;
-        if (typeof payload.input === "string") {
-          summary = capText(payload.input);
-          if (name === "exec" || name === "shell" || name === "bash") {
-            trace.commands.push(capText(payload.input.split("\n")[0] ?? "", 400));
-          }
-        } else if (payload.input && typeof payload.input === "object") {
-          const input = payload.input as Record<string, unknown>;
-          const command = input.command;
-          if (typeof command === "string") {
-            summary = capText(command);
-            trace.commands.push(capText(command, 400));
-          }
+        let input = payload.input ?? payload.arguments;
+        if (payload.arguments !== undefined && typeof input === "string") {
+          try { input = JSON.parse(input) as unknown; } catch { input = payload.arguments; }
         }
+        const before = trace.toolCalls.length;
+        if (before >= maxCalls) { trace.truncated = true; continue; }
+        const summary = recordInput(trace, name, input);
+        const signature = createHash("sha256").update(typeof input === "string" ? input : JSON.stringify(input) ?? "").digest("hex");
         addCall(trace, {
           name,
           status: payload.status === "failed" ? "error" : "unknown",
-          ...(summary !== undefined ? { inputSummary: summary } : {}),
+          inputSignature: signature,
+          ...(summary !== undefined ? { inputSummary: capText(summary) } : {}),
         }, maxCalls);
-        if (typeof payload.call_id === "string") pending.set(payload.call_id, trace.toolCalls.length - 1);
+        if (typeof payload.call_id === "string") {
+          pending.set(payload.call_id, before);
+          if ((name === "wait" || name === "functions.wait") && input && typeof input === "object" && "cell_id" in input && typeof input.cell_id === "string") waits.set(payload.call_id, input.cell_id);
+        }
         continue;
       }
       if (type === "custom_tool_call_output" || type === "function_call_output") {
@@ -234,13 +264,21 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
           const call = index !== undefined ? trace.toolCalls[index] : undefined;
           if (call) {
             const text = outputText(payload.output);
-            if (text.length > 0) call.outputBytes = Buffer.byteLength(text, "utf-8");
-            if (call.status !== "error") call.status = "ok";
-            if (call.status === "error" && text.length > 0) {
-              call.errorText = errorText(text);
+            const state = outputState(payload.output);
+            if (text.length > 0) call.outputBytes = (call.outputBytes ?? 0) + Buffer.byteLength(text, "utf-8");
+            call.status = call.status === "error" || state.error ? "error" : state.running ? "unknown" : "ok";
+            if (call.status === "error" && text.length > 0) call.errorText = errorText(text);
+            const cell = waits.get(payload.call_id);
+            const original = cell ? cells.get(cell) : undefined;
+            if (original !== undefined) {
+              const origin = trace.toolCalls[original];
+              origin.status = origin.status === "error" ? "error" : call.status;
+              if (call.errorText) origin.errorText = call.errorText;
+              origin.outputBytes = (origin.outputBytes ?? 0) + (call.outputBytes ?? 0);
+              if (!state.running) cells.delete(cell!);
             }
+            if (state.cell && index !== undefined) cells.set(state.cell, original ?? index);
           }
-          pending.delete(payload.call_id);
         }
         continue;
       }

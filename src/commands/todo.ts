@@ -39,66 +39,30 @@ export async function todoCommand(
     return { todos: todos.filter((t) => !t.completed) };
   }
 
-  if (args.action === "add") {
-    if (!args.item) throw new Error("Item text required for add");
+  if (!["add", "complete", "remove"].includes(args.action)) throw new Error(`Unknown action: ${args.action}`);
+  if (!args.item) throw new Error(`Item text required for ${args.action}`);
+  if (args.action !== "add" && !exists) throw new Error("No todos file found");
 
-    const priority = args.priority ?? "medium";
-    const marker = priorityMarker(priority);
-    const line = `- [ ] ${marker}${args.item}`;
-
-    if (!exists) {
-      const fm = createFrontmatter({ type: "todo", project: projectSlug });
-      const body = `\n# Todos\n\n${line}\n`;
-      const fullContent = serializeFrontmatter(fm, body);
-      await vaultFs.write(todoPath, fullContent);
-      return { todos: parseTodos(fullContent) };
-    } else {
-      const content = await vaultFs.read(todoPath);
+  const result = await vaultFs.update(todoPath, (content) => {
+    if (args.action === "add") {
+      const line = `- [ ] ${priorityMarker(args.priority ?? "medium")}${args.item}`;
+      if (!content) return serializeFrontmatter(createFrontmatter({ type: "todo", project: projectSlug }), `\n# Todos\n\n${line}\n`);
       const { data, content: body } = parseFrontmatter(content);
-      const updatedBody = body.trimEnd() + `\n${line}\n`;
-      const updated = mergeFrontmatter(data, {});
-      const fullContent = serializeFrontmatter(updated, updatedBody);
-      await vaultFs.write(todoPath, fullContent);
-      return { todos: parseTodos(fullContent) };
+      return serializeFrontmatter(mergeFrontmatter(data, {}), body.trimEnd() + `\n${line}\n`);
     }
-  }
-
-  if (args.action === "complete") {
-    if (!args.item) throw new Error("Item text required for complete");
-    if (!exists) throw new Error("No todos file found");
-
-    const content = await vaultFs.read(todoPath);
-    const updated = content.replace(
-      new RegExp(`^- \\[ \\] (🔴 |🟡 |🟢 )?${escapeRegex(args.item)}$`, "m"),
-      (match) => match.replace("- [ ]", "- [x]")
-    );
-
-    const { data, content: body } = parseFrontmatter(updated);
-    const mergedFm = mergeFrontmatter(data, {});
-    const finalContent = serializeFrontmatter(mergedFm, body);
-    await vaultFs.write(todoPath, finalContent);
-    return { todos: parseTodos(finalContent) };
-  }
-
-  if (args.action === "remove") {
-    if (!args.item) throw new Error("Item text required for remove");
-    if (!exists) throw new Error("No todos file found");
-
-    const content = await vaultFs.read(todoPath);
+    if (args.action === "complete") {
+      const updated = content.replace(
+        new RegExp(`^- \\[ \\] (🔴 |🟡 |🟢 )?${escapeRegex(args.item!)}$`, "m"),
+        (match) => match.replace("- [ ]", "- [x]"),
+      );
+      const { data, content: body } = parseFrontmatter(updated);
+      return serializeFrontmatter(mergeFrontmatter(data, {}), body);
+    }
     const { data, content: body } = parseFrontmatter(content);
-
-    const escapedItem = escapeRegex(args.item);
-    const removePattern = new RegExp(`^- \\[([ x])\\] (🔴 |🟡 |🟢 )?${escapedItem}$`);
-    const bodyLines = body.split("\n");
-    const filtered = bodyLines.filter((line) => !removePattern.test(line));
-
-    const mergedFm = mergeFrontmatter(data, {});
-    const updatedContent = serializeFrontmatter(mergedFm, filtered.join("\n"));
-    await vaultFs.write(todoPath, updatedContent);
-    return { todos: parseTodos(updatedContent) };
-  }
-
-  throw new Error(`Unknown action: ${args.action}`);
+    const pattern = new RegExp(`^- \\[([ x])\\] (🔴 |🟡 |🟢 )?${escapeRegex(args.item!)}$`);
+    return serializeFrontmatter(mergeFrontmatter(data, {}), body.split("\n").filter((line) => !pattern.test(line)).join("\n"));
+  }, { create: args.action === "add" });
+  return { todos: parseTodos(result.content) };
 }
 
 function parseTodos(content: string): TodoItem[] {

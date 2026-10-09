@@ -56,16 +56,19 @@ export interface FitResult {
   usedTokens: number;
 }
 
-export function fitSkillsToBudget(items: BudgetItem[], budget: number): FitResult {
+export function fitSkillsToBudget(items: BudgetItem[], budget: number, separator = ""): FitResult {
   const fitted: FittedItem[] = [];
   const dropped: DroppedItem[] = [];
   let usedTokens = 0;
 
   for (const item of items) {
     const tokens = estimateTokens(item.content);
-    if (usedTokens + tokens <= budget) {
+    const nextTokens = separator.length > 0
+      ? estimateTokens([...fitted.map((entry) => entry.content), item.content].join(separator))
+      : usedTokens + tokens;
+    if (nextTokens <= budget) {
       fitted.push({ id: item.id, content: item.content, tokens });
-      usedTokens += tokens;
+      usedTokens = nextTokens;
       continue;
     }
     const remaining = budget - usedTokens;

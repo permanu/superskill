@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -247,8 +247,20 @@ describe("writeKnowledgeGraphFiles marker guard", () => {
 
   afterEach(() => rm(vault, { recursive: true, force: true }));
 
+  it.each(["knowledge-graph.html", "architecture-diagrams.html", "knowledge-graph.canvas", "architecture/high-level-architecture.md"])("rejects output symlinks into sibling projects: %s", async (output) => {
+    const sibling = join(vault, "projects", "other");
+    await mkdir(sibling, { recursive: true });
+    await mkdir(join(vault, "projects", "p", "architecture"), { recursive: true });
+    const target = join(sibling, "protected.txt");
+    const original = `${GENERATED_MARKER}\nSibling project content`;
+    await writeFile(target, original);
+    await symlink(target, join(vault, "projects", "p", output));
+    await expect(writeKnowledgeGraphFiles(vault, "p", { codeRoot: vault })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(await readFile(target, "utf8")).toBe(original);
+  });
+
   it("writes missing architecture notes with the generated marker and related links", async () => {
-    const result = writeKnowledgeGraphFiles(vault, "p");
+    const result = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: vault });
     expect(result.kept).toEqual([]);
     for (const rel of [HLA, LLA, ERD, FLOW]) {
       const abs = join(vault, rel);
@@ -262,17 +274,11 @@ describe("writeKnowledgeGraphFiles marker guard", () => {
     expect(high).toContain(ERD);
     expect(high).toContain(FLOW);
     const low = await readFile(join(vault, LLA), "utf-8");
-    expect(low).toContain("accTitle: Module dependency diagram for the SuperSkill implementation");
-    expect(low).toContain("### Ids");
-    expect(low).toContain("### Nodes");
-    expect(low).toContain("### Edges");
-    expect(low).toContain("```mermaid");
+    expect(low).toContain("No supported modules");
     expect(low).toContain(HLA);
     const flow = await readFile(join(vault, FLOW), "utf-8");
-    expect(flow).toContain("# Dataflow");
-    expect(flow).toContain("```mermaid");
-    expect(flow).toContain("accTitle: Level 0 data flow diagram for SuperSkill");
-    expect(flow).toContain("accTitle: Level 1 data flow diagram for SuperSkill");
+    expect(flow).toContain("# Call flow");
+    expect(flow).toContain("No call relationships");
     expect(flow).toContain(HLA);
     expect(flow).toContain(LLA);
     expect(flow).toContain(ERD);
@@ -284,13 +290,13 @@ describe("writeKnowledgeGraphFiles marker guard", () => {
   });
 
   it("regenerates notes that carry the marker", async () => {
-    writeKnowledgeGraphFiles(vault, "p");
+    await writeKnowledgeGraphFiles(vault, "p", { codeRoot: vault });
     await writeFile(
       join(vault, HLA),
       `---\ntype: architecture\n---\n\n${GENERATED_MARKER}\n\n# stale heading\n\nold words\n`,
       "utf-8",
     );
-    const result = writeKnowledgeGraphFiles(vault, "p");
+    const result = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: vault });
     const body = await readFile(join(vault, HLA), "utf-8");
     expect(body).not.toContain("old words");
     expect(body).not.toContain("# stale heading");
@@ -309,7 +315,7 @@ describe("writeKnowledgeGraphFiles marker guard", () => {
       `---\ntype: architecture\n---\n\n${GENERATED_MARKER}\n\nold erd\n`,
       "utf-8",
     );
-    const result = writeKnowledgeGraphFiles(vault, "p");
+    const result = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: vault });
     expect(await readFile(join(vault, HLA), "utf-8")).toBe(custom);
     expect(result.kept).toEqual([HLA]);
     const erd = await readFile(join(vault, ERD), "utf-8");

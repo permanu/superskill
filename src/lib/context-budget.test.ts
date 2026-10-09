@@ -64,6 +64,11 @@ describe("getSkillBudget", () => {
 });
 
 describe("fitSkillsToBudget", () => {
+  it("accounts for separators in the content budget", () => {
+    const result = fitSkillsToBudget([{ id: "a", content: "abcd" }, { id: "b", content: "efgh" }], 4, "\n\n---\n\n");
+    expect(result.items.map((item) => item.id)).toEqual(["a"]);
+    expect(result.usedTokens).toBe(2);
+  });
   const item = (id: string, content: string) => ({ id, content });
 
   it("includes all items when they fit", () => {

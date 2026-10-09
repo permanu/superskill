@@ -101,7 +101,7 @@ export function errorText(text: string): string {
   return clean.length > MAX_ERROR_CHARS ? `${clean.slice(0, MAX_ERROR_CHARS - 1)}…` : clean;
 }
 
-export function addCall(trace: SessionTrace, call: { name: string; status?: "ok" | "error" | "unknown"; inputSummary?: string; errorText?: string; outputBytes?: number; filePath?: string }, maxCalls: number): void {
+export function addCall(trace: SessionTrace, call: { name: string; status?: "ok" | "error" | "unknown"; inputSummary?: string; inputSignature?: string; errorText?: string; outputBytes?: number; filePath?: string }, maxCalls: number): void {
   if (trace.toolCalls.length >= maxCalls) {
     trace.truncated = true;
     return;
@@ -110,6 +110,7 @@ export function addCall(trace: SessionTrace, call: { name: string; status?: "ok"
     index: trace.toolCalls.length,
     name: call.name,
     status: call.status ?? "unknown",
+    ...(call.inputSignature !== undefined ? { inputSignature: call.inputSignature } : {}),
     ...(call.inputSummary !== undefined ? { inputSummary: call.inputSummary } : {}),
     ...(call.errorText !== undefined ? { errorText: call.errorText } : {}),
     ...(call.outputBytes !== undefined ? { outputBytes: call.outputBytes } : {}),

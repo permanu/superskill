@@ -8,6 +8,10 @@ import { escapeRegex } from "./escape-regex.js";
 
 const execFileAsync = promisify(execFile);
 
+export function validateSearchLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error("limit must be a positive safe integer");
+}
+
 export interface SearchResult {
   path: string;
   snippet: string;
@@ -47,6 +51,7 @@ export async function searchText(
   } = {}
 ): Promise<SearchResult[]> {
   const { pathFilter, limit = 10 } = options;
+  validateSearchLimit(limit);
 
   const args = [
     "--json",
@@ -54,6 +59,7 @@ export async function searchText(
     "--type", "md",
     "--ignore-case",
     "--fixed-strings",
+    "--",
     query,
   ];
 
@@ -120,6 +126,7 @@ export async function searchStructured(
   options: { limit?: number; pathFilter?: string } = {}
 ): Promise<SearchResult[]> {
   const { limit = 10, pathFilter } = options;
+  validateSearchLimit(limit);
   const searchRoot = pathFilter ? validateSearchPath(vaultPath, pathFilter) : vaultPath;
 
   // No filters means no structured criteria; return no matches rather than

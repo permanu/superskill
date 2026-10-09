@@ -53,3 +53,22 @@ describe("removeTomlBlock", () => {
     expect(result.content).toBe(content);
   });
 });
+
+
+describe("managed TOML launcher upgrades", () => {
+  const latest = BLOCK.replace('["-y", "superskill"]', '["-y", "--prefer-online", "superskill@latest"]');
+  it("replaces only the old launcher args and preserves existing vault/environment/outside bytes", () => {
+    const existing = `# before\n\n# superskill:start\n${BLOCK}\nEXTRA = "keep"\n# superskill:end\n\n# after\n`;
+    expect(insertTomlBlock(existing, latest.replace('~/Vaults/ai', '/new'))).toBe(existing.replace('["-y", "superskill"]', '["-y", "--prefer-online", "superskill@latest"]'));
+  });
+  it.each([
+    BLOCK.replace('"superskill"', '"superskill@0.9.0"'),
+    BLOCK.replace('"npx"', '"/custom/superskill"'),
+    BLOCK.replace('["-y", "superskill"]', '["-y", "superskill", "--custom"]'),
+  ])("preserves customized managed launchers", body => {
+    expect(insertTomlBlock(`# superskill:start\n${body}\n# superskill:end\n`, latest)).toBeNull();
+  });
+  it("does not append duplicate superskill tables to unmanaged config", () => {
+    expect(insertTomlBlock(BLOCK, latest)).toBeNull();
+  });
+});

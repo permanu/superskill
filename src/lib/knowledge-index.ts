@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { parseFrontmatter, type Frontmatter } from "./frontmatter.js";
 import { validateProjectSlug } from "../config.js";
 
@@ -42,53 +43,87 @@ export function extractKnowledgeLinks(data: Frontmatter, body: string): string[]
   return [...new Set(out)];
 }
 
+function assertProjectPath(vaultRoot: string, slug: string, target: string): void {
+  let realVault: string;
+  try { realVault = realpathSync(vaultRoot); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    realVault = resolve(vaultRoot);
+  }
+  const boundary = join(realVault, "projects", slug);
+  let ancestor = resolve(target);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      const resolved = resolve(realpathSync(ancestor), ...suffix);
+      const rel = relative(boundary, resolved);
+      if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) throw new Error(`Index path escapes project ${slug}: ${target}`);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        if (lstatSync(ancestor).isSymbolicLink()) throw new Error(`Index path escapes project ${slug}: dangling symlink ${ancestor}`);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code !== "ENOENT") throw statError;
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw error;
+      suffix.unshift(relative(parent, ancestor));
+      ancestor = parent;
+    }
+  }
+}
+
 export function indexPathFor(vaultRoot: string, slug: string): string {
-  return join(vaultRoot, "projects", validateProjectSlug(slug), INDEX_FILENAME);
+  const safe = validateProjectSlug(slug);
+  const path = join(vaultRoot, "projects", safe, INDEX_FILENAME);
+  assertProjectPath(vaultRoot, safe, path);
+  return path;
 }
 
 function indexStampFor(vaultRoot: string, slug: string): string {
-  return `${indexPathFor(vaultRoot, slug)}.stamp`;
+  const path = `${indexPathFor(vaultRoot, slug)}.stamp`;
+  assertProjectPath(vaultRoot, slug, path);
+  return path;
 }
 
-function writeIndexStamp(vaultRoot: string, slug: string, newestMtimeMs: number): void {
+function projectFingerprint(vaultRoot: string, slug: string): string {
+  const projectDir = join(vaultRoot, "projects", slug);
+  const files: string[] = [];
+  walkMarkdown(projectDir, files);
+  const hash = createHash("sha256");
+  for (const file of files.sort()) {
+    try {
+      const stat = statSync(file);
+      hash.update(JSON.stringify([file, stat.size, stat.mtimeMs, stat.ctimeMs]));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      hash.update(JSON.stringify([file, "missing"]));
+    }
+  }
+  return hash.digest("hex");
+}
+
+function writeIndexStamp(vaultRoot: string, slug: string, fingerprint: string): void {
   try {
-    writeFileSync(indexStampFor(vaultRoot, slug), String(newestMtimeMs), "utf-8");
+    writeFileSync(indexStampFor(vaultRoot, slug), fingerprint, "utf-8");
   } catch (err) {
     console.error(`[knowledge-index] cannot write index stamp for ${slug}: ${String(err)}`);
   }
 }
 
-function readIndexStampMtime(vaultRoot: string, slug: string): number | null {
+function readIndexStamp(vaultRoot: string, slug: string): string | null {
   try {
-    const value = Number(readFileSync(indexStampFor(vaultRoot, slug), "utf-8"));
-    return Number.isFinite(value) ? value : null;
+    return readFileSync(indexStampFor(vaultRoot, slug), "utf-8");
   } catch {
     return null;
   }
 }
 
-function newestMarkdownMtime(projectDir: string): number {
-  const files: string[] = [];
-  if (existsSync(projectDir) && statSync(projectDir).isDirectory()) {
-    walkMarkdown(projectDir, files);
-  }
-  let newest = 0;
-  for (const abs of files) {
-    try {
-      newest = Math.max(newest, statSync(abs).mtimeMs);
-    } catch {
-      continue;
-    }
-  }
-  return newest;
-}
-
 function toMatchQuery(q: string): string {
-  return q
-    .replace(/["*^(){}[\]:]+/g, " ")
-    .replace(/-/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1 && !/^(and|or|not|near)$/i.test(t))
+  return (q.match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .filter(token => token.length > 1 && !/^(and|or|not|near)$/i.test(token))
+    .map(token => `"${token}"`)
     .join(" ");
 }
 
@@ -110,31 +145,40 @@ export class KnowledgeIndex {
     if (existing) return existing;
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
-    db.exec("PRAGMA journal_mode = DELETE");
-    db.exec("PRAGMA foreign_keys = ON");
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS notes (
-        path TEXT PRIMARY KEY,
-        type TEXT,
-        title TEXT,
-        body TEXT NOT NULL
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-        title,
-        body,
-        content='notes',
-        content_rowid='rowid',
-        tokenize='porter unicode61'
-      );
-      CREATE TABLE IF NOT EXISTS edges (
-        "from" TEXT NOT NULL,
-        "to" TEXT NOT NULL,
-        type TEXT NOT NULL,
-        PRIMARY KEY ("from", "to", type)
-      );
-      CREATE INDEX IF NOT EXISTS idx_edges_to ON edges("to");
-    `);
-    ensureFtsTriggers(db);
+    try {
+      const capability = db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') AS enabled").get() as { enabled: number };
+      if (capability.enabled !== 1) {
+        throw new Error("SuperSkill requires Node.js 22.16+ or 24+ with SQLite FTS5 enabled. Install an official supported Node.js runtime and retry.");
+      }
+      db.exec("PRAGMA journal_mode = DELETE");
+      db.exec("PRAGMA foreign_keys = ON");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notes (
+          path TEXT PRIMARY KEY,
+          type TEXT,
+          title TEXT,
+          body TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+          title,
+          body,
+          content='notes',
+          content_rowid='rowid',
+          tokenize='porter unicode61'
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+          "from" TEXT NOT NULL,
+          "to" TEXT NOT NULL,
+          type TEXT NOT NULL,
+          PRIMARY KEY ("from", "to", type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_edges_to ON edges("to");
+      `);
+      ensureFtsTriggers(db);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
     const idx = new KnowledgeIndex(db, dbPath);
     openDbs.set(dbPath, idx);
     return idx;
@@ -147,7 +191,7 @@ export class KnowledgeIndex {
   upsert(note: IndexedNote): void {
     const type = note.type || "note";
     const title = note.title || titleFrom(note.body, note.path);
-    this.db.exec("BEGIN");
+    this.db.exec("SAVEPOINT knowledge_note");
     try {
       this.db.prepare(
         `INSERT INTO notes(path, type, title, body) VALUES (?, ?, ?, ?)
@@ -161,10 +205,22 @@ export class KnowledgeIndex {
         if (!target || target === note.path) continue;
         insertEdge.run(note.path, target, "related");
       }
-      this.db.exec("COMMIT");
+      this.db.exec("RELEASE knowledge_note");
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      this.db.exec("ROLLBACK TO knowledge_note; RELEASE knowledge_note");
       throw e;
+    }
+  }
+
+  replaceAll(notes: IndexedNote[]): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.clear();
+      for (const note of notes) this.upsert(note);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
   }
 
@@ -303,20 +359,20 @@ function resolveEdgeTarget(slug: string, raw: string, paths: Set<string>): strin
 export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: number; edges: number } {
   const safe = validateProjectSlug(slug);
   const projectDir = join(vaultRoot, "projects", safe);
+  assertProjectPath(vaultRoot, safe, projectDir);
   const files: string[] = [];
   if (existsSync(projectDir) && statSync(projectDir).isDirectory()) {
     walkMarkdown(projectDir, files);
   }
 
+  const fingerprint = projectFingerprint(vaultRoot, safe);
   const parsed: IndexedNote[] = [];
   const pathSet = new Set<string>();
-  let newest = 0;
   for (const abs of files) {
     const rel = abs.slice(vaultRoot.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
     let raw: string;
     try {
       raw = readFileSync(abs, "utf-8");
-      newest = Math.max(newest, statSync(abs).mtimeMs);
     } catch {
       continue;
     }
@@ -337,23 +393,17 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
   }
 
   const idx = KnowledgeIndex.openForProject(vaultRoot, safe);
-  idx.clear();
-  for (const n of parsed) idx.upsert(n);
+  idx.replaceAll(parsed);
   const dump = idx.graphDump();
-  writeIndexStamp(vaultRoot, safe, newest);
+  writeIndexStamp(vaultRoot, safe, fingerprint);
   return { notes: dump.nodes.length, edges: dump.edges.length };
 }
 
 export function ensureProjectIndex(vaultRoot: string, slug: string): KnowledgeIndex {
   const safe = validateProjectSlug(slug);
-  const stampMtime = existsSync(indexPathFor(vaultRoot, safe)) ? readIndexStampMtime(vaultRoot, safe) : null;
-  if (stampMtime === null) {
+  const stamp = existsSync(indexPathFor(vaultRoot, safe)) ? readIndexStamp(vaultRoot, safe) : null;
+  if (stamp !== projectFingerprint(vaultRoot, safe)) {
     rebuildProjectIndex(vaultRoot, safe);
-  } else {
-    const projectDir = join(vaultRoot, "projects", safe);
-    if (newestMarkdownMtime(projectDir) > stampMtime) {
-      rebuildProjectIndex(vaultRoot, safe);
-    }
   }
   return KnowledgeIndex.openForProject(vaultRoot, safe);
 }
@@ -363,7 +413,7 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
   if (!m) return;
   const slug = m[1];
   const { data, content: body } = parseFrontmatter(content);
-  const idx = KnowledgeIndex.openForProject(vaultRoot, slug);
+  const idx = ensureProjectIndex(vaultRoot, slug);
   const related = extractKnowledgeLinks(data, body).map((t) => {
     const paths = new Set(idx.graphDump().nodes.map((n) => n.id));
     paths.add(vaultRelPath);
@@ -376,13 +426,4 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
     body,
     related,
   });
-  try {
-    const current = readIndexStampMtime(vaultRoot, slug);
-    const fileMtime = statSync(join(vaultRoot, vaultRelPath)).mtimeMs;
-    if (current !== null && fileMtime > current) {
-      writeIndexStamp(vaultRoot, slug, fileMtime);
-    }
-  } catch {
-    // stamp refresh is best-effort; ensureProjectIndex rebuilds when in doubt
-  }
 }

@@ -28,6 +28,15 @@ describe("shared skill install", () => {
     expect(content).toMatch(/^---\nname: superskill\n/);
     expect(content).toContain(SKILL_MARKER);
     expect(content).toContain("project_context");
+    expect(content).toContain("worktree assessment");
+    expect(content).toContain("before verification or completion");
+    expect(content).toContain("explore|implement|review|ship");
+    expect(content).toContain("ordered local stack");
+    expect(content).toContain("At every session start");
+    expect(content).toContain("initializes a missing graph");
+    expect(content).not.toContain("usually the repo directory name");
+    expect(content).toContain("Workers do not independently push or create PRs");
+    expect(content).toContain("proven merged into main");
   });
 
   it("installs to ~/.agents/skills/superskill/SKILL.md", () => {

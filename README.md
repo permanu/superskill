@@ -9,7 +9,7 @@ Prompt normally. Call **`superskill`** with the task. It diagnoses, then loads a
 
 Everything is local-first: the vault is markdown under `projects/<slug>/`, the search index is derived SQLite, and vault IO is jailed to the current project.
 
-Requires **Node 22.13+** (`node:sqlite`).
+Requires **Node 22.16+ on the 22.x line, or Node 24+**, with SQLite FTS5 enabled. Official Node 22.13–22.15 builds lack FTS5 and cannot run knowledge search.
 
 ## Why
 
@@ -24,11 +24,11 @@ SuperSkill injects a system brief from the project graph, jails vault IO to `pro
 ## Quick start
 
 ```bash
-npm install -g superskill          # Node 22.13+
+npm install -g superskill          # Node 22.16+ (22.x), or 24+
 
 # in your repo
 superskill skill init          # detect stack, index the in-repo catalog, build .superskill/graph.json
-superskill setup               # register MCP + instructions in every detected AI client
+superskill setup               # register MCP + instructions in supported detected clients
 ```
 
 One binary, two faces: **`superskill <command>`** runs everything you run yourself (`setup`, `doctor`, `skill`, `graph`, `worktree`, …), and bare `superskill` in a terminal shows the help. With no arguments over piped stdio — how AI clients launch it — the same binary starts the **MCP server**. `superskill-cli` remains a permanent alias, and `SUPERSKILL_FORCE_MCP=1` forces server mode.
@@ -37,6 +37,8 @@ One binary, two faces: **`superskill <command>`** runs everything you run yourse
 2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) for each host that supports them — plus the harness-agnostic `superskill` skill at `~/.agents/skills/superskill/SKILL.md` so hosts with skill discovery list it. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
 3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/watchdog [dig|fix]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
 4. Activations write `.superskill/graph.json` (local only).
+
+Setup support is defined in [the harness matrix](docs/harness.md#support-and-verification). Native MCP setup excludes Aider; Continue setup targets its IDE extension. Configuration tests and live host checks are separate evidence.
 
 Want a vault context document too? `superskill init .` prints a draft `context.md`; review it, then save it with `superskill write`.
 
@@ -49,7 +51,7 @@ npm install -g superskill@latest
 superskill setup        # refresh slash commands + the shared skill (idempotent)
 ```
 
-`setup --force` also rewrites the MCP entry and instruction file. MCP servers pick up the new version on their next restart.
+`setup` upgrades recognized generated launchers without `--force`, preserving their existing vault path and extra environment settings. Pinned versions, direct binaries and customized arguments are left unchanged. `--force` explicitly replaces an entry; use it only when that replacement is intended.
 
 ### Uninstall
 
@@ -62,7 +64,9 @@ npm uninstall -g superskill
 
 ### MCP configuration
 
-Prefer the installed binary over `npx -y` so the client runs this version. `setup` writes `npx -y superskill` entries by default; both forms work.
+`setup` defaults to `npx -y --prefer-online superskill@latest`. Each new MCP process asks npm for fresh metadata and resolves the stable `latest` tag. Publishing a new version under that tag makes it available on the next MCP start; it does not replace an active server or push code into running sessions. Offline/cache behavior may retain a cached version or fail to start; no upgrade is guaranteed without registry access. Explicit pinned versions and direct installed binaries remain manual-update choices. See [npm exec configuration](https://docs.npmjs.com/cli/v11/commands/npm-exec/#prefer-online).
+
+Run setup once to install or migrate the integration. Future MCP starts update server code and atomically refresh the existing SuperSkill-managed shared skill and recognized Markdown instruction blocks. Automatic refresh preserves custom/ambiguous blocks and skips Cursor MDC/OpenCode plain instruction files; maintain those through explicit setup or manually. It does not create missing integrations or change launcher settings. Start a new host session to load refreshed instructions.
 
 **Claude Code / Claude Desktop** — `~/.claude.json`, or `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
 
@@ -70,7 +74,8 @@ Prefer the installed binary over `npx -y` so the client runs this version. `setu
 {
   "mcpServers": {
     "superskill": {
-      "command": "superskill",
+      "command": "npx",
+      "args": ["-y", "--prefer-online", "superskill@latest"],
       "env": { "VAULT_PATH": "~/Vaults/ai" }
     }
   }
@@ -83,7 +88,8 @@ Prefer the installed binary over `npx -y` so the client runs this version. `setu
 {
   "mcpServers": {
     "superskill": {
-      "command": "superskill",
+      "command": "npx",
+      "args": ["-y", "--prefer-online", "superskill@latest"],
       "env": { "VAULT_PATH": "~/Vaults/ai" }
     }
   }
@@ -97,7 +103,7 @@ Prefer the installed binary over `npx -y` so the client runs this version. `setu
   "mcp": {
     "superskill": {
       "type": "local",
-      "command": ["superskill"],
+      "command": ["npx", "-y", "--prefer-online", "superskill@latest"],
       "environment": { "VAULT_PATH": "~/Vaults/ai" }
     }
   }
@@ -109,7 +115,7 @@ Prefer the installed binary over `npx -y` so the client runs this version. `setu
 ```toml
 [mcp_servers.superskill]
 command = "npx"
-args = ["-y", "superskill"]
+args = ["-y", "--prefer-online", "superskill@latest"]
 
 [mcp_servers.superskill.env]
 VAULT_PATH = "~/Vaults/ai"
@@ -471,7 +477,7 @@ Findings are grouped by the part of the environment that failed: **navigation** 
 
 ### What watchdog reads
 
-The trace registry mirrors the setup client list: **OpenCode** (session store, messages, parts, diffs — richest), **Claude Code** (JSONL transcripts), **Codex CLI** (rollouts). Harnesses without a dedicated reader still degrade gracefully: SuperSkill's own session notes, graph, and telemetry cover them, so the loop works everywhere and gets deeper per harness as readers land.
+The trace registry mirrors the setup client list: **OpenCode** (session store, messages, parts, diffs — richest), **Claude Code** (JSONL transcripts), **Codex CLI** (rollouts). Codex parsing records literal nested tool calls and file paths without executing trace code. Unresolved asynchronous calls remain unknown; dynamic script effects are not inferred. Harnesses without a dedicated reader still degrade gracefully: SuperSkill's own session notes, graph, and telemetry cover them, so the loop works everywhere and gets deeper per harness as readers land.
 
 ### Safety
 
@@ -730,7 +736,7 @@ Only `status: verified` rules are eligible by default, so a catalog with no veri
 
 ## Knowledge graph
 
-Two graphs, one project scope:
+Derived indexes and routing history, one project scope:
 
 ### Vault FTS + edges
 
@@ -742,7 +748,11 @@ superskill viz --open -p my-project     # shorthand for `graph viz`; --open laun
 superskill qa viz -p my-project
 ```
 
-`graph viz` writes `projects/<slug>/knowledge-graph.html` (Cytoscape + ELK layered view with search, type filters, and a legend; tabs **Graph · HLA · LLA · ERD · Flow · Rules · Modules**; keys `g` `h` `l` `e` `f` `r` `m`), `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. HLA/LLA are derived from the real module graph; Rules nests the whole rule library (`language → prefix → rule`). Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel.
+`graph viz` scans the current repository and writes `projects/<slug>/knowledge-graph.html`, `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. The three primary views are **Explore · Architecture · Knowledge**. Architecture offers structure, dependencies, types, and call relationships through a view selector; Knowledge groups project notes, playbooks, and rules. Open directories, select a file to read its source snapshot, then explore declarations and their exact source spans. Breadcrumbs return to any parent. Search, type filters, zoom controls, and a searchable fallback support navigation.
+
+Architecture and dependencies come from parsed directories and imports. Data types show extracted declarations, not an inferred database schema; call flow shows static relationships, not runtime execution order. Empty sections explain missing evidence. Generation works across supported project languages without model calls or project-specific diagrams. The local HTML embeds source snapshots (up to 1 MB per file); regenerate after source changes. Source snapshots and document bodies containing secret-like patterns are omitted with an explanation. Agent `graph children` responses remain metadata-only, while `graph open` retrieves bounded file or declaration content on demand.
+
+Rules nests the whole rule library (`language → prefix → rule`), and Playbooks opens packs before individual playbooks. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel. `npm run test:viz` checks source traversal, diagrams, keyboard navigation, mobile layout, and the offline fallback.
 
 ### Lazy traversal (agent access)
 
@@ -755,7 +765,18 @@ superskill graph node rule:rust-own-cow-conditional   # metadata + edges
 superskill graph open rule:rust-own-cow-conditional   # pull just this file (cap ~4KB, --full for all)
 ```
 
-Ids span every artifact: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`. The MCP equivalent is one tool: `graph_traverse` (`action: resolve|children|node|open`).
+Ids span every artifact: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`, and opaque `symbol:<id>` values returned by file children or task resolution. The MCP equivalent is one tool: `graph_traverse` (`action: resolve|children|node|open`). Resolve and children return metadata without source bodies. Open defaults to 4,096 UTF-8 bytes; opening a symbol returns its source span rather than its whole file.
+
+The storage boundaries are deliberate: Markdown is project memory, SQLite derives searchable note links, the source parser derives code relationships, and the project-local skill graph records routing and session outcomes. Traversal presents these through one metadata interface; visualization is a generated consumer, not a prerequisite for agent retrieval.
+
+For methodology content, the `superskill` MCP tool returns a compact result by default. Set `max_tokens` (256–50,000) to bound estimated content tokens, and `detail: "full"` only when routing diagnostics are needed. The compact response reports content and complete serialized-response estimates separately; these are heuristic estimates, not tokenizer measurements. The CLI exposes the same behavior:
+
+```bash
+superskill skill activate "review parser boundaries" --max-tokens 1500 --json
+superskill skill activate "review parser boundaries" --max-tokens 1500 --json --detail full
+```
+
+Pass the registered coordination `session_id` (CLI `--session-id`) during activation so completion learns only from that session. Unrelated tasks no longer share a graph session merely because they run close together. Graph mutations, coordination updates, and vault read–modify–write operations use exclusive locks. Concurrent note updates read the latest content under the lock and replace the file atomically. A crashed owner can leave a lock behind: a timeout names the exact path; confirm the owner has stopped before removing that lock and retrying. Live locks are never stolen based on age alone.
 
 ### Code graph: impact and claims
 

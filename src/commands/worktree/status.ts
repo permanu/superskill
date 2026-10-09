@@ -92,7 +92,7 @@ export async function worktreeStatusCommand(
   args: WorktreeStatusArgs,
   ctx: CommandContext,
 ): Promise<WorktreeStatusResult> {
-  const audit = await auditRepo(process.cwd(), { includeSizes: true });
+  const audit = await auditRepo((ctx.workspacePath ?? process.cwd()), { includeSizes: true });
   const hookInstalled = await checkHookInstalled(audit.mainWorktree);
 
   const worktrees = audit.worktrees.map((entry) => ({

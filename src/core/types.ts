@@ -18,6 +18,7 @@ export interface CommandContext {
   log: Logger;
   /** Set when this call is jailed to one vault project. */
   projectSlug?: string | null;
+  workspacePath?: string;
 }
 
 export type CommandHandler<TArgs = unknown, TResult = unknown> = (

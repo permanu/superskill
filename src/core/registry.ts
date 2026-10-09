@@ -15,7 +15,7 @@ import { pruneCommand, statsCommand, deprecateCommand } from "../commands/prune.
 import { resumeCommand } from "../commands/resume.js";
 import { initCommand } from "../commands/init.js";
 import { initProject } from "../commands/skill/init.js";
-import { activateSkills } from "../commands/skill/activate.js";
+import { activateSkills, compactActivationResult, type ActivateArgs } from "../commands/skill/activate.js";
 import { statusCommand } from "../commands/skill/status.js";
 import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "../commands/graph.js";
 import { knowledgeRebuildCommand, knowledgeVizCommand } from "../commands/knowledge.js";
@@ -54,6 +54,10 @@ export class CommandRegistry {
   private registrations = new Map<string, CommandRegistration>();
 
   register<TArgs, TResult>(name: string, registration: CommandRegistration<TArgs, TResult>): void {
+    if (name === "session" || name === "superskill" || name === "graph_traverse" || name === "knowledge_viz" || name.startsWith("worktree_")) {
+      const properties = registration.toolDef.inputSchema.properties as Record<string, unknown>;
+      properties.workspace_path = { type: "string", description: "Absolute thread workspace directory; must map to this project. Omit only when the server cwd is the thread workspace." };
+    }
     this.registrations.set(name, registration as CommandRegistration);
   }
 
@@ -552,12 +556,10 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("superskill", {
-    handler: (async (args: { task?: string; skill_id?: string; files?: string[] }, ctx: CommandContext) => {
-      return activateSkills({
-        task: args.task,
-        skill_id: args.skill_id,
-        files: args.files,
-      }, ctx);
+    handler: (async (args: ActivateArgs & { detail?: string }, ctx: CommandContext) => {
+      if (args.detail !== undefined && args.detail !== "compact" && args.detail !== "full") throw new Error("detail must be compact or full");
+      const result = await activateSkills(args, ctx);
+      return args.detail === "full" ? result : compactActivationResult(result);
     }) as CommandHandler,
     toolDef: {
       name: "superskill",
@@ -568,14 +570,22 @@ export function createRegistry(): CommandRegistry {
           task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it." },
           skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'vercel-labs/agent-skills@react-best-practices')" },
           files: { type: "array", items: { type: "string" }, description: "Repo-relative file paths being worked on — selects file-triggered rules deterministically" },
+          phase: { type: "string", enum: ["explore", "implement", "review", "ship"], description: "Current work phase; reroute when task, files or phase changes" },
+          max_tokens: { type: "integer", minimum: 256, maximum: 50000, description: "Estimated content token budget; response metadata is measured separately" },
+          session_id: { type: "string", description: "Registered coordination session ID for isolated activation learning" },
+          detail: { type: "string", enum: ["compact", "full"], description: "Compact by default; full includes routing diagnostics" },
         },
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: false },
     },
     adaptArgs: (raw) => ({
       task: s(raw.task),
       skill_id: s(raw.skill_id),
       files: a(raw.files) as string[] | undefined,
+      phase: raw.phase as ActivateArgs["phase"],
+      max_tokens: raw.max_tokens as number | undefined,
+      session_id: s(raw.session_id),
+      detail: s(raw.detail),
     }),
   });
 
@@ -717,7 +727,7 @@ export function createRegistry(): CommandRegistry {
     toolDef: {
       name: "graph_traverse",
       description:
-        "Traverse the unified project index (vault notes, skills, rules, code) without loading content. action=node|children return metadata (path, bytes, tokens); action=resolve proposes what a task would load with a token budget; action=open returns capped content.",
+        "Traverse the project index without loading bodies. node|children return metadata; resolve finds relevant notes, skills, rules, files and symbols with size estimates; open retrieves one file or symbol span capped at 4096 UTF-8 bytes by default.",
       inputSchema: {
         type: "object" as const,
         properties: {

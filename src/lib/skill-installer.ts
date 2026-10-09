@@ -22,7 +22,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { tmpdir, homedir } from "os";
 import { join, resolve, basename, relative, isAbsolute } from "path";
-import { readdir, readFile, writeFile, mkdir, cp, rm, stat } from "fs/promises";
+import { readdir, readFile, writeFile, mkdir, cp, rm, stat, realpath, lstat } from "fs/promises";
 import matter from "gray-matter";
 import { fetchPublisherSkills, fetchSkillPage, type PublisherSkill } from "./skills-sh/client.js";
 import { auditIsBlocked, auditIsWarn } from "./security-gate.js";
@@ -62,6 +62,7 @@ export interface InstallResult {
  * Supports: owner/repo, github:owner/repo, https://github.com/owner/repo
  */
 export function parseSource(source: string): ParsedSource | null {
+  if (/[\\\x00-\x1f\x7f]/.test(source) || source.split("/").some((segment) => segment === ".." || segment === ".")) return null;
   // Strip trailing slash
   source = source.replace(/\/+$/, "");
 
@@ -146,11 +147,21 @@ async function discoverSkills(repoDir: string, subpath?: string): Promise<Discov
   const searchRoot = subpath ? join(repoDir, subpath) : repoDir;
   const skills: DiscoveredSkill[] = [];
   const seen = new Set<string>();
+  const realRepo = await realpath(repoDir);
 
   // Check priority directories first
   for (const dir of SKILL_SEARCH_DIRS) {
     const fullDir = resolve(searchRoot, dir);
-    await findSkillsInDir(fullDir, skills, seen, 2);
+    let realDir: string;
+    try {
+      realDir = await realpath(fullDir);
+      const rel = relative(realRepo, realDir);
+      if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) continue;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      continue;
+    }
+    await findSkillsInDir(realDir, skills, seen, 2);
   }
 
   return skills;
@@ -169,7 +180,7 @@ async function findSkillsInDir(
     const entries = await readdir(dir, { withFileTypes: true });
 
     // Check for SKILL.md in this directory
-    if (entries.some((e) => e.name === "SKILL.md" && !e.isDirectory())) {
+    if (entries.some((e) => e.name === "SKILL.md" && e.isFile())) {
       const skillFile = join(dir, "SKILL.md");
       if (!seen.has(skillFile)) {
         const content = await readFile(skillFile, "utf-8");
@@ -236,6 +247,7 @@ function resolveSkillDir(installDir: string, name: string): string | null {
 async function writeUnauditedMarker(installDir: string, name: string): Promise<void> {
   const dir = resolveSkillDir(installDir, name);
   if (!dir) return;
+  await assertNoDestinationSymlinks(dir);
   const marker = {
     unaudited: true,
     source: "github-fallback",
@@ -243,6 +255,20 @@ async function writeUnauditedMarker(installDir: string, name: string): Promise<v
     installedAt: new Date().toISOString(),
   };
   await writeFile(join(dir, UNAUDITED_MARKER), JSON.stringify(marker, null, 2), "utf-8");
+}
+
+async function assertNoDestinationSymlinks(path: string): Promise<void> {
+  let info;
+  try {
+    info = await lstat(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (info.isSymbolicLink()) throw new Error(`Symlinked skill destination rejected: ${path}`);
+  if (info.isDirectory()) {
+    for (const name of await readdir(path)) await assertNoDestinationSymlinks(join(path, name));
+  }
 }
 
 /**
@@ -339,6 +365,7 @@ async function installFromSkillsSh(
         errors.push(`${skillRef.skill}: Invalid skill name`);
         continue;
       }
+      await assertNoDestinationSymlinks(destDir);
       await mkdir(destDir, { recursive: true });
 
       const skillMd = `---\nname: ${skillRef.skill}\ndescription: Skill from ${owner}/${repo}\nsource: skills.sh\ninstalls: ${pageData.installs}\nstars: ${pageData.stars}\naudits:\n  gen: ${pageData.audits.gen}\n  socket: ${pageData.audits.socket}\n  snyk: ${pageData.audits.snyk}\n---\n\n${content}`;
@@ -421,12 +448,13 @@ async function installFromGitHub(
           errors.push(`${skill.name}: Invalid skill name`);
           continue;
         }
+        await assertNoDestinationSymlinks(destDir);
         await mkdir(destDir, { recursive: true });
         await cp(skill.skillDir, destDir, {
           recursive: true,
-          filter: (src) => {
+          filter: async (src) => {
             const name = basename(src);
-            return !name.startsWith(".git") && name !== "node_modules" && name !== "__pycache__";
+            return !name.startsWith(".git") && name !== "node_modules" && name !== "__pycache__" && !(await lstat(src)).isSymbolicLink();
           },
         });
         installed.push(skill.name);

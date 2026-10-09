@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findSystemChrome, verifyVizHtml } from "./qa-browser.js";
@@ -26,15 +26,16 @@ describe("qa-browser", () => {
       related: [],
     });
     idx.close();
-    const { html } = writeKnowledgeGraphFiles(vault, "demo");
+    await writeFile(join(dir, "main.ts"), "export const answer = 42;");
+    const { html } = await writeKnowledgeGraphFiles(vault, "demo", { codeRoot: dir });
     const abs = join(vault, html);
     const qa = await verifyVizHtml(abs);
     expect(qa.skipped).toBeUndefined();
     expect(qa.ok).toBe(true);
-    expect(qa.title).toBe("SuperSkill");
-    expect(qa.nodes).toContain("Vault memory");
-    expect(qa.afterClick.toLowerCase()).toMatch(/vault|note/);
-    expect(qa.afterBack).toBe("SuperSkill");
+    expect(qa.title).toBe("demo");
+    expect(qa.nodes).toContain("main.ts");
+    expect(qa.afterClick.toLowerCase()).toMatch(/main.ts|source/);
+    expect(qa.afterBack).toBe("demo");
     await rm(dir, { recursive: true, force: true });
   }, 60_000);
 });

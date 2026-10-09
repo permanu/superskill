@@ -66,4 +66,23 @@ describe("watchdog report store", () => {
     const reloaded = await loadReportFile(vaultFs, first);
     expect(reloaded?.findings[0].status).toBe("applied");
   });
+  it("preserves concurrent status changes and appended fix logs", async () => {
+    const report = sampleReport();
+    report.findings = Array.from({ length: 8 }, (_, index) => ({ ...report.findings[0], id: `finding_${index}` }));
+    const path = await saveReport(vaultFs, report);
+    await Promise.all([
+      ...report.findings.map((finding) => setFindingStatus(new VaultFS(dir, { projectSlug: "proj" }), path, finding.id, "applied")),
+      vaultFs.append(path, "\nConcurrent fix log entry\n"),
+    ]);
+    const reloaded = await loadReportFile(vaultFs, path);
+    expect(reloaded?.findings.map(finding => finding.status)).toEqual(Array(8).fill("applied"));
+    expect(await vaultFs.read(path)).toContain("Concurrent fix log entry");
+  });
+
+  it("returns false for missing reports or unknown finding ids", async () => {
+    expect(await setFindingStatus(vaultFs, "watchdog/missing.md", "missing", "applied")).toBe(false);
+    const path = await saveReport(vaultFs, sampleReport());
+    expect(await setFindingStatus(vaultFs, path, "missing", "applied")).toBe(false);
+  });
+
 });

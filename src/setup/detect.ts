@@ -14,7 +14,7 @@ export function detectClient(client: ClientConfig): DetectedClient | null {
   const home = homedir();
   const parentIsHome = parentDir === home || parentDir === home + "/";
 
-  if (!existsSync(mcpPath) && (parentIsHome || !existsSync(parentDir))) {
+  if (!existsSync(mcpPath) && !(client.detectionPaths && existsSync(resolveHome(client.detectionPaths[plat]))) && (parentIsHome || !existsSync(parentDir))) {
     return null;
   }
 

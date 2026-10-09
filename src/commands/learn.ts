@@ -105,7 +105,7 @@ async function noteLearningCaptured(
     return;
   }
   for (const file of files.filter((name) => name.endsWith(".md"))) {
-    const path = `${dir}/${file}`;
+    const path = file;
     let content: string;
     try {
       content = await vaultFs.read(path);
@@ -114,9 +114,12 @@ async function noteLearningCaptured(
     }
     const { data, content: body } = parseFrontmatter(content);
     if (data.type !== "session" || data.session_id !== sessionId) continue;
-    const count = Number(data.learnings_captured ?? 0) + 1;
     try {
-      await vaultFs.write(path, serializeFrontmatter({ ...data, learnings_captured: count }, body));
+      await vaultFs.update(path, (current) => {
+        const { data: latest, content: latestBody } = parseFrontmatter(current);
+        if (latest.type !== "session" || latest.session_id !== sessionId) return current;
+        return serializeFrontmatter({ ...latest, learnings_captured: Number(latest.learnings_captured ?? 0) + 1 }, latestBody);
+      });
     } catch (err: unknown) {
       console.error(`[learn] could not update learnings_captured: ${err instanceof Error ? err.message : String(err)}`);
     }

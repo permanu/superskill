@@ -132,7 +132,7 @@ export async function worktreeUninstallCommand(
   args: WorktreeUninstallArgs,
   _ctx: CommandContext,
 ): Promise<unknown> {
-  const worktreeRoot = process.cwd();
+  const worktreeRoot = (_ctx.workspacePath ?? process.cwd());
   const built = await buildProviderContext(worktreeRoot);
   const notes: string[] = [];
 

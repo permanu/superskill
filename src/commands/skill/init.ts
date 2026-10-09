@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile, appendFile, access, readdir } from "node:fs/promises";
+import { readFile, appendFile, access, readdir, lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import matter from "gray-matter";
 import type { CommandContext } from "../../core/types.js";
 import { detectStack } from "../../lib/stack-detector.js";
 import { detectTool } from "../../lib/tool-detector.js";
 import {
-  createEmptyGraph,
   ensureSuperskillDir,
-  writeGraph,
+  mutateGraph,
+  findNode,
+  removeNode,
   addNode,
   addEdge,
 } from "../../lib/graph/store.js";
 import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
 import { auditIsBlocked } from "../../lib/security-gate.js";
-import { loadCatalog } from "../../lib/catalog.js";
+import { loadCatalog, packagedCatalogVersion } from "../../lib/catalog.js";
 import { registerProject } from "../../lib/project-map.js";
 import type {
-  Graph,
   ProjectNode,
   SkillNode,
   AuditResult,
@@ -211,10 +211,29 @@ export async function parseNativeSkillFile(filePath: string): Promise<ParsedNati
 export async function initProject(
   args: Record<string, unknown>,
   ctx: CommandContext,
+  options: { startup?: boolean } = {},
 ): Promise<InitResult> {
-  const projectDir = process.cwd();
+  const projectDir = ctx.workspacePath ?? process.cwd();
 
   try {
+    if (options.startup) {
+      for (const relativePath of [".superskill", ".superskill/graph.json", ".gitignore"]) {
+        try {
+          if ((await lstat(join(projectDir, relativePath))).isSymbolicLink()) {
+            throw new Error(`Automatic initialization refused: symlink at ${relativePath}`);
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      try {
+        const persisted = JSON.parse(await readFile(join(projectDir, ".superskill", "graph.json"), "utf8"));
+        if (!Array.isArray(persisted.nodes) || !Array.isArray(persisted.edges)) throw new Error("Invalid existing graph; automatic initialization refused");
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      }
+    }
     const [stack, tool] = await Promise.all([
       detectStack(projectDir),
       Promise.resolve(detectTool()),
@@ -260,6 +279,7 @@ export async function initProject(
     const catalogIds = new Set(catalog.map((s) => s.id));
 
     let skillsBlocked = 0;
+    const blockedIds = new Set<string>();
     const skillNodes: SkillNode[] = [];
 
     for (const item of catalog) {
@@ -286,6 +306,7 @@ export async function initProject(
 
       if (auditIsBlocked(audits)) {
         skillsBlocked++;
+        blockedIds.add(native.id);
         continue;
       }
 
@@ -319,29 +340,36 @@ export async function initProject(
       ts: Date.now(),
     };
 
-    let graph: Graph = createEmptyGraph();
-    graph = addNode(graph, projectNode);
-
-    for (const skill of skillNodes) {
-      graph = addNode(graph, skill);
-      graph = addEdge(graph, {
-        type: "project_skill",
-        from: "project",
-        to: skill.id,
-        w: skill.w,
-        activations: 0,
-      });
-    }
-
     const superskillDir = await ensureSuperskillDir(projectDir);
-    await writeGraph(projectDir, graph);
+    await mutateGraph(projectDir, (latest) => {
+      const existingProject = findNode<ProjectNode>(latest, "project", "project");
+      let graph = addNode(latest, { ...projectNode, phase: existingProject?.phase ?? projectNode.phase });
+      for (const node of latest.nodes) {
+        if (node.type === "skill" && node.source === "catalog" && !catalogIds.has(node.id)) graph = removeNode(graph, "skill", node.id);
+      }
+      for (const id of blockedIds) graph = removeNode(graph, "skill", id);
+      for (const skill of skillNodes) {
+        const existingSkill = findNode<SkillNode>(graph, "skill", skill.id);
+        graph = addNode(graph, { ...skill, w: existingSkill?.w ?? skill.w });
+        if (!graph.edges.some((edge) => edge.type === "project_skill" && edge.from === "project" && edge.to === skill.id)) {
+          graph = addEdge(graph, {
+            type: "project_skill",
+            from: "project",
+            to: skill.id,
+            w: skill.w,
+            activations: 0,
+          });
+        }
+      }
+      return { ...graph, catalogVersion: packagedCatalogVersion };
+    });
 
-    await appendToInstructionFile(projectDir);
+    if (!options.startup) await appendToInstructionFile(projectDir);
 
-    let vaultSlug: string | undefined;
+    let vaultSlug: string | undefined = options.startup ? ctx.projectSlug ?? undefined : undefined;
     let vaultMapping: string | undefined;
     let vaultMappingError: string | undefined;
-    try {
+    if (!options.startup) try {
       const registration = await registerProject(
         ctx.config.vaultPath,
         projectDir,

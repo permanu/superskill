@@ -18,39 +18,15 @@ export async function brainstormCommand(
   const filePath = `projects/${projectSlug}/brainstorms/${slug}.md`;
   const today = new Date().toISOString().slice(0, 10);
 
-  const exists = await ctx.vaultFs.exists(filePath);
-
-  if (!exists) {
-    const fm = createFrontmatter({
-      type: "brainstorm",
-      project: projectSlug,
-      status: "draft",
-    });
-
-    const body = `
-# ${args.topic}
-
-## Entries
-
-### ${today}
-
-${args.content}
-`.trimStart();
-
-    await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
-    return { path: filePath, total_entries: 1 };
-  }
-
-  const existing = await ctx.vaultFs.read(filePath);
-  const { data, content: body } = parseFrontmatter(existing);
-
-  const newEntry = `\n### ${today}\n\n${args.content}\n`;
-  const updatedBody = body.trimEnd() + "\n" + newEntry;
-  const updatedFm = mergeFrontmatter(data, {});
-
-  await ctx.vaultFs.write(filePath, serializeFrontmatter(updatedFm, updatedBody));
-
-  const entryCount = (updatedBody.match(/^### /gm) ?? []).length;
-
-  return { path: filePath, total_entries: entryCount };
+  const result = await ctx.vaultFs.update(filePath, (existing) => {
+    if (!existing) {
+      const fm = createFrontmatter({ type: "brainstorm", project: projectSlug, status: "draft" });
+      return serializeFrontmatter(fm, `# ${args.topic}\n\n## Entries\n\n### ${today}\n\n${args.content}\n`);
+    }
+    const { data, content: body } = parseFrontmatter(existing);
+    const updatedBody = body.trimEnd() + `\n\n### ${today}\n\n${args.content}\n`;
+    return serializeFrontmatter(mergeFrontmatter(data, {}), updatedBody);
+  }, { create: true });
+  const { content: body } = parseFrontmatter(result.content);
+  return { path: filePath, total_entries: (body.match(/^### /gm) ?? []).length };
 }

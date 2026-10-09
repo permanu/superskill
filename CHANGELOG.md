@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-10
+
+### Added
+- Session-start orchestration with workspace-aware routing, explicit work phases, first-use graph initialization, and release-aware catalog refresh that preserves learned state.
+- Completed-session worktree cleanup after verified integration into local main, with active/dirty/locked checkout protection and archival of local graph metadata.
+- Local integration guidance for related dependent agent changes before authorized batch pushes.
+- Managed MCP launchers follow npm's latest tag on new server starts; managed skill and recognized Markdown instructions refresh at startup. Pinned/custom launchers remain unchanged.
+- Generic project architecture and knowledge views with directory/file/symbol traversal and bounded source excerpts.
+
+### Fixed
+- Cooperative atomic vault updates, concurrent ticket dependency allocation, graph/session ownership locks, and fail-closed session registry validation.
+- File- and phase-aware skill routing, bounded compact diagnostics, and isolated session learning.
+- Nested Codex trace activity and structured failure detection; documented harness setup contracts and safe legacy migrations.
+- Project and installer path confinement, secret rejection/redaction, knowledge-index initialization and cache freshness.
+
+### Requirements
+- Node.js 22.16+ on the 22.x line, or 24+, with SQLite FTS5. Older runtimes fail with an actionable upgrade message.
+- Existing installations should run setup once and restart their MCP server to migrate managed launchers. Future latest-tag updates take effect on subsequent starts, not during active sessions.
+
 ## [0.10.0] - 2026-10-05
 
 ### Added

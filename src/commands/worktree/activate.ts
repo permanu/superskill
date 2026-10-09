@@ -16,8 +16,8 @@ export async function worktreeActivateCommand(
   args: WorktreeActivateArgs,
   ctx: CommandContext,
 ): Promise<ActivationResult> {
-  ctx.log.debug("[worktree-activate] activating repo from", process.cwd());
-  return activateRepo(process.cwd(), {
+  ctx.log.debug("[worktree-activate] activating repo from", (ctx.workspacePath ?? process.cwd()));
+  return activateRepo((ctx.workspacePath ?? process.cwd()), {
     yes: args.yes,
     hooks: args.hooks,
     hosts: args.hosts,

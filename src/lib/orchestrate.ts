@@ -2,6 +2,8 @@
 // Single SuperSkill entry: diagnose, then name specialists. Host stays one agent;
 // packs are the specialists. Sequence is not a waterfall.
 
+import { routingStack, type RoutingContext } from "./graph/router.js";
+
 export interface Specialist {
   agent: string;
   pack: string;
@@ -43,9 +45,9 @@ const RULES: Rule[] = [
   { agent: "typescript", pack: "code/typescript", reason: "TypeScript language", re: /\b(typescript|\bts\b|javascript|node)\b/i, stack: "typescript" },
 ];
 
-export function planDelegation(task: string, stack: string[] = []): Orchestration {
+export function planDelegation(task: string, stack: string[] = [], context: RoutingContext = {}): Orchestration {
   const lower = task.toLowerCase();
-  const stackNorm = stack.map((s) => s.toLowerCase());
+  const stackNorm = routingStack(stack, context.files).map((s) => s.toLowerCase());
   const specialists: Specialist[] = [];
   const seen = new Set<string>();
 
@@ -54,6 +56,9 @@ export function planDelegation(task: string, stack: string[] = []): Orchestratio
     seen.add(s.agent);
     specialists.push(s);
   };
+
+  if (context.phase === "review") add({ agent: "review", pack: "review/architect", reason: "review phase" });
+  if (context.phase === "ship") add({ agent: "platform", pack: "devops/cloud", reason: "ship phase" });
 
   for (const r of RULES) {
     if (r.re.test(task)) add({ agent: r.agent, pack: r.pack, reason: r.reason });
@@ -77,7 +82,7 @@ export function planDelegation(task: string, stack: string[] = []): Orchestratio
 
   const implementish = !/\b(review|deploy|owasp|pentest|qa|e2e|viz|security|cve)\b/i.test(task);
   const hasLang = specialists.some((s) => ["go", "rust", "python", "swift", "typescript"].includes(s.agent));
-  if (implementish && !hasLang) {
+  if (implementish && context.phase !== "review" && context.phase !== "ship" && !hasLang) {
     for (const s of stackNorm) {
       const spec = langByStack[s];
       if (spec) add(spec);

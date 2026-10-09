@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VaultFS } from "../vault-fs.js";
@@ -200,6 +200,15 @@ describe("traverse index", () => {
     return { root: fx.repo, rulesDir: fx.rulesDir, catalogDir: fx.catalogDir };
   }
 
+  it("caps UTF-8 content on complete character boundaries", async () => {
+    writeFileSync(join(fx.repo, "src/unicode.ts"), "// " + "界😀".repeat(2000));
+    const traverser = await openTraverser({ root: fx.repo, catalogDir: fx.catalogDir, rulesDir: fx.rulesDir });
+    const opened = await traverser.open("code:src/unicode.ts");
+    expect(Buffer.byteLength(opened.content, "utf8")).toBeLessThanOrEqual(DEFAULT_OPEN_BYTES);
+    expect(opened.content).not.toContain("�");
+    expect(opened.truncated).toBe(true);
+  });
+
   it("indexes rules from frontmatter with id/lang/prefix/related/bytes", async () => {
     const traverser = await openTraverser(opts());
     const node = traverser.node("rule:rust-own-borrow-over-clone");
@@ -331,12 +340,79 @@ describe("traverse index", () => {
     expect(ids).toContain("code:src/a.ts");
   });
 
+  it("resolves code symbols and paths as bounded metadata before opening source", async () => {
+    const source = "def authorize_payment():\n    return True\n" + "# unrelated implementation details\n".repeat(1000);
+    writeFileSync(join(fx.repo, "payments.py"), source);
+    const traverser = await openTraverser(opts());
+    const result = traverser.resolve("fix authorize_payment", { limit: 1 });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].kind).toBe("code");
+    expect(result.items[0].id).toMatch(/^symbol:/);
+    expect(JSON.stringify(result)).not.toContain("return True");
+    const opened = await traverser.open(result.items[0].id);
+    expect(opened.content).toContain("return True");
+    expect(opened.bytes).toBeLessThan(Buffer.byteLength(source));
+    expect(traverser.resolve("payments.py", { limit: 1 }).items[0].id).toBe("code:payments.py");
+    expect(traverser.resolve("zxqv_unmatched").items.filter(item => item.kind === "code")).toEqual([]);
+  });
+
+  it("rejects cached code paths replaced by external symlinks", async () => {
+    const path = join(fx.repo, "src", "safe.ts");
+    writeFileSync(path, "export const safe = 1;");
+    const traverser = await openTraverser(opts());
+    const secret = join(fx.vault, "secret.ts");
+    writeFileSync(secret, "private");
+    unlinkSync(path);
+    symlinkSync(secret, path);
+    await expect(traverser.open("code:src/safe.ts")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("discovers Python outside src and opens a symbol without unrelated file content", async () => {
+    mkdirSync(join(fx.repo, "service"));
+    writeFileSync(join(fx.repo, "service", "app.py"), "SECRET_SENTINEL = 1\n\ndef run():\n    return 42\n");
+    const traverser = await openTraverser(opts());
+    const file = traverser.node("code:service/app.py");
+    expect(file).not.toBeNull();
+    const symbols = traverser.children(file!.id);
+    expect(JSON.stringify(symbols)).not.toContain("return 42");
+    const run = symbols.children.find(node => node.label === "run")!;
+    expect(run).toBeDefined();
+    const opened = await traverser.open(run.id);
+    expect(opened.content).toContain("return 42");
+    expect(opened.content).not.toContain("SECRET_SENTINEL");
+    expect(opened.tokens).toBeLessThan(file!.tokens);
+    expect(traverser.node(file!.id)!.bytes).toBe(statSync(join(fx.repo, "service", "app.py")).size);
+  });
+
+  it("invalidates source metadata in scanned hidden directories", async () => {
+    const directory = join(fx.repo, ".config");
+    mkdirSync(directory);
+    const path = join(directory, "tasks.py");
+    writeFileSync(path, "def original():\n    return 1\n");
+    const first = await openTraverser(opts());
+    expect(first.children("code:.config/tasks.py").children.map(node => node.label)).toContain("original");
+    writeFileSync(path, "def replacement():\n    return 2\n");
+    const future = new Date(Date.now() + 2000);
+    utimesSync(path, future, future);
+    const refreshed = await openTraverser(opts());
+    expect(refreshed.children("code:.config/tasks.py").children.map(node => node.label)).toContain("replacement");
+    expect(refreshed.children("code:.config/tasks.py").children.map(node => node.label)).not.toContain("original");
+  });
+
+  it("invalidates code metadata when a non-src source file changes", async () => {
+    writeFileSync(join(fx.repo, "app.py"), "def first():\n    return 1\n");
+    await openTraverser(opts());
+    writeFileSync(join(fx.repo, "app.py"), "def second():\n    return 2\n");
+    const next = await openTraverser(opts());
+    expect(next.children("code:app.py").children.map(node => node.label)).toContain("second");
+  });
+
   it("caches at .superskill/traverse.json and rebuilds when a rule changes", async () => {
     const first = await openTraverser(opts());
     const cacheFile = join(fx.repo, ".superskill", "traverse.json");
     expect(existsSync(cacheFile)).toBe(true);
     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
-    expect(cached.version).toBe(1);
+    expect(cached.version).toBe(2);
     const fingerprint = cached.fingerprint;
     const builtAt = cached.builtAt;
 

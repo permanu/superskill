@@ -141,17 +141,18 @@ export async function deprecateCommand(
   },
   ctx: CommandContext,
 ): Promise<{ path: string; status: string }> {
-  const content = await ctx.vaultFs.read(args.path);
-  const { data, content: body } = parseFrontmatter(content);
+  await ctx.vaultFs.update(args.path, (content) => {
+    const { data, content: body } = parseFrontmatter(content);
 
-  const updatedFm = mergeFrontmatter(data, { status: "deprecated" });
-  let updatedBody = body;
+    const updatedFm = mergeFrontmatter(data, { status: "deprecated" });
+    let updatedBody = body;
 
-  if (args.reason) {
-    updatedBody = body.trimEnd() + `\n\n---\n**Deprecated**: ${args.reason} (${new Date().toISOString().slice(0, 10)})\n`;
-  }
+    if (args.reason) {
+      updatedBody = body.trimEnd() + `\n\n---\n**Deprecated**: ${args.reason} (${new Date().toISOString().slice(0, 10)})\n`;
+    }
 
-  await ctx.vaultFs.write(args.path, serializeFrontmatter(updatedFm, updatedBody));
+    return serializeFrontmatter(updatedFm, updatedBody);
+  });
   return { path: args.path, status: "deprecated" };
 }
 
@@ -319,12 +320,12 @@ async function pruneTodos(
         result.deleted.push(`${todoPath}: ${line.trim()}`);
       }
     } else {
-      const prunedLines = lines.filter((l) => !l.match(/^- \[x\]/));
-      const updated = mergeFrontmatter(data, {});
-      await vaultFs.write(todoPath, serializeFrontmatter(updated, prunedLines.join("\n")));
-      for (const line of completedLines) {
-        result.deleted.push(`${todoPath}: ${line.trim()}`);
-      }
+      await vaultFs.update(todoPath, (current) => {
+        const { data: latest, content: latestBody } = parseFrontmatter(current);
+        const latestLines = latestBody.split("\n");
+        for (const line of latestLines.filter((line) => /^- \[x\]/.test(line))) result.deleted.push(`${todoPath}: ${line.trim()}`);
+        return serializeFrontmatter(mergeFrontmatter(latest, {}), latestLines.filter((line) => !/^- \[x\]/.test(line)).join("\n"));
+      });
     }
   } catch (e: unknown) {
     if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {

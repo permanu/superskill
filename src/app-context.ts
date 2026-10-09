@@ -5,6 +5,7 @@ import type { Config } from "./config.js";
 import { VaultFS } from "./lib/vault-fs.js";
 import { SessionRegistryManager } from "./lib/session-registry.js";
 import { detectProject } from "./lib/project-detector.js";
+import { resolveWorkspaceContext, WorkspaceNotMappedError } from "./lib/workspace-context.js";
 import type { CommandContext, Logger } from "./core/types.js";
 
 let _config: Config | null = null;
@@ -62,7 +63,13 @@ const UNSCOPED_TOOLS = new Set([
 export async function createScopedCtx(
   explicitSlug?: string,
   toolName?: string,
+  workspacePath?: string,
 ): Promise<CommandContext> {
+  if (workspacePath !== undefined) {
+    const workspace = await resolveWorkspaceContext(getConfig().vaultPath, workspacePath, explicitSlug);
+    const ctx = toolName && UNSCOPED_TOOLS.has(toolName) ? createCtx() : createCtx(workspace.projectSlug);
+    return { ...ctx, workspacePath: workspace.workspacePath };
+  }
   if (toolName && UNSCOPED_TOOLS.has(toolName)) {
     return createCtx();
   }
@@ -74,7 +81,12 @@ export async function createScopedCtx(
     } catch {
       detected = null;
     }
-    if (detected) return createCtx(detected);
+    try {
+      const workspace = await resolveWorkspaceContext(getConfig().vaultPath, process.cwd(), detected ?? undefined);
+      return { ...createCtx(workspace.projectSlug), workspacePath: workspace.workspacePath };
+    } catch (error) {
+      if (!(error instanceof WorkspaceNotMappedError)) throw error;
+    }
     if (toolName) return createCtx(null);
     return createCtx();
   }

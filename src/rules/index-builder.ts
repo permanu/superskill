@@ -17,6 +17,18 @@ export interface RulesIndex {
 }
 
 const TERM_SPLIT = /[-_\s]+/;
+const PROSE_WORDS = new Set([
+  "a", "an", "the", "this", "that", "these", "those", "is", "are", "was", "were",
+  "be", "been", "being", "for", "and", "or", "of", "to", "in", "on", "at", "by",
+  "with", "from", "as", "it", "its", "we", "you", "your", "our", "i", "me", "my",
+  "do", "does", "did", "have", "has", "had", "can", "could", "should", "would",
+  "will", "may", "might", "so", "than", "then", "there", "here", "when", "where",
+]);
+
+export function isProseWord(value: string): boolean {
+  return PROSE_WORDS.has(value.toLowerCase());
+}
+
 const REGEX_SPECIALS = "\\^$.*+?()[]{}|/";
 const globCache = new Map<string, RegExp>();
 
@@ -40,6 +52,7 @@ export function normalizeTerms(value: string): string[] {
 export function keywordKeys(value: string): string[] {
   const keys: string[] = [];
   for (const term of normalizeTerms(value)) {
+    if (isProseWord(term)) continue;
     const key = simpleStem(term);
     if (!keys.includes(key)) keys.push(key);
   }

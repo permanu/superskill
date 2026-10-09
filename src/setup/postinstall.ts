@@ -17,7 +17,7 @@ try {
     console.log("  No AI clients detected.");
   }
 
-  console.log(`  Run "superskill setup --all" to configure all ${CLIENT_REGISTRY.length} supported clients.\n`);
+  console.log(`  Run "superskill setup --all" to configure all ${CLIENT_REGISTRY.filter(client => client.support === "documented").length} supported clients.\n`);
 } catch {
   // Postinstall must never fail the install
   process.exit(0);

@@ -402,7 +402,7 @@ export async function worktreeApplyCommand(
   args: WorktreeApplyArgs,
   _ctx: CommandContext,
 ): Promise<WorktreeApplyResult> {
-  const worktreeRoot = process.cwd();
+  const worktreeRoot = (_ctx.workspacePath ?? process.cwd());
   const notes: string[] = [];
   const skipped: Array<{ id: string; reason: string }> = [];
   let items: AuditModuleItem[] = [];

@@ -22,6 +22,11 @@ export function registerSetupCommands(program: Command): void {
       const vaultPath = opts.vaultPath ?? process.env.VAULT_PATH ?? "~/Vaults/ai";
       const clientSlugs = opts.clients?.split(",").map((s) => s.trim());
 
+      const unknown = clientSlugs?.filter(slug => !CLIENT_REGISTRY.some(client => client.slug === slug));
+      if (unknown?.length) throw new Error(`Unknown client(s): ${unknown.join(", ")}`);
+      const unsupported = clientSlugs?.map(slug => CLIENT_REGISTRY.find(client => client.slug === slug)!).filter(client => client.support === "unsupported");
+      if (unsupported?.length) throw new Error(unsupported.map(client => `${client.name}: ${client.supportNote}`).join("\n"));
+
       console.log("\nScanning for AI clients...\n");
       const detected = detectClients();
       const detectedSlugs = new Set(detected.map((d) => d.config.slug));
@@ -57,7 +62,7 @@ export function registerSetupCommands(program: Command): void {
         }
       } else if (opts.all) {
         const plat = currentPlatform();
-        targets = CLIENT_REGISTRY.map((cfg) => ({
+        targets = CLIENT_REGISTRY.filter(cfg => cfg.support !== "unsupported").map((cfg) => ({
           config: cfg,
           mcpConfigPath: resolveHome(cfg.mcpConfigPaths[plat]),
           instructionPath: cfg.instructionPaths
@@ -65,7 +70,7 @@ export function registerSetupCommands(program: Command): void {
             : undefined,
         }));
       } else {
-        targets = detected;
+        targets = detected.filter(client => client.config.support !== "unsupported");
       }
 
       if (targets.length === 0) {
@@ -76,6 +81,7 @@ export function registerSetupCommands(program: Command): void {
 
       console.log(`\n${opts.dryRun ? "Would configure" : "Configuring"}...\n`);
       let configured = 0;
+      let failed = 0;
 
       for (const target of targets) {
         const result = configureClient(target, vaultPath, {
@@ -86,6 +92,7 @@ export function registerSetupCommands(program: Command): void {
         console.log(`  ${result.client}`);
         if (result.error) {
           console.log(`    ! Error: ${result.error}`);
+          failed++;
         } else {
           if (result.mcpConfigured) {
             console.log(`    + MCP server ${opts.dryRun ? "would be added to" : "added to"} ${target.mcpConfigPath}`);
@@ -105,12 +112,13 @@ export function registerSetupCommands(program: Command): void {
           if (target.config.instructionStrategy === "none") {
             console.log("    i No instruction mechanism — AI will discover tools automatically");
           }
-          if (!target.config.verified) {
-            console.log("    i Config format unverified — please check manually");
-          }
+          console.log("    i Configuration written from the documented contract; host connectivity is not tested by setup.");
+          if (target.config.supportNote) console.log(`    i ${target.config.supportNote}`);
           configured++;
         }
       }
+
+      if (failed) process.exitCode = 1;
 
       // Install the harness-agnostic skill shared by hosts with skill discovery
       try {

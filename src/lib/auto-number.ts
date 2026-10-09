@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { mkdir, writeFile } from "fs/promises";
-import { dirname, relative, resolve } from "path";
-import { VaultFS } from "./vault-fs.js";
+import { basename, dirname, relative, resolve } from "path";
+import { VaultFS, assertSafeVaultContent } from "./vault-fs.js";
 
 /**
  * Find the next auto-increment number for files in a directory.
@@ -12,14 +12,14 @@ export async function getNextNumber(vaultFs: VaultFS, dirPath: string): Promise<
   try {
     const files = await vaultFs.list(dirPath, 1);
     for (const file of files) {
-      const match = file.match(/(\d+)-/);
+      const match = basename(file).match(/^(?:(?:ticket|task)-)?(\d+)-/);
       if (match) {
         const num = parseInt(match[1], 10);
         if (num >= nextNumber) nextNumber = num + 1;
       }
     }
-  } catch {
-    // Directory doesn't exist yet, start at 1
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && err.code === "FILE_NOT_FOUND")) throw err;
   }
   return nextNumber;
 }
@@ -56,24 +56,52 @@ export async function claimNumberedFile(
   buildContent: (number: number, padded: string) => string,
   options: ClaimNumberedOptions = {},
 ): Promise<ClaimedFile> {
+  const claims = await claimNumberedBatch(vaultFs, dirPath, 1,
+    (_index, number, padded) => buildFileName(number, padded),
+    (_index, entries) => buildContent(entries[0].number, String(entries[0].number).padStart(3, "0")),
+    options,
+  );
+  return claims[0];
+}
+
+export async function claimNumberedBatch(
+  vaultFs: VaultFS,
+  dirPath: string,
+  count: number,
+  buildFileName: (index: number, number: number, padded: string) => string,
+  buildContent: (index: number, claims: readonly ClaimedFile[]) => string,
+  options: ClaimNumberedOptions = {},
+): Promise<ClaimedFile[]> {
+  if (!Number.isSafeInteger(count) || count < 1) throw new Error("Batch count must be a positive integer");
   const maxAttempts = options.maxAttempts ?? 100;
-  let number = options.startAt ?? (await getNextNumber(vaultFs, dirPath));
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++, number++) {
-    const padded = String(number).padStart(3, "0");
-    const filePath = `${dirPath}/${buildFileName(number, padded)}`;
-    try {
-      await writeExclusive(vaultFs, filePath, buildContent(number, padded));
-      return { number, path: filePath };
-    } catch (e: any) {
-      if (e?.code !== "EEXIST") throw e;
+  let number = Math.max(options.startAt ?? 1, await getNextNumber(vaultFs, dirPath));
+  const claims: ClaimedFile[] = [];
+  for (let index = 0; index < count; index++) {
+    let reserved = false;
+    for (let attempt = 0; attempt < maxAttempts; attempt++, number++) {
+      const padded = String(number).padStart(3, "0");
+      const path = `${dirPath}/${buildFileName(index, number, padded)}`;
+      if (await vaultFs.exists(path)) continue;
+      try {
+        await writeExclusive(vaultFs, `${dirPath}/.number-claims/${padded}`, path);
+        claims.push({ number, path });
+        number++;
+        reserved = true;
+        break;
+      } catch (e: any) {
+        if (e?.code !== "EEXIST") throw e;
+      }
     }
+    if (!reserved) throw new Error(`Failed to claim a numbered file in ${dirPath} after ${maxAttempts} attempts`);
   }
-
-  throw new Error(`Failed to claim a numbered file in ${dirPath} after ${maxAttempts} attempts`);
+  const contents = claims.map((_claim, index) => buildContent(index, claims));
+  for (const content of contents) assertSafeVaultContent(content);
+  for (let index = 0; index < claims.length; index++) await writeExclusive(vaultFs, claims[index].path, contents[index]);
+  return claims;
 }
 
 async function writeExclusive(vaultFs: VaultFS, relativePath: string, content: string): Promise<void> {
+  assertSafeVaultContent(content);
   const abs = resolve(vaultFs.root, vaultFs.jailPath(relativePath));
   const rel = relative(vaultFs.root, abs);
   if (rel.startsWith("..") || rel.startsWith("/") || rel === "") {

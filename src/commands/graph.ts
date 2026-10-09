@@ -32,7 +32,7 @@ export async function graphTraverseCommand(
   ctx: CommandContext,
 ): Promise<GraphTraverseResult> {
   const traverser = await openTraverser({
-    root: process.cwd(),
+    root: ctx.workspacePath ?? process.cwd(),
     vaultPath: ctx.vaultPath,
     projectSlug: ctx.projectSlug ?? undefined,
     vaultFs: ctx.vaultFs,

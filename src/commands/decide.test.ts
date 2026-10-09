@@ -33,6 +33,11 @@ describe("decideCommand", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it("rejects secret decision content before creating an ADR", async () => {
+    await expect(decideCommand({ title: "Safe title", context: "Context", decision: `ghp_${"A".repeat(36)}`, project: "test-project" }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+    expect(await vaultFs.exists("projects/test-project/decisions/001-safe-title.md")).toBe(false);
+  });
+
   describe("create ADR", () => {
     it("creates ADR with auto-numbering", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));

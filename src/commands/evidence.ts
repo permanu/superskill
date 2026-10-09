@@ -65,13 +65,16 @@ export async function evidenceCommand(
 
       const { path } = await appendEvidence(ctx.vaultFs, projectSlug, record);
 
-      const { data, content: body } = parseFrontmatter(await ctx.vaultFs.read(ticketPath));
-      const slot = Array.isArray(data.evidence) ? [...data.evidence] : [];
-      slot.push({ ts, command: record.command, exit: record.exit, commit });
-      data.evidence = slot;
-      await ctx.vaultFs.write(ticketPath, serializeFrontmatter(mergeFrontmatter(data, {}), body));
+      let count = 0;
+      await ctx.vaultFs.update(ticketPath, (current) => {
+        const { data, content: body } = parseFrontmatter(current);
+        const slot = Array.isArray(data.evidence) ? [...data.evidence] : [];
+        slot.push({ ts, command: record.command, exit: record.exit, commit });
+        count = slot.length;
+        return serializeFrontmatter(mergeFrontmatter(data, { evidence: slot }), body);
+      });
 
-      return { ticket: ticket.id, path, record, count: slot.length };
+      return { ticket: ticket.id, path, record, count };
     }
 
     case "list": {

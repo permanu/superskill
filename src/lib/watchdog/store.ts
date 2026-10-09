@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { claimNumberedFile } from "../auto-number.js";
 import { createFrontmatter, parseFrontmatter, serializeFrontmatter, type Frontmatter } from "../frontmatter.js";
-import type { VaultFS } from "../vault-fs.js";
+import { VaultError, type VaultFS } from "../vault-fs.js";
 import type { Finding, FindingStatus, FindingSummary, StoredFinding, WatchdogReport } from "./types.js";
 import { renderReport } from "./report.js";
 
@@ -115,19 +115,22 @@ export async function setFindingStatus(
   findingId: string,
   status: FindingStatus,
 ): Promise<boolean> {
-  const report = await loadReportFile(vaultFs, path);
-  if (!report) return false;
   let changed = false;
-  const findings = report.findings.map((finding) => {
-    if (finding.id !== findingId) return finding;
-    changed = true;
-    return { ...finding, status };
-  });
-  if (!changed) return false;
-  const { content } = parseFrontmatter(await vaultFs.read(path));
-  const frontmatter: Frontmatter = { ...report.frontmatter, findings };
-  await vaultFs.write(path, serializeFrontmatter(frontmatter, content));
-  return true;
+  try {
+    await vaultFs.update(path, (current) => {
+      const { data, content } = parseFrontmatter(current);
+      const findings = asStoredFindings(data.findings).map((finding) => {
+        if (finding.id !== findingId) return finding;
+        changed = true;
+        return { ...finding, status };
+      });
+      return changed ? serializeFrontmatter({ ...data, findings }, content) : current;
+    });
+  } catch (error) {
+    if (error instanceof VaultError && error.code === "FILE_NOT_FOUND") return false;
+    throw error;
+  }
+  return changed;
 }
 
 export async function recurrenceCounts(

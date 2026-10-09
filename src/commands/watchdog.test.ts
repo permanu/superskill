@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -10,6 +10,26 @@ import { createFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
 import { noopLog } from "../app-context.js";
 import { capFindings, mergeFindings, watchdogCommand } from "./watchdog.js";
 import type { Finding } from "../lib/watchdog/types.js";
+
+vi.mock("./hygiene.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./hygiene.js")>();
+  return {
+    ...original,
+    hygieneCommand: (args: import("./hygiene.js").HygieneArgs, ctx: CommandContext) => original.hygieneCommand({
+      ...args,
+      repoPaths: [],
+      probes: [{
+        id: "scratch",
+        run: async () => ({
+          category: "scratch",
+          label: "Fixture scratch",
+          skipped: null,
+          items: [{ id: "fixture-scratch", category: "scratch", title: "Fixture scratch cleanup", path: null, bytes: 1, ageDays: 30, tier: "review", due: true, reason: "Fixture age limit", plan: null, meta: {} }],
+        }),
+      }],
+    }, ctx),
+  };
+});
 
 describe("capFindings", () => {
   it("caps medium/low findings per category and folds the rest into a rollup", () => {
@@ -450,8 +470,8 @@ describe("watchdog command branch coverage", () => {
       expect(env.action).toBe("dig");
       if (env.action !== "dig") return;
       expect(env.report.scope.kind).toBe("env");
+      expect(env.report.findings.some(finding => finding.title === "[hygiene] Fixture scratch cleanup")).toBe(true);
     },
-    30000,
   );
 
   it("digs window and all scopes", async () => {
@@ -465,5 +485,6 @@ describe("watchdog command branch coverage", () => {
     expect(all.action).toBe("dig");
     if (all.action !== "dig") return;
     expect(all.report.scope.kind).toBe("all");
-  }, 30000);
+    expect(all.report.findings.some(finding => finding.title === "[hygiene] Fixture scratch cleanup")).toBe(true);
+  });
 });

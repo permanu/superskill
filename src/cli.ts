@@ -53,7 +53,7 @@ import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
-import { activateSkills } from "./commands/skill/activate.js";
+import { activateSkills, compactActivationResult, type ActivateArgs } from "./commands/skill/activate.js";
 import { statusCommand } from "./commands/skill/status.js";
 import { installSkills, listInstalledSkills, removeSkill, parseSource } from "./lib/skill-installer.js";
 import { getTimeAgo } from "./lib/time-utils.js";
@@ -1378,9 +1378,21 @@ export function createProgram(): Command {
     .command("activate [task]")
     .description("Activate the best skill for a task")
     .option("--skill-id <id>", "Load a specific skill by ID")
-    .action(async (task: string | undefined, opts: { skillId?: string }) => {
+    .option("--phase <phase>", "Current phase: explore, implement, review, ship")
+    .option("--files <paths...>", "Repo-relative files for skill and rule routing")
+    .option("--max-tokens <n>", "Estimated content token budget (256–50000)", Number)
+    .option("--session-id <id>", "Registered coordination session ID")
+    .option("--json", "Print structured activation result")
+    .option("--detail <level>", "JSON detail: compact or full", "compact")
+    .action(async (task: string | undefined, opts: { skillId?: string; phase?: ActivateArgs["phase"]; files?: string[]; maxTokens?: number; sessionId?: string; json?: boolean; detail?: string }) => {
       try {
-        const result = await activateSkills({ task, skill_id: opts.skillId }, await createScopedCtx());
+        if (opts.detail !== "compact" && opts.detail !== "full") throw new Error("detail must be compact or full");
+        const result = await activateSkills({ task, skill_id: opts.skillId, phase: opts.phase, files: opts.files, max_tokens: opts.maxTokens, session_id: opts.sessionId }, await createScopedCtx());
+        if (opts.json) {
+          console.log(JSON.stringify(opts.detail === "full" ? result : compactActivationResult(result), null, opts.detail === "full" ? 2 : undefined));
+          if (!result.success) process.exitCode = 1;
+          return;
+        }
         const writeWarnings = () => {
           for (const warning of result.warnings) {
             process.stderr.write(`${warning}\n`);

@@ -46,7 +46,7 @@ describe("CLIENT_REGISTRY entries", () => {
   it("includes continue client", () => {
     const cont = CLIENT_REGISTRY.find((c) => c.slug === "continue");
     expect(cont).toBeDefined();
-    expect(cont!.name).toBe("Continue");
+    expect(cont!.name).toBe("Continue IDE");
   });
 });
 

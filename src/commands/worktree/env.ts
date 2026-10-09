@@ -22,7 +22,7 @@ export async function worktreeEnvCommand(
   args: WorktreeEnvArgs,
   ctx: CommandContext
 ): Promise<WorktreeEnvResult> {
-  const worktreeRoot = process.cwd();
+  const worktreeRoot = (ctx.workspacePath ?? process.cwd());
   const resolved = await resolveWorktreeEnv(
     worktreeRoot,
     args.providers ? { providers: args.providers } : undefined

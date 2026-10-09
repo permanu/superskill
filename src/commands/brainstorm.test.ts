@@ -33,6 +33,13 @@ describe("brainstormCommand", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it("preserves concurrent entries for the same new topic", async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => brainstormCommand({ topic: "Shared ideas", content: `Idea ${i}`, project: "test-project" }, ctx)));
+    const content = await vaultFs.read(results[0].path);
+    for (let i = 0; i < 8; i++) expect(content).toContain(`Idea ${i}`);
+    expect(Math.max(...results.map((result) => result.total_entries))).toBe(8);
+  });
+
   describe("create new brainstorm", () => {
     it("creates new brainstorm file with frontmatter", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));

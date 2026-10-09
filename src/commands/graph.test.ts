@@ -317,7 +317,6 @@ describe("graphTraverseCommand", () => {
   let repoRoot: string;
   let vaultRoot: string;
   let ctx: CommandContext;
-  let cwdSpy: ReturnType<typeof vi.spyOn>;
 
   beforeAll(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), "graph-traverse-repo-"));
@@ -337,12 +336,11 @@ describe("graphTraverseCommand", () => {
     await mkdir(vaultRoot, { recursive: true });
     const vaultFs = new VaultFS(vaultRoot, { projectSlug: "testproj" });
     await vaultFs.write("notes/alpha.md", "---\ntype: note\n---\n# Alpha\n\nVAULT SENTINEL.\n");
-    ctx = createCommandContext(vaultFs, { projectSlug: "testproj" });
-    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(repoRoot);
+    ctx = createCommandContext(vaultFs, { projectSlug: "testproj", workspacePath: repoRoot });
+    await graphTraverseCommand({ action: "node", id: "graph" }, ctx);
   });
 
   afterAll(async () => {
-    cwdSpy.mockRestore();
     await rm(vaultRoot, { recursive: true, force: true });
     await rm(repoRoot, { recursive: true, force: true });
   });

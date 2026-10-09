@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, writeFile, readFile, rm, symlink } from "fs/promises";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { pathToFileURL } from "url";
+import { transpileModule, ModuleKind, ScriptTarget } from "typescript";
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { VaultFS, VaultError } from "./vault-fs.js";
@@ -18,7 +22,129 @@ describe("VaultFS", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  describe("atomic updates", () => {
+    it("serializes updates across independent operating system processes", async () => {
+      const modules = join(vaultRoot, "worker-modules");
+      await mkdir(modules);
+      await writeFile(join(modules, "package.json"), '{"type":"module"}');
+      for (const name of ["vault-fs", "secret-scanner"]) {
+        const source = await readFile(new URL(`./${name}.ts`, import.meta.url), "utf-8");
+        await writeFile(join(modules, `${name}.js`), transpileModule(source, { compilerOptions: { module: ModuleKind.ES2022, target: ScriptTarget.ES2022 } }).outputText);
+      }
+      await vaultFs.write("counter.md", "0");
+      const script = `import { VaultFS } from ${JSON.stringify(pathToFileURL(join(modules, "vault-fs.js")).href)};
+        const fs = new VaultFS(process.argv[1]);
+        for (let i = 0; i < 8; i++) await fs.update("counter.md", async (current) => {
+          await new Promise((resolve) => setTimeout(resolve, 3));
+          return String(Number(current) + 1);
+        });`;
+      await Promise.all(Array.from({ length: 4 }, () => promisify(execFile)(process.execPath, ["--input-type=module", "-e", script, vaultRoot])));
+      expect(await vaultFs.read("counter.md")).toBe("32");
+    }, 15000);
+
+    it("rejects unsafe paths, lock symlinks, invalid timeouts, and missing update targets", async () => {
+      await expect(vaultFs.update("../escape.md", () => "bad")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(vaultFs.update("missing.md", () => "bad")).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
+      await expect(vaultFs.update("note.md", () => "bad", { timeoutMs: NaN })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      await vaultFs.write("note.md", "original");
+      await symlink(join(vaultRoot, "note.md"), join(vaultRoot, ".note.md.lock"));
+      await expect(vaultFs.update("note.md", () => "bad")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+    });
+
+    it("preserves concurrent updates from independent VaultFS instances", async () => {
+      await vaultFs.write("counter.md", "0");
+      await Promise.all(Array.from({ length: 12 }, () => new VaultFS(vaultRoot).update("counter.md", async (current) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return String(Number(current) + 1);
+      })));
+      expect(await vaultFs.read("counter.md")).toBe("12");
+    });
+
+    it("keeps the original and releases its lock after transform or secret rejection", async () => {
+      await vaultFs.write("note.md", "original");
+      await expect(vaultFs.update("note.md", () => { throw new Error("aborted"); })).rejects.toThrow("aborted");
+      await expect(vaultFs.update("note.md", () => `ghp_${"A".repeat(36)}`)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+      await vaultFs.update("note.md", (current) => current + " updated");
+      expect(await vaultFs.read("note.md")).toBe("original updated");
+    });
+
+    it.each(["delete", "move"] as const)("coordinates %s with a pending update", async (operation) => {
+      await vaultFs.write("note.md", "original");
+      let unlock!: () => void;
+      let entered!: () => void;
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { unlock = resolve; });
+      const update = vaultFs.update("note.md", async (current) => { entered(); await held; return current + " updated"; });
+      await ready;
+      let finished = false;
+      const mutation = (operation === "delete" ? vaultFs.delete("note.md") : vaultFs.move("note.md", "moved.md")).then(() => { finished = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const prematurelyFinished = finished;
+      unlock();
+      await Promise.all([update, mutation]);
+      expect(prematurelyFinished).toBe(false);
+      expect(await vaultFs.exists("note.md")).toBe(false);
+      if (operation === "move") expect(await vaultFs.read("moved.md")).toBe("original updated");
+    });
+
+    it("fails closed when ownership is replaced during a transform", async () => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      await expect(vaultFs.update("note.md", async () => {
+        await rm(lockPath);
+        await writeFile(lockPath, "replacement-owner");
+        return "lost ownership";
+      })).rejects.toMatchObject({ code: "LOCK_LOST" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+      expect(await readFile(lockPath, "utf-8")).toBe("replacement-owner");
+    });
+
+    it("bounds contention without stealing the owner lock", async () => {
+      await vaultFs.write("note.md", "original");
+      let unlock!: () => void;
+      let entered!: () => void;
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { unlock = resolve; });
+      const first = vaultFs.update("note.md", async (current) => { entered(); await held; return current + " first"; });
+      await ready;
+      await expect(new VaultFS(vaultRoot).update("note.md", () => "lost", { timeoutMs: 30 })).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+      unlock();
+      await first;
+      expect(await vaultFs.read("note.md")).toBe("original first");
+    });
+
+    it("coordinates append with updates and confined symlink aliases", async () => {
+      await vaultFs.write("note.md", "original");
+      await symlink(join(vaultRoot, "note.md"), join(vaultRoot, "alias.md"));
+      await Promise.all([
+        vaultFs.update("note.md", async (current) => { await new Promise((resolve) => setTimeout(resolve, 20)); return current + " updated"; }),
+        new VaultFS(vaultRoot).append("alias.md", " appended"),
+      ]);
+      const content = await vaultFs.read("note.md");
+      expect(content).toContain("updated");
+      expect(content).toContain("appended");
+      expect(await vaultFs.read("alias.md")).toBe(content);
+    });
+  });
+
   describe("read", () => {
+    it("rejects secret writes and appends without exposing their values", async () => {
+      const secret = `ghp_${"A".repeat(36)}`;
+      await expect(vaultFs.write("new.md", secret)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect(await vaultFs.exists("new.md")).toBe(false);
+      await vaultFs.write("existing.md", "safe");
+      try {
+        await vaultFs.append("existing.md", secret);
+        expect.fail("secret append succeeded");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "SECRET_REJECTED" });
+        expect((error as Error).message).not.toContain(secret);
+      }
+      expect(await vaultFs.read("existing.md")).toBe("safe");
+    });
     it("reads existing file", async () => {
       await writeFile(join(vaultRoot, "test.md"), "content");
       const result = await vaultFs.read("test.md");
@@ -340,6 +466,25 @@ describe("VaultFS", () => {
       await expect(scoped.write("projects/beta/x.md", "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
       await expect(scoped.list("projects")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
       await expect(scoped.read("project-map.json")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
+
+    it("rejects sibling-project symlinks for reads, writes and listings", async () => {
+      await mkdir(join(vaultRoot, "projects/alpha"), { recursive: true });
+      await mkdir(join(vaultRoot, "projects/beta"), { recursive: true });
+      await writeFile(join(vaultRoot, "projects/beta/secret.md"), "private");
+      await symlink("../beta", join(vaultRoot, "projects/alpha/link"));
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await expect(scoped.read("link/secret.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(scoped.write("link/new.md", "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(scoped.list("link")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
+
+    it("preserves symlinks within the same project", async () => {
+      await mkdir(join(vaultRoot, "projects/alpha/notes"), { recursive: true });
+      await symlink("notes", join(vaultRoot, "projects/alpha/link"));
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await scoped.write("link/new.md", "ok");
+      expect(await scoped.read("link/new.md")).toBe("ok");
     });
 
     it("does not treat projects/alpha as prefix of projects/alphabet", async () => {

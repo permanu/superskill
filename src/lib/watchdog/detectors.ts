@@ -64,7 +64,7 @@ export function detectToolErrorLoop(trace: SessionTrace): Finding[] {
   const groups = new Map<string, TraceToolCall[]>();
   for (const call of trace.toolCalls) {
     if (call.status !== "error") continue;
-    const key = `${call.name}|${call.inputSummary ?? ""}`;
+    const key = `${call.name}|${call.inputSignature ?? call.inputSummary ?? ""}`;
     if (key.endsWith("|")) continue;
     const list = groups.get(key) ?? [];
     list.push(call);
@@ -73,7 +73,8 @@ export function detectToolErrorLoop(trace: SessionTrace): Finding[] {
   const findings: Finding[] = [];
   for (const [key, calls] of groups) {
     if (calls.length < T.errorLoopMin) continue;
-    const [name, summary] = key.split("|");
+    const name = calls[0].name;
+    const summary = calls[0].inputSummary ?? "";
     findings.push(makeFinding({
       category: "tool-economy",
       severity: "high",
@@ -100,7 +101,7 @@ export function detectRepeatedCalls(trace: SessionTrace): Finding[] {
     if (/^(edit|write|patch|multiedit|notebookedit|apply|create)/i.test(call.name)) continue;
     // Empty terminal polls ("wait for output") are a normal interactive pattern, not waste.
     if (POLL_RE.test(call.inputSummary)) continue;
-    const key = `${call.name}|${call.inputSummary}`;
+    const key = `${call.name}|${call.inputSignature ?? call.inputSummary}`;
     const list = groups.get(key) ?? [];
     list.push(call);
     groups.set(key, list);
@@ -108,7 +109,8 @@ export function detectRepeatedCalls(trace: SessionTrace): Finding[] {
   const findings: Finding[] = [];
   for (const [key, calls] of groups) {
     if (calls.length < T.repeatCallMin) continue;
-    const [name, summary] = key.split("|");
+    const name = calls[0].name;
+    const summary = calls[0].inputSummary ?? "";
     findings.push(makeFinding({
       category: "tool-economy",
       severity: "medium",

@@ -5,6 +5,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { activateSkills, installedSkillNameForId } from "./activate.js";
 import { _resetInstallDir, _setInstallDir } from "../../lib/skill-installer.js";
+import { packagedCatalogVersion } from "../../lib/catalog.js";
 import type { CommandContext } from "../../core/types.js";
 import type { Graph } from "../../lib/graph/schema.js";
 
@@ -20,6 +21,7 @@ function createMockCtx(projectDir: string): CommandContext {
 
 function createTestGraph(skills: Array<{ id: string; w: number }>): Graph {
   return {
+    catalogVersion: packagedCatalogVersion,
     nodes: [
       {
         type: "project",
@@ -84,7 +86,7 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     return dir;
   }
 
-  it("returns error when graph is empty", async () => {
+  it("initializes a fresh graph locally before the first activation", async () => {
     const emptyGraph: Graph = { nodes: [], edges: [] };
     await writeFile(
       join(projectDir, ".superskill", "graph.json"),
@@ -94,8 +96,50 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     const ctx = createMockCtx(projectDir);
     const result = await activateSkills({ task: "add auth" }, ctx);
 
+    expect(result.success).toBe(true);
+    expect(result.initialization?.success).toBe(true);
+    expect(result.skills_loaded.length).toBeGreaterThan(0);
+    const second = await activateSkills({ task: "add auth" }, ctx);
+    expect(second.initialization).toBeUndefined();
+  });
+
+  it("bootstraps the mapped workspace without network calls or rewriting instructions", async () => {
+    const workspacePath = join(projectDir, "mapped");
+    await mkdir(workspacePath);
+    await writeFile(join(workspacePath, "AGENTS.md"), "Keep local instructions unchanged\n");
+    await writeFile(join(workspacePath, "package.json"), '{"name":"mapped"}');
+    const fetch = vi.fn(() => { throw new Error("startup must remain local"); });
+    vi.stubGlobal("fetch", fetch);
+    const ctx = { ...createMockCtx(projectDir), workspacePath, projectSlug: "mapped" };
+    try {
+      const result = await activateSkills({ task: "implement a function", files: ["main.ts"] }, ctx);
+      expect(result.success).toBe(true);
+      expect(result.initialization?.graph_path).toBe(join(workspacePath, ".superskill", "graph.json"));
+      expect(await readFile(join(workspacePath, "AGENTS.md"), "utf8")).toBe("Keep local instructions unchanged\n");
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("reports startup filesystem failures explicitly", async () => {
+    const workspacePath = join(projectDir, "blocked");
+    await mkdir(workspacePath);
+    await writeFile(join(workspacePath, ".superskill"), "not a directory");
+    const result = await activateSkills({ task: "implement a function" }, { ...createMockCtx(projectDir), workspacePath, projectSlug: "blocked" });
     expect(result.success).toBe(false);
-    expect(result.error).toContain("not initialized");
+    expect(result.error).toContain("initialization failed");
+    expect(result.initialization?.success).toBe(false);
+  });
+
+  it.each([undefined, "old-release"])("refreshes catalog version %s only on its first activation", async (catalogVersion) => {
+    const graph = { ...createTestGraph([]), catalogVersion };
+    await writeFile(join(projectDir, ".superskill", "graph.json"), JSON.stringify(graph));
+    const ctx = createMockCtx(projectDir);
+    const first = await activateSkills({ task: "implement a function" }, ctx);
+    expect(first.success).toBe(true);
+    expect(first.initialization?.success).toBe(true);
+    const second = await activateSkills({ task: "implement a function" }, ctx);
+    expect(second.success).toBe(true);
+    expect(second.initialization).toBeUndefined();
   });
 
   it("returns no matches when graph has no matching skills", async () => {
@@ -141,6 +185,10 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
       JSON.stringify(graph),
     );
 
+    const cacheDir = join(projectDir, ".superskill", "skill-cache", "vercel-labs", "agent-skills", "react-best-practices");
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, "SKILL.md"), "# React patterns\n\nKeep components focused.");
+
     const ctx = createMockCtx(projectDir);
     const result = await activateSkills({ skill_id: "vercel-labs/agent-skills@react-best-practices" }, ctx);
 
@@ -168,6 +216,7 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
 
   it("blocks skills with failed audits", async () => {
     const graph: Graph = {
+      catalogVersion: packagedCatalogVersion,
       nodes: [
         {
           type: "project",

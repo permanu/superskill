@@ -36,7 +36,7 @@ export async function worktreeAuditCommand(
   args: WorktreeAuditArgs,
   ctx: CommandContext,
 ): Promise<RepoAudit> {
-  const audit = await auditRepo(process.cwd(), { includeSizes: args.sizes, worktree: args.worktree });
+  const audit = await auditRepo((ctx.workspacePath ?? process.cwd()), { includeSizes: args.sizes, worktree: args.worktree });
   ctx.log.debug(
     `[worktree-audit] audited ${audit.worktrees.length} worktree(s) for repo ${audit.repoId}`,
   );

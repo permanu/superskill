@@ -423,3 +423,12 @@ describe("skills detector", () => {
     expect(byCategory(findings, "skills")).toHaveLength(1);
   });
 });
+
+it("does not group distinct full inputs that share a truncated summary", () => {
+  const distinct = trace({toolCalls: Array.from({length: 10}, (_, index) => call(index, "exec", {status:"error", inputSummary:"the same truncated prefix", inputSignature:`signature-${index}`}))});
+  expect(detectRepeatedCalls(distinct)).toEqual([]);
+  expect(detectToolErrorLoop(distinct)).toEqual([]);
+  const repeated = trace({toolCalls: distinct.toolCalls.map(item => ({...item, inputSignature:"same"}))});
+  expect(detectRepeatedCalls(repeated)).toHaveLength(1);
+  expect(detectToolErrorLoop(repeated)[0].detail).toContain("the same truncated prefix");
+});

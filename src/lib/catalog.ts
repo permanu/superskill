@@ -4,7 +4,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
+import { createRequire } from "node:module";
 import type { SkillPack } from "./graph/schema.js";
+
+export const packagedCatalogVersion: string = createRequire(import.meta.url)("../../package.json").version;
 
 const PACKS: ReadonlySet<string> = new Set([
   "memory", "code", "review", "security", "ops", "devops", "optimizer", "pipeline", "watchdog", "ui",

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "space grotesk",
+        "files": [
+          "src/lib/knowledge-viz.ts"
+        ],
+        "createdAt": "2026-10-07T07:27:31.540Z",
+        "reason": "Agent design decision: retain the existing Space Grotesk typography verified in HEAD; prioritize visualization hierarchy and diagram readability. User delegated the typography decision."
+      }
+    ]
+  }
+}

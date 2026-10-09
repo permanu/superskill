@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type {
@@ -16,6 +16,7 @@ import {
   createEmptyGraph,
   loadGraph,
   writeGraph,
+  mutateGraph,
   ensureSuperskillDir,
   findNode,
   findNodes,
@@ -523,5 +524,81 @@ describe("decayWeights", () => {
     const graph: Graph = { nodes: [], edges: [edge] };
     decayWeights(graph, new Set<string>(), 0.05, 0.1);
     expect((graph.edges[0] as ProjectSkillEdge).w).toBe(0.8);
+  });
+});
+
+
+describe("mutateGraph", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `graph-mutation-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("preserves concurrent mutations with a fresh read inside the lock", async () => {
+    await writeGraph(testDir, { nodes: [makeProjectNode()], edges: [] });
+    await Promise.all(Array.from({ length: 12 }, (_, index) =>
+      mutateGraph(testDir, async (graph) => {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return addNode(graph, makeSessionNode(`session-${index}`, index));
+      }),
+    ));
+    expect((await loadGraph(testDir)).nodes).toHaveLength(13);
+    expect(await readdir(join(testDir, ".superskill"))).toEqual(["graph.json"]);
+  });
+
+  it("serializes explicit replacements with active mutations", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const mutation = mutateGraph(testDir, async (graph) => {
+      entered();
+      await gate;
+      return addNode(graph, makeSessionNode("mutation", 1));
+    });
+    await started;
+    let replaced = false;
+    const replacement = writeGraph(testDir, { nodes: [makeProjectNode()], edges: [] }).then(() => { replaced = true; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(replaced).toBe(false);
+    release();
+    await Promise.all([mutation, replacement]);
+    expect((await loadGraph(testDir)).nodes).toEqual([makeProjectNode()]);
+  });
+
+  it("releases the lock and preserves the graph when a mutation fails", async () => {
+    await writeGraph(testDir, { nodes: [makeProjectNode()], edges: [] });
+    await expect(mutateGraph(testDir, () => { throw new Error("cancelled"); })).rejects.toThrow("cancelled");
+    const graph = await mutateGraph(testDir, (latest) => addNode(latest, makeSessionNode("next", 1)));
+    expect(graph.nodes).toHaveLength(2);
+  });
+
+  it("times out instead of stealing an existing writer's lock", async () => {
+    await mkdir(join(testDir, ".superskill"));
+    const lockPath = join(testDir, ".superskill", "graph.lock");
+    await writeFile(lockPath, "another writer");
+    await expect(mutateGraph(testDir, (graph) => graph, { timeoutMs: 20 })).rejects.toThrow("Timed out acquiring graph lock");
+    expect(await readFile(lockPath, "utf-8")).toBe("another writer");
+  });
+
+  it("refuses to overwrite a corrupt graph", async () => {
+    await mkdir(join(testDir, ".superskill"));
+    const graphPath = join(testDir, ".superskill", "graph.json");
+    await writeFile(graphPath, "{corrupt");
+    await expect(mutateGraph(testDir, (graph) => graph)).rejects.toThrow();
+    expect(await readFile(graphPath, "utf-8")).toBe("{corrupt");
+    expect(await readdir(join(testDir, ".superskill"))).toEqual(["graph.json"]);
+  });
+
+  it("cleans up the same-directory temporary file when replacement fails", async () => {
+    await mkdir(join(testDir, ".superskill", "graph.json"), { recursive: true });
+    await expect(writeGraph(testDir, createEmptyGraph())).rejects.toThrow();
+    expect(await readdir(join(testDir, ".superskill"))).toEqual(["graph.json"]);
   });
 });

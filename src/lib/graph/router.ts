@@ -2,6 +2,7 @@
 
 import type { Graph, SkillNode, ProjectSkillEdge, ProjectPhase, SkillPack, ProjectNode } from "./schema.js";
 import { findNodes, findNode } from "./store.js";
+import { inferPhase } from "../../rules/router.js";
 
 const LANG_ALIAS: Record<string, string> = {
   ts: "typescript",
@@ -10,6 +11,28 @@ const LANG_ALIAS: Record<string, string> = {
   golang: "go",
   rs: "rust",
 };
+
+export interface RoutingContext {
+  files?: readonly string[];
+  phase?: ProjectPhase;
+}
+
+const FILE_LANGUAGES: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
+  js: "typescript", jsx: "typescript", mjs: "typescript", cjs: "typescript",
+  py: "python", go: "go", rs: "rust", swift: "swift", java: "java",
+  c: "c", h: "c", cpp: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp",
+};
+
+export function routingStack(stack: readonly string[], files: readonly string[] = []): string[] {
+  const languages = [...new Set(files.flatMap(file => {
+    const name = file.replace(/\\/g, "/").split("/").pop() ?? "";
+    const dot = name.lastIndexOf(".");
+    const language = dot > 0 ? FILE_LANGUAGES[name.slice(dot + 1).toLowerCase()] : undefined;
+    return language ? [language] : [];
+  }))];
+  return languages.length > 0 ? languages : [...stack];
+}
 
 const UI_TASK_RE =
   /\b(?:ui|ux|(?:re)?design(?:s|ed|er|ers)?|css|tailwind|styl(?:e[sd]?|ing)|layouts?|spacing|typography|fonts?|colou?rs?|palettes?|themes?|dark|components?|buttons?|forms?|inputs?|modals?|nav|navbar|navigation|sidebars?|headers?|footers?|hero|landing|pages?|dashboards?|responsive|mobile|viewport|animat\w*|motion|hover(?:ing|ed)?|gradients?|shadows?|icons?|accessib\w*|contrast|figma|screenshots?|polish(?:ed|ing)?|beautiful|prett(?:y|ier)|ugly|empty\s+states?|frontend|front-end|make\s+it\s+(?:look|feel)|look(?:s|ing)?\s+(?:better|nicer|prettier|beautiful|cleaner|modern|professional|bad|off|weird))\b/;
@@ -149,10 +172,10 @@ function packAllowed(skill: SkillNode, load: Set<SkillPack>, taskKeywords: strin
   return false;
 }
 
-export function alwaysOnSkillIds(graph: Graph, task: string): string[] {
+export function alwaysOnSkillIds(graph: Graph, task: string, context: RoutingContext = {}): string[] {
   const project = findNode<ProjectNode>(graph, "project", "project");
-  const stack = project?.stack ?? [];
-  const phase = getPhaseForTask(task);
+  const stack = routingStack(project?.stack ?? [], context.files);
+  const phase = context.phase ?? getPhaseForTask(task);
   const load = packsToLoad(task, phase);
   const alwaysPacks = new Set<SkillPack>(load);
   if (phase === "implement" || phase === "explore") alwaysPacks.add("security");
@@ -167,19 +190,19 @@ export function alwaysOnSkillIds(graph: Graph, task: string): string[] {
     .map((s) => s.id);
 }
 
-export function matchTask(task: string, graph: Graph): string[] {
+export function matchTask(task: string, graph: Graph, context: RoutingContext = {}): string[] {
   const keywords = extractKeywords(task);
-  if (keywords.length === 0) return [];
+  if (keywords.length === 0 && !context.files?.length && !context.phase) return [];
 
   const skills = findNodes<SkillNode>(graph, "skill");
   const project = findNode<ProjectNode>(graph, "project", "project");
-  const stack = project?.stack ?? [];
-  const load = packsToLoad(task, getPhaseForTask(task));
+  const stack = routingStack(project?.stack ?? [], context.files);
+  const load = packsToLoad(task, context.phase ?? getPhaseForTask(task));
   const index = buildTriggerIndex(skills);
   const skillById = new Map(skills.map((s) => [s.id, s]));
 
   const matchCount = new Map<string, number>();
-  for (const kw of keywords) {
+  for (const kw of new Set([...keywords, ...(context.files?.length ? routingStack([], context.files) : [])])) {
     const posting = index.get(simpleStem(kw));
     if (!posting) continue;
     for (const id of posting) {
@@ -209,14 +232,15 @@ export function matchTask(task: string, graph: Graph): string[] {
     return scored.slice(0, 3).map((s) => s.id);
   }
 
-  if (project && project.stack.length > 0) {
+  if (stack.length > 0) {
     const stackDefaults = skills
-      .filter((s) => langOk(s, project.stack, []))
+      .filter((s) => langOk(s, stack, []))
+      .filter((s) => packAllowed(s, load, keywords))
       .filter((s) => {
         if (s.pack === "code") return true;
         if (s.pack) return false;
         const skillKws = extractSkillKeywords(s.id);
-        return project.stack.some((stackItem) =>
+        return stack.some((stackItem) =>
           skillKws.some((sk) => wordMatches(normLang(stackItem), sk)),
         );
       })
@@ -235,18 +259,8 @@ export function isSecurityIncident(task: string): boolean {
 }
 
 export function getPhaseForTask(task: string): ProjectPhase {
-  const lower = task.toLowerCase();
-  const reviewKeywords = ["review", "refactor", "audit", "diff", "defect", "critique"];
-  const shipKeywords = ["deploy", "release", "ship", "publish", "bump", "tag", "version"];
-  const implementKeywords = ["add", "build", "create", "implement", "write", "develop", "feature", "integrate"];
-  const exploreKeywords = ["brainstorm", "explore", "research", "investigate", "discover", "plan", "design", "prototype", "spike"];
-
-  if (shipKeywords.some((k) => lower.includes(k))) return "ship";
-  if (isSecurityIncident(task)) return "review";
-  if (reviewKeywords.some((k) => lower.includes(k))) return "review";
-  if (implementKeywords.some((k) => lower.includes(k))) return "implement";
-  if (exploreKeywords.some((k) => lower.includes(k))) return "explore";
-  return "explore";
+  const phase = inferPhase(task);
+  return phase !== "ship" && isSecurityIncident(task) ? "review" : phase;
 }
 
 export function rankSkills(skillIds: string[], graph: Graph): string[] {

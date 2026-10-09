@@ -70,6 +70,13 @@ describe("evidence storage", () => {
     expect(records[1].commit).toBe("c2");
   });
 
+  it("rejects secret output without creating an evidence log", async () => {
+    const { vaultFs, cleanup: clean } = await createTestVault();
+    cleanup = clean;
+    await expect(appendEvidence(vaultFs, "p", record({ output: `ghp_${"A".repeat(36)}` }))).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+    expect(await readEvidence(vaultFs, "p", "ticket-001")).toEqual([]);
+  });
+
   it("returns empty for a missing evidence file", async () => {
     const { vaultFs, cleanup: clean } = await createTestVault();
     cleanup = clean;

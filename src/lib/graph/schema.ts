@@ -48,6 +48,7 @@ export interface SkillNode {
 export interface SessionNode {
   type: "session";
   id: string;
+  coordinationSessionId?: string;
   intent: string;
   skills: string[];
   files: string[];
@@ -92,6 +93,7 @@ export type Edge = ProjectSkillEdge | SkillSkillEdge | SessionSkillEdge | Sessio
 
 export interface Graph {
   version?: number;
+  catalogVersion?: string;
   nodes: Node[];
   edges: Edge[];
 }

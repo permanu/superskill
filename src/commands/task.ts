@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 
 export type TaskStatus = "backlog" | "in-progress" | "blocked" | "done" | "cancelled";
 export type TaskPriority = "p0" | "p1" | "p2";
@@ -54,12 +54,7 @@ export async function taskCommand(
     case "add": {
       if (!args.title) throw new Error("Title required for add");
 
-      const nextNum = await getNextNumber(vaultFs, tasksDir);
-      const padded = String(nextNum).padStart(3, "0");
       const titleSlug = slugify(args.title);
-      const taskId = `task-${padded}`;
-      const filename = `${taskId}-${titleSlug}.md`;
-      const filePath = `${tasksDir}/${filename}`;
 
       const priority = args.priority ?? "p1";
       if (!VALID_TASK_PRIORITIES.includes(priority)) {
@@ -78,9 +73,8 @@ export async function taskCommand(
       });
 
       const body = `\n# ${args.title}\n`;
-      await vaultFs.write(filePath, serializeFrontmatter(fm, body));
-
-      return { task_id: taskId, path: filePath };
+      const claim = await claimNumberedFile(vaultFs, tasksDir, (_number, padded) => `task-${padded}-${titleSlug}.md`, () => serializeFrontmatter(fm, body));
+      return { task_id: `task-${String(claim.number).padStart(3, "0")}`, path: claim.path };
     }
 
     case "list": {
@@ -107,42 +101,42 @@ export async function taskCommand(
       const task = tasks.find((t) => t.id === args.taskId);
       if (!task) throw new Error(`Task not found: ${args.taskId}`);
 
-      const content = await vaultFs.read(task.path);
-      const { data, content: body } = parseFrontmatter(content);
       const updatedFields: string[] = [];
+      await vaultFs.update(task.path, (content) => {
+        const { data, content: body } = parseFrontmatter(content);
 
-      if (args.status) {
-        if (!VALID_TASK_STATUSES.includes(args.status)) {
-          throw new Error(`Invalid status "${args.status}". Must be one of: ${VALID_TASK_STATUSES.join(", ")}`);
+        if (args.status) {
+          if (!VALID_TASK_STATUSES.includes(args.status)) {
+            throw new Error(`Invalid status "${args.status}". Must be one of: ${VALID_TASK_STATUSES.join(", ")}`);
+          }
+          data.status = args.status;
+          updatedFields.push("status");
         }
-        data.status = args.status;
-        updatedFields.push("status");
-      }
-      if (args.priority) {
-        if (!VALID_TASK_PRIORITIES.includes(args.priority)) {
-          throw new Error(`Invalid priority "${args.priority}". Must be one of: ${VALID_TASK_PRIORITIES.join(", ")}`);
+        if (args.priority) {
+          if (!VALID_TASK_PRIORITIES.includes(args.priority)) {
+            throw new Error(`Invalid priority "${args.priority}". Must be one of: ${VALID_TASK_PRIORITIES.join(", ")}`);
+          }
+          data.priority = args.priority;
+          updatedFields.push("priority");
         }
-        data.priority = args.priority;
-        updatedFields.push("priority");
-      }
-      if (args.blockedBy !== undefined) {
-        data.blocked_by = args.blockedBy;
-        updatedFields.push("blocked_by");
-      }
-      if (args.assignedTo !== undefined) {
-        data.assigned_to = args.assignedTo;
-        updatedFields.push("assigned_to");
-      }
-      if (args.title) {
-        const newBody = body.replace(/^# .+$/m, `# ${args.title}`);
+        if (args.blockedBy !== undefined) {
+          data.blocked_by = args.blockedBy;
+          updatedFields.push("blocked_by");
+        }
+        if (args.assignedTo !== undefined) {
+          data.assigned_to = args.assignedTo;
+          updatedFields.push("assigned_to");
+        }
+        if (args.title) {
+          const newBody = body.replace(/^# .+$/m, `# ${args.title}`);
+          const updated = mergeFrontmatter(data, {});
+          updatedFields.push("title");
+          return serializeFrontmatter(updated, newBody);
+        }
+
         const updated = mergeFrontmatter(data, {});
-        await vaultFs.write(task.path, serializeFrontmatter(updated, newBody));
-        updatedFields.push("title");
-        return { task_id: args.taskId, updated_fields: updatedFields };
-      }
-
-      const updated = mergeFrontmatter(data, {});
-      await vaultFs.write(task.path, serializeFrontmatter(updated, body));
+        return serializeFrontmatter(updated, body);
+      });
 
       return { task_id: args.taskId, updated_fields: updatedFields };
     }

@@ -1,8 +1,11 @@
+import { realpath } from "node:fs/promises";
+import { assessWorktreeLifecycle, type WorktreeLifecycleAssessment } from "../lib/worktree/lifecycle.js";
+import { cleanupCompletedWorktrees, type CleanupResult } from "../lib/worktree/cleanup.js";
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
 import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
-import { serializeFrontmatter, createFrontmatter } from "../lib/frontmatter.js";
-import { loadGraph, writeGraph, findNodes } from "../lib/graph/store.js";
+import { serializeFrontmatter, createFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
+import { mutateGraph, findNode } from "../lib/graph/store.js";
 import { endSession } from "../lib/graph/learner.js";
 import type { SessionNode, SessionOutcome } from "../lib/graph/schema.js";
 
@@ -24,6 +27,7 @@ export async function sessionCommand(
   },
   ctx: CommandContext,
 ): Promise<{
+  worktree?: WorktreeLifecycleAssessment & { workspacePath: string; cleanup?: CleanupResult };
   session_id?: string;
   active_sessions?: Session[];
   conflicts?: Array<{
@@ -36,6 +40,7 @@ export async function sessionCommand(
 }> {
   const registry = ctx.sessionRegistry;
   const vaultFs = ctx.vaultFs;
+  const workspace = ctx.workspacePath ?? process.cwd();
 
   switch (args.action) {
     case "register": {
@@ -44,11 +49,13 @@ export async function sessionCommand(
         args.tool,
         args.project ?? null,
         args.taskSummary ?? null,
-        args.filesTouched ?? []
+        args.filesTouched ?? [],
+        await realpath(workspace),
       );
       return {
         session_id: result.session_id,
         conflicts: result.conflicts,
+        worktree: await maintainWorkspace(workspace, "register", ctx),
       };
     }
 
@@ -62,6 +69,7 @@ export async function sessionCommand(
     case "complete": {
       if (!args.sessionId) throw new Error("Session ID required for complete");
       const existing = await registry.get(args.sessionId);
+      if (existing && ctx.projectSlug != null && existing.project !== ctx.projectSlug) throw new Error("Session belongs to a different project");
       await registry.complete(args.sessionId, args.taskSummary);
 
       let sessionNotePath: string | undefined;
@@ -82,9 +90,9 @@ export async function sessionCommand(
         });
       }
 
-      await settleGraphSession(args, existing?.tool);
+      if (existing) await settleGraphSession(args, existing.workspace_path ?? workspace);
 
-      return { session_note_path: sessionNotePath };
+      return { session_note_path: sessionNotePath, worktree: await maintainWorkspace(workspace, "complete", ctx) };
     }
 
     case "list_active": {
@@ -95,6 +103,21 @@ export async function sessionCommand(
     default:
       throw new Error(`Unknown action: ${args.action}`);
   }
+}
+
+async function maintainWorkspace(workspace: string, phase: "register" | "complete", ctx: CommandContext) {
+  const assessment = await assessWorktreeLifecycle(workspace, { phase });
+  if (assessment.status !== "available") return { ...assessment, workspacePath: workspace };
+  let cleanup: CleanupResult;
+  try {
+    cleanup = await ctx.sessionRegistry.withMaintenanceSessions((sessions) => cleanupCompletedWorktrees(workspace, sessions));
+    for (const path of cleanup.removed) await ctx.sessionRegistry.acknowledgeWorkspaceRemoval(path);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    ctx.log.error(`[session] worktree maintenance failed: ${reason}`);
+    cleanup = { removed: [], kept: [], errors: [{ path: workspace, reason }] };
+  }
+  return { ...assessment, workspacePath: workspace, cleanup };
 }
 
 function extractToolFromId(sessionId: string): string {
@@ -108,38 +131,27 @@ function extractToolFromId(sessionId: string): string {
 function mapOutcome(args: { outcome?: string; blocked?: string[]; partiallyCompleted?: string[] }): SessionOutcome {
   const explicit = (args.outcome ?? "").toLowerCase();
   if (explicit.includes("abandon")) return "abandoned";
+  if ((args.blocked ?? []).length > 0 || (args.partiallyCompleted ?? []).length > 0) return "partial";
   if (explicit.includes("partial")) return "partial";
   if (/(success|complete|done|shipped)/.test(explicit)) return "success";
-  if ((args.blocked ?? []).length > 0 || (args.partiallyCompleted ?? []).length > 0) return "partial";
   return "success";
 }
 
-/**
- * Best-effort: close the most recent open graph session with a real outcome and
- * insights. Sessions are opened by skill activation in this repo; this records
- * what actually happened so retro-style analysis has outcomes to work with.
- */
 async function settleGraphSession(
-  args: { outcome?: string; blocked?: string[]; partiallyCompleted?: string[]; completed?: string[] },
-  _tool?: string,
+  args: { sessionId?: string; outcome?: string; blocked?: string[]; partiallyCompleted?: string[]; completed?: string[] },
+  workspace: string,
 ): Promise<void> {
   try {
-    const projectDir = process.cwd();
-    const graph = await loadGraph(projectDir);
-    if (graph.nodes.length === 0) return;
-    const open = findNodes<SessionNode>(graph, "session")
-      .filter((session) => session.outcome === null)
-      .sort((a, b) => b.ts - a.ts);
-    if (open.length === 0) return;
-
-    const outcome = mapOutcome(args);
-    const insights = [
-      ...(args.completed ?? []),
-      ...(args.blocked ?? []).map((item) => `blocked: ${item}`),
-    ].slice(0, 10);
-
-    const updated = endSession(graph, open[0].id, outcome, insights);
-    await writeGraph(projectDir, updated);
+    if (!args.sessionId) return;
+    await mutateGraph(workspace, (graph) => {
+      const session = findNode<SessionNode>(graph, "session", args.sessionId!);
+      if (!session || session.coordinationSessionId !== args.sessionId || session.outcome !== null) return graph;
+      const insights = [
+        ...(args.completed ?? []),
+        ...(args.blocked ?? []).map((item) => `blocked: ${item}`),
+      ].slice(0, 10);
+      return endSession(graph, session.id, mapOutcome(args), insights);
+    });
   } catch (err: unknown) {
     console.error(`[session] graph outcome update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -221,6 +233,10 @@ async function persistSessionNote(
     sections.push(`\n## Files Changed\n${opts.filesTouched.map((f) => `- ${f}`).join("\n")}`);
   }
 
-  await vaultFs.write(filePath, serializeFrontmatter(fm, sections.join("\n")));
+  await vaultFs.update(filePath, (current) => {
+    const { data } = parseFrontmatter(current);
+    const count = data.session_id === opts.sessionId ? Number(data.learnings_captured ?? 0) : 0;
+    return serializeFrontmatter({ ...fm, learnings_captured: count }, sections.join("\n"));
+  }, { create: true });
   return filePath;
 }

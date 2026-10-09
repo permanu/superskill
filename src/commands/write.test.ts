@@ -34,6 +34,10 @@ describe("writeCommand", () => {
   });
 
   describe("append mode (default)", () => {
+    it("rejects secrets supplied through frontmatter overrides", async () => {
+      await expect(writeCommand({ path: "new.md", content: "Safe body", frontmatter: { source: `ghp_${"A".repeat(36)}` } }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect(await vaultFs.exists("new.md")).toBe(false);
+    });
     it("creates new file with frontmatter", async () => {
     const result = await writeCommand({ path: "new.md", content: "content", mode: "append" }, ctx);
     expect(result.written).toBe(true);

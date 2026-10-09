@@ -36,12 +36,15 @@ export interface VizDoc {
   type: string;
   body: string;
   related?: string[];
+  source?: { path: string; language: string; startLine?: number; endLine?: number; unavailableReason?: string };
 }
 
 export interface VizModel {
   root: string;
   graphs: Record<string, VizGraph>;
   docs: Record<string, VizDoc>;
+  sources?: Record<string, { text: string; bytes: number; truncated: boolean }>;
+  navigation?: Array<{ id: string; label: string; graph?: string; doc?: string; section?: string }>;
   legend?: { types: Array<{ type: string; label: string; color: string }> };
 }
 
@@ -361,6 +364,10 @@ export function mermaidFlowchart(g: VizGraph): string {
       lines.push(`  ${ids.get(n.id)}["${cleanMermaidText(n.title)}"]`);
     }
   } else {
+    const connected = new Set(g.edges.flatMap(edge => [edge.from, edge.to]));
+    for (const node of [...g.nodes].sort((a, b) => a.id.localeCompare(b.id))) {
+      if (!connected.has(node.id)) lines.push(`  ${ids.get(node.id)}["${cleanMermaidText(node.title)}"]`);
+    }
     const edges = sortEdges(
       g.edges.map((e) => ({ from: e.from, to: e.to, label: e.label ?? e.type, count: 0 })),
     );

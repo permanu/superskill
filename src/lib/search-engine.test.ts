@@ -16,6 +16,11 @@ describe("search-engine", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it.each([-1, 0, 1.5, NaN, Infinity])("rejects invalid direct search limit %s", async (limit) => {
+    await expect(searchText(vaultRoot, "Hello", { limit })).rejects.toThrow("limit");
+    await expect(searchStructured(vaultRoot, { type: "adr" }, { limit })).rejects.toThrow("limit");
+  });
+
   describe("searchText", () => {
     beforeEach(async () => {
       await writeFile(join(vaultRoot, "doc1.md"), "# Hello World\n\nThis is a test document.");
@@ -24,6 +29,13 @@ describe("search-engine", () => {
       await writeFile(join(vaultRoot, "subdir/nested.md"), "# Nested Hello\n\nHello from nested path.");
       await mkdir(join(vaultRoot, ".obsidian"), { recursive: true });
       await writeFile(join(vaultRoot, ".obsidian/config"), "hello in hidden");
+    });
+
+    it.each(["--help", "--files", "-e"]) ("treats option-like query %s as literal text", async (query) => {
+      await writeFile(join(vaultRoot, "flags.md"), `Literal flag ${query}`);
+      const results = await searchText(vaultRoot, query);
+      expect(results).toHaveLength(1);
+      expect(results[0]?.path).toBe("flags.md");
     });
 
     it("finds matching documents", async () => {

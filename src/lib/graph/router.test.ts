@@ -384,3 +384,36 @@ describe("catalog routing", () => {
   });
 });
 
+
+
+describe("shared phase classification", () => {
+  it.each([
+    ["inspect fixture staging", "review"],
+    ["fix a typo", "implement"],
+    ["understand conversion filenames", "explore"],
+    ["debugging a parser", "implement"],
+    ["verify the result", "review"],
+    ["critique the architecture", "review"],
+    ["patch an authz bug", "review"],
+    ["shipping a release", "ship"],
+  ])("classifies %s as %s", (task, phase) => {
+    expect(getPhaseForTask(task)).toBe(phase);
+  });
+});
+
+describe("file and lifecycle routing", () => {
+  const graph: Graph = {
+    nodes: [makeProjectNode(["typescript", "python"]), ...["typescript", "python", "go"].map(lang => ({ ...makeSkillNode(`code/${lang}`, 0.8), pack: "code" as const, langs: [lang], triggers: [lang] }))],
+    edges: [],
+  };
+
+  it("focuses the code pack on the supplied file language", () => {
+    expect(matchTask("update the handler", graph, { files: ["worker.py"] })).toEqual(["code/python"]);
+    expect(matchTask("update the handler", graph, { files: ["service.go"] })).toEqual(["code/go"]);
+  });
+
+  it("applies phase filtering to unmatched stack defaults", () => {
+    expect(matchTask("publish documentation", graph, { phase: "ship" })).toEqual([]);
+    expect(matchTask("current changes", graph, { phase: "implement", files: ["worker.py"] })).toEqual(["code/python"]);
+  });
+});

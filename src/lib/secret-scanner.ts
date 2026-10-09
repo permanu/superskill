@@ -48,7 +48,7 @@ export function formatSecretWarnings(matches: SecretMatch[]): string {
   const lines: string[] = [];
   lines.push(`[vault-write] Rejected: ${matches.length} potential secret(s) in content. Store references (cred_refs), not values.`);
   for (const m of matches.slice(0, 5)) {
-    lines.push(`  - ${m.type} (line ${m.line}): ${m.snippet}`);
+    lines.push(`  - ${m.type} (line ${m.line}): [redacted]`);
   }
   if (matches.length > 5) {
     lines.push(`  - ... and ${matches.length - 5} more`);

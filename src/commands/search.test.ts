@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, writeFile, rm } from "fs/promises";
+import { mkdir, writeFile, rm, symlink } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { searchCommand } from "./search.js";
@@ -34,6 +34,36 @@ describe("searchCommand", () => {
 
   afterEach(async () => {
     await rm(vaultRoot, { recursive: true, force: true });
+  });
+
+  it.each([false, true])("denies an unresolved project scope (structured=%s)", async (structured) => {
+    await writeFile(join(vaultRoot, "projects/test/private.md"), "---\ntype: adr\n---\nprivate");
+    const denied = createCommandContext(vaultFs, { projectSlug: null });
+    await expect(searchCommand({ query: structured ? "type:adr" : "private", structured }, denied)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(searchCommand({ query: "private", project: "test", structured }, denied)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it.each([-1, 0, 1.5, NaN, Infinity])("rejects invalid limit %s", async (limit) => {
+    await expect(searchCommand({ query: "private", limit }, ctx)).rejects.toThrow("limit");
+  });
+
+  it("retains legacy unscoped text search", async () => {
+    await writeFile(join(vaultRoot, "projects/test/note.md"), "legacy-marker");
+    const results = await searchCommand({ query: "legacy-marker" }, createCommandContext(vaultFs));
+    expect(results[0]?.path).toBe("projects/test/note.md");
+  });
+
+  it.each(["../test", "test/../../other", ""]) ("rejects invalid structured project %s", async (project) => {
+    await expect(searchCommand({ query: "type:adr", structured: true, project }, createCommandContext(vaultFs))).rejects.toThrow();
+  });
+
+  it("rejects a structured search root symlink into another project", async () => {
+    await mkdir(join(vaultRoot, "projects/other"), { recursive: true });
+    await writeFile(join(vaultRoot, "projects/other/private.md"), "---\ntype: adr\n---\nprivate");
+    await rm(join(vaultRoot, "projects/test"), { recursive: true });
+    await symlink(join(vaultRoot, "projects/other"), join(vaultRoot, "projects/test"));
+    const scoped = createCommandContext(new VaultFS(vaultRoot, { projectSlug: "test" }), { projectSlug: "test" });
+    await expect(searchCommand({ query: "type:adr", structured: true }, scoped)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 
   describe("text search", () => {

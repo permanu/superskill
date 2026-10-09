@@ -55,3 +55,24 @@ describe("planDelegation", () => {
     expect(p.loop).toBe(false);
   });
 });
+
+describe("routing context", () => {
+  it("uses active files before repository language defaults", () => {
+    const plan = planDelegation("update the handler", ["typescript", "python"], { files: ["worker.py"] });
+    expect(plan.specialists.map(s => s.agent)).toContain("python");
+    expect(plan.specialists.map(s => s.agent)).not.toContain("typescript");
+  });
+
+  it("recognizes a file language absent from the stored stack", () => {
+    expect(planDelegation("update the handler", ["typescript"], { files: ["service.go"] }).specialists.map(s => s.agent)).toContain("go");
+  });
+
+  it("reroutes neutral tasks when lifecycle phase changes", () => {
+    const review = planDelegation("the current changes", ["typescript"], { phase: "review" });
+    expect(review.specialists.map(s => s.agent)).toContain("review");
+    expect(review.specialists.map(s => s.agent)).not.toContain("typescript");
+    const ship = planDelegation("the current changes", ["typescript"], { phase: "ship" });
+    expect(ship.specialists.map(s => s.agent)).toContain("platform");
+    expect(ship.specialists.map(s => s.agent)).not.toContain("typescript");
+  });
+});

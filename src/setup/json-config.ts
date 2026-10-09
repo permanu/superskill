@@ -34,7 +34,17 @@ export function addMcpEntry(
   if (!result[rootKey]) result[rootKey] = {};
 
   if (result[rootKey][serverName] && !force) {
-    return { config: result, alreadyExists: true };
+    const existing = result[rootKey][serverName];
+    const oldArgs = JSON.stringify(["-y", "superskill"]);
+    const latestArgs = JSON.stringify(["-y", "--prefer-online", "superskill@latest"]);
+    let upgraded: Record<string, any> | undefined;
+    if (serverName === "superskill" && existing.command === "npx" && entry.command === "npx" && JSON.stringify(existing.args) === oldArgs && JSON.stringify(entry.args) === latestArgs && typeof existing.env?.VAULT_PATH === "string") {
+      upgraded = { ...existing, args: entry.args };
+    } else if (serverName === "superskill" && JSON.stringify(existing.command) === JSON.stringify(["npx", "-y", "superskill"]) && JSON.stringify(entry.command) === JSON.stringify(["npx", "-y", "--prefer-online", "superskill@latest"]) && existing.args === undefined && typeof existing.environment?.VAULT_PATH === "string") {
+      upgraded = { ...existing, command: entry.command };
+    }
+    if (!upgraded) return { config: result, alreadyExists: true };
+    return { config: { ...result, [rootKey]: { ...result[rootKey], [serverName]: upgraded } }, alreadyExists: false };
   }
 
   result[rootKey] = { ...result[rootKey], [serverName]: entry };

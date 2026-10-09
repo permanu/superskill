@@ -12,6 +12,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createRegistry } from "./core/registry.js";
+import { refreshExistingManagedInstallation } from "./setup/refresh.js";
 import { handleInfoFlags } from "./core/cli-info.js";
 import { VaultError } from "./lib/vault-fs.js";
 import { createScopedCtx, getSessionRegistry } from "./app-context.js";
@@ -53,7 +54,7 @@ function checkRateLimit(toolName: string): void {
 }
 
 const SERVER_INSTRUCTIONS =
-  "Repo-local shared build-cache policy for git worktrees. Before installs/builds in a worktree, call worktree_env. If a repo has multiple worktrees or heavy build caches and no policy, inspect with worktree_audit or worktree_status, then propose worktree_activate (preview with confirm=false). Env, audit, and status are read-only. worktree_gc defaults to a dry-run report; it quarantines only with confirm=true, and quarantine is reversible via undo. worktree_apply requires confirm=true. worktree_uninstall removes hooks/policy; caches stay unless purge_local and confirm are both true. Never delete worktrees or user files. Pass confirm=true only after the user agrees.";
+  "Project-scoped knowledge for coding agents. Load project_context, search relevant notes, and register a session. Prefer graph_traverse resolve/children for metadata, then open only relevant files or symbols. Use superskill with max_tokens for bounded methodology content and session_id for isolated learning. Complete the same session with verification evidence. Worktree assessment runs at session start/completion and skill activation. Consume its nextActions in the returned workspace. Reroute superskill when task, files, or phase changes. Inspect before applying and pass confirm=true only with user authorization. Never force removal. Built-in lifecycle cleanup may archive SuperSkill metadata and remove only clean, idle, completed-session worktrees proven integrated into main.";
 
 const server = new Server(
   { name: "superskill", version },
@@ -68,13 +69,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const raw = args as Record<string, unknown>;
-  const ctx = await createScopedCtx(
-    typeof raw.project === "string" ? raw.project : undefined,
-    name,
-  );
-
+  const raw = (args ?? {}) as Record<string, unknown>;
   try {
+    if (raw.workspace_path !== undefined && typeof raw.workspace_path !== "string") throw new Error("workspace_path must be an absolute existing directory");
+    const ctx = await createScopedCtx(
+      typeof raw.project === "string" ? raw.project : undefined,
+      name,
+      typeof raw.workspace_path === "string" ? raw.workspace_path : undefined,
+    );
     checkRateLimit(name);
 
     if (name === "read") {
@@ -103,7 +105,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     const result = await registry.execute(name, raw, ctx);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, name === "superskill" && raw.detail !== "full" ? undefined : 2) }] };
   } catch (e: unknown) {
     const code = e instanceof VaultError ? e.code : "INTERNAL_ERROR";
     const msg = e instanceof Error ? e.message : String(e);
@@ -296,6 +298,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
 async function main() {
   if (handleInfoFlags(process.argv.slice(2), version)) return;
+  refreshExistingManagedInstallation();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

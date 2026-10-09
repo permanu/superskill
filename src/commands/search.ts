@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
-import { searchText, searchStructured, type SearchResult } from "../lib/search-engine.js";
+import { searchText, searchStructured, validateSearchLimit, type SearchResult } from "../lib/search-engine.js";
 import { VaultError } from "../lib/vault-fs.js";
+import { validateProjectSlug } from "../config.js";
 import { ensureProjectIndex } from "../lib/knowledge-index.js";
 
 function resolveSearchSlug(
   argsProject: string | undefined,
   ctx: CommandContext,
 ): string | undefined {
+  if (ctx.projectSlug === null) {
+    throw new VaultError("PERMISSION_DENIED", "Search requires a resolved project scope");
+  }
+  if (argsProject !== undefined) validateProjectSlug(argsProject);
   if (ctx.projectSlug && argsProject && argsProject !== ctx.projectSlug) {
     throw new VaultError("PERMISSION_DENIED", `Cross-project search denied: ${argsProject}`);
   }
   const slug = argsProject ?? ctx.projectSlug ?? undefined;
   if (!slug) return undefined;
-  return slug;
+  return validateProjectSlug(slug);
 }
 
 export async function searchCommand(
@@ -26,9 +31,12 @@ export async function searchCommand(
   ctx: CommandContext,
 ): Promise<SearchResult[]> {
   const { query, project, limit = 10, structured = false } = args;
+  validateSearchLimit(limit);
   const vaultPath = ctx.vaultPath;
   const slug = resolveSearchSlug(project, ctx);
   const pathFilter = slug ? `projects/${slug}` : undefined;
+
+  if (pathFilter) await ctx.vaultFs.verifyNoSymlinkEscape(pathFilter);
 
   if (structured) {
     const filters: Record<string, string> = {};

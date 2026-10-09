@@ -113,8 +113,10 @@ name collisions, or unmodeled resolution rules.
 ## Scan behavior
 
 - Walk: recursive, symlinks skipped, default skip dirs `.git`, `node_modules`, `dist`,
-  `build` (override with `skipDirs`).
-- Extensions: `.ts .mts .cts .tsx .py .pyi .go .rs .swift .java .c .h .cpp .cc .cxx .hpp .hh .hxx`.
+  `build`, `.superskill`, `.venv`, `venv`, `target`, `.next`, `.turbo`, `coverage`,
+  `vendor`, `Pods`, `.build` (override with `skipDirs`).
+- Extensions: `.ts .mts .cts .tsx .js .mjs .cjs .jsx .py .pyi .go .rs .swift .java .c .h .cpp .cc .cxx .hpp .hh .hxx`.
+  JavaScript and JSX use the TypeScript and TSX grammars respectively.
 - Options: `maxFileSize` (default 1 MB), `languages` (default all supported).
 - Stats: `files`, `nodes`, `edges`, `nodesByKind`, `edgesByKind`, `edgesByConfidence`,
   `parseErrors` (files whose tree contains an `ERROR` node), `filesSkipped`

@@ -33,6 +33,12 @@ describe("todoCommand", () => {
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
+  it("preserves simultaneous additions to a newly created todo list", async () => {
+    await Promise.all(Array.from({ length: 10 }, (_, i) => todoCommand({ action: "add", item: `Item ${i}`, project: "test-project" }, ctx)));
+    const result = await todoCommand({ action: "list", project: "test-project" }, ctx);
+    expect(result.todos.map((todo) => todo.text).sort()).toEqual(Array.from({ length: 10 }, (_, i) => `Item ${i}`).sort());
+  });
+
   describe("list todos", () => {
     it("returns empty array when no todos file", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));

@@ -297,3 +297,27 @@ describe("inferPhase", () => {
     expect(inferPhase("think about the problem")).toBe("explore");
   });
 });
+
+
+describe("catalog relevance", () => {
+  let catalogIndex: RulesIndex;
+  beforeAll(async () => { catalogIndex = buildIndex((await loadRules()).rules); });
+
+  it("does not load code rules from ordinary function words", () => {
+    expect(route({ prompt: "this is for the project and we can do it. Look at this.", stack: ["typescript"] }, catalogIndex).rules).toEqual([]);
+  });
+
+  it("requires complete phrase evidence", () => {
+    const ids = (prompt: string) => route({ prompt, stack: ["typescript"] }, catalogIndex, { budgetTokens: 50000 }).rules.map(r => r.id);
+    expect(ids("review fire safety and forget obsolete notes")).not.toContain("typescript-async-no-void-silence");
+    expect(ids("handle fire and forget promises")).toContain("typescript-async-no-void-silence");
+    expect(ids("use for await with async iterables")).toContain("typescript-async-async-iteration");
+  });
+
+  it("retains explicit code symbols and technical phrases", () => {
+    const ids = (prompt: string) => route({ prompt, stack: ["typescript"] }, catalogIndex, { budgetTokens: 50000 }).rules.map(r => r.id);
+    expect(ids("review `this` usage")).toContain("typescript-api-this-return-type");
+    expect(ids("review this type in fluent APIs")).toContain("typescript-api-this-return-type");
+    expect(ids("review this.value access")).toContain("typescript-api-this-return-type");
+  });
+});

@@ -51,6 +51,19 @@ describe("evidenceCommand", () => {
     await cleanup();
   });
 
+  it("keeps all concurrent evidence references alongside a ticket status change", async () => {
+    await createTicket(ctx);
+    await Promise.all([
+      ...Array.from({ length: 8 }, (_, i) => evidenceCommand({ action: "add", ticket: "ticket-001", command: `check-${i}`, commit: "c1", project: "test-project" }, ctx)),
+      ticketsCommand({ action: "update", ticketId: "ticket-001", status: "in-progress", project: "test-project" }, ctx),
+    ]);
+    const ticket = await vaultFs.read("projects/test-project/tickets/ticket-001-implement.md");
+    expect(ticket).toContain("status: in-progress");
+    for (let i = 0; i < 8; i++) expect(ticket).toContain(`command: check-${i}`);
+    const evidence = await evidenceCommand({ action: "list", ticket: "ticket-001", project: "test-project" }, ctx);
+    expect(evidence.count).toBe(8);
+  });
+
   describe("add", () => {
     it("appends a record to the jsonl file and the ticket evidence slot", async () => {
       await createTicket(ctx);

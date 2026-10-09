@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { basename, join } from "path";
 import { tmpdir } from "os";
-import { mkdir, writeFile, rm, readFile, readdir, stat } from "fs/promises";
+import { mkdir, writeFile, rm, readFile, readdir, stat, symlink } from "fs/promises";
 import {
   parseSource,
   installSkills,
@@ -45,6 +45,11 @@ describe("skill-installer", () => {
   });
 
   describe("parseSource", () => {
+    it("rejects traversal in every supported source format", () => {
+      for (const source of ["acme/skills/../../outside", "github:acme/skills/../outside", "https://github.com/acme/skills/tree/main/../../outside", "acme/skills/..\\outside"]) {
+        expect(parseSource(source)).toBeNull();
+      }
+    });
     it("parses owner/repo shorthand", () => {
       const result = parseSource("anthropics/skills");
       expect(result).not.toBeNull();
@@ -99,6 +104,21 @@ describe("skill-installer", () => {
   });
 
   describe("installSkills", () => {
+    it.each(["directory", "file"])("rejects a symlinked existing destination %s", async (kind) => {
+      const outside = join(testDir, "outside");
+      await mkdir(outside);
+      await writeFile(join(outside, "SKILL.md"), "keep me");
+      if (kind === "directory") await symlink(outside, join(testDir, "safe-skill"));
+      else {
+        await mkdir(join(testDir, "safe-skill"));
+        await symlink(join(outside, "SKILL.md"), join(testDir, "safe-skill", "SKILL.md"));
+      }
+      mocks.fetchPublisherSkills.mockResolvedValueOnce([{ owner: "acme", repo: "skills", skill: "safe-skill", url: "https://skills.sh/acme/skills/safe-skill" }]);
+      mocks.fetchSkillPage.mockResolvedValueOnce({ audits: { gen: "pass", socket: "pass", snyk: "pass" }, skillMd: "# Safe skill", installs: 1, stars: 1 });
+      const result = await installSkills("acme/skills");
+      expect(result.success).toBe(false);
+      expect(await readFile(join(outside, "SKILL.md"), "utf-8")).toBe("keep me");
+    });
     it("returns error for invalid source", async () => {
       const result = await installSkills("not-valid");
       expect(result.success).toBe(false);
@@ -166,6 +186,29 @@ describe("skill-installer", () => {
       expect(result.warnings.join(" ")).toMatch(/without skills.sh audit/i);
       const marker = JSON.parse(await readFile(join(testDir, "fake-skill", UNAUDITED_MARKER), "utf-8"));
       expect(marker.unaudited).toBe(true);
+    });
+
+    it.each(["file", "directory"])("rejects a cloned skill %s symlink outside the repository", async (kind) => {
+      const outside = join(testDir, "outside");
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, "SKILL.md"), "---\nname: escaped\ndescription: Outside repo\n---\n# Escaped");
+      mocks.fetchPublisherSkills.mockRejectedValueOnce(new Error("offline"));
+      mocks.execFile.mockImplementationOnce((...args: any[]) => {
+        const [, cmdArgs, , cb] = args as [string, string[], unknown, (err: Error | null, stdout: string, stderr: string) => void];
+        const dest = cmdArgs[cmdArgs.length - 1];
+        void (async () => {
+          if (kind === "directory") await symlink(outside, join(dest, "selected"));
+          else {
+            await mkdir(join(dest, "selected"), { recursive: true });
+            await symlink(join(outside, "SKILL.md"), join(dest, "selected", "SKILL.md"));
+          }
+          cb(null, "", "");
+        })().catch((err) => cb(err, "", ""));
+      });
+      const result = await installSkills("acme/skills/selected");
+      expect(result.success).toBe(false);
+      expect(result.installed).toEqual([]);
+      expect(await readFile(join(outside, "SKILL.md"), "utf-8")).toContain("# Escaped");
     });
 
     it("never falls back when skills.sh reports blocked skills", async () => {

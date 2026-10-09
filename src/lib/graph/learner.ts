@@ -29,12 +29,21 @@ export function normalizeInstalls(installs: number): number {
 export function findOrCreateSession(
   graph: Graph,
   intent: string,
+  coordinationSessionId?: string,
 ): { graph: Graph; sessionId: string } {
   const sessions = findNodes<SessionNode>(graph, "session");
+  if (coordinationSessionId) {
+    const existing = sessions.find((session) => session.id === coordinationSessionId);
+    if (existing) {
+      if (existing.outcome !== null) throw new Error(`Graph session already completed: ${coordinationSessionId}`);
+      return { graph, sessionId: existing.id };
+    }
+    return startSession(graph, intent, coordinationSessionId);
+  }
   const now = Date.now();
 
   const recent = sessions
-    .filter((s) => s.outcome === null && now - s.ts < SESSION_WINDOW_MS)
+    .filter((s) => !s.coordinationSessionId && s.intent === intent && s.outcome === null && now - s.ts < SESSION_WINDOW_MS)
     .sort((a, b) => b.ts - a.ts);
 
   if (recent.length > 0) {
@@ -42,7 +51,7 @@ export function findOrCreateSession(
   }
 
   let updated = graph;
-  const stale = sessions.filter((s) => s.outcome === null && now - s.ts >= SESSION_WINDOW_MS);
+  const stale = sessions.filter((s) => !s.coordinationSessionId && s.outcome === null && now - s.ts >= SESSION_WINDOW_MS);
   for (const s of stale) {
     updated = updateNode(updated, "session", s.id, {
       outcome: "partial",
@@ -60,14 +69,16 @@ export function findOrCreateSession(
 export function startSession(
   graph: Graph,
   intent: string,
+  coordinationSessionId?: string,
 ): { graph: Graph; sessionId: string } {
   const ts = Date.now();
   const hex = Math.random().toString(16).slice(2, 6);
-  const sessionId = `s_${ts}_${hex}`;
+  const sessionId = coordinationSessionId ?? `s_${ts}_${hex}`;
 
   const session: SessionNode = {
     type: "session",
     id: sessionId,
+    ...(coordinationSessionId ? { coordinationSessionId } : {}),
     intent,
     skills: [],
     files: [],

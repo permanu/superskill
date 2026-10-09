@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "
 import { dirname } from "path";
 import {
   INSTRUCTION_TEXT,
+  PREVIOUS_INSTRUCTION_TEXT,
+  PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT,
   MARKER_START_HTML,
   MARKER_END_HTML,
 } from "./types.js";
@@ -23,7 +25,14 @@ export function writeMarkdownInstruction(
   if (existsSync(filePath)) {
     const content = readFileSync(filePath, "utf-8");
     if (content.includes(MARKER_START_HTML)) {
-      if (!force) return "exists";
+      const blocks = [...content.matchAll(new RegExp(`${escapeRegex(MARKER_START_HTML)}([\\s\\S]*?)${escapeRegex(MARKER_END_HTML)}`, "g"))];
+      if (!force) {
+        if (blocks.length !== 1 || ![PREVIOUS_INSTRUCTION_TEXT, PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT].includes(blocks[0][1].trim())) return "exists";
+        const block = blocks[0];
+        const updated = content.slice(0, block.index) + MARKED_BLOCK + content.slice(block.index! + block[0].length);
+        writeFileSync(filePath, updated, "utf-8");
+        return "appended";
+      }
       const cleaned = removeMarkedBlock(content);
       writeFileSync(filePath, cleaned.trimEnd() + "\n\n" + MARKED_BLOCK + "\n", "utf-8");
       return "appended";

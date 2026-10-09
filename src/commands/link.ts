@@ -25,27 +25,16 @@ export async function linkCommand(
     throw new Error(`Source note not found: ${source}`);
   }
 
-  const raw = await vaultFs.read(source);
-  const { data, content: body } = parseFrontmatter(raw);
-
-  const wikilinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-  const existingLinks = new Set<string>();
-  let match;
-  while ((match = wikilinkRegex.exec(body)) !== null) {
-    existingLinks.add(match[1]);
-  }
-
-  const targetName = target.replace(/\.md$/, "");
-
-  if (existingLinks.has(targetName)) {
-    return { source, target, added: false, existing_links: [...existingLinks] };
-  }
-
-  const linkLine = `\n- [[${targetName}]]`;
-  const updatedBody = body.trimEnd() + linkLine + "\n";
-  const updatedFm = mergeFrontmatter(data, {});
-
-  await vaultFs.write(source, serializeFrontmatter(updatedFm, updatedBody));
-
-  return { source, target, added: true, existing_links: [...existingLinks, targetName] };
+  let result!: LinkResult;
+  await vaultFs.update(source, (raw) => {
+    const { data, content: body } = parseFrontmatter(raw);
+    const existingLinks = new Set(Array.from(body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g), (match) => match[1]));
+    const targetName = target.replace(/\.md$/, "");
+    const added = !existingLinks.has(targetName);
+    existingLinks.add(targetName);
+    result = { source, target, added, existing_links: [...existingLinks] };
+    if (!added) return raw;
+    return serializeFrontmatter(mergeFrontmatter(data, {}), body.trimEnd() + `\n- [[${targetName}]]\n`);
+  });
+  return result;
 }

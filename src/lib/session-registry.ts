@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile, writeFile, mkdir, unlink, stat, open, rename } from "fs/promises";
-import { resolve, dirname } from "path";
+import { readFile, writeFile, mkdir, unlink, open, rename, realpath, stat } from "fs/promises";
+import { resolve, dirname, isAbsolute } from "path";
 import { randomBytes } from "crypto";
 
 export interface Session {
@@ -13,6 +13,7 @@ export interface Session {
   last_heartbeat: string;
   completed_at: string | null;
   status: "active" | "completed";
+  workspace_path?: string;
 }
 
 export interface SessionRegistry {
@@ -28,7 +29,7 @@ interface Conflict {
 
 /**
  * Manages the session registry for multi-agent coordination.
- * Uses PID lockfiles for safe concurrent access.
+ * Uses exclusive lockfiles for safe concurrent access.
  */
 export class SessionRegistryManager {
   private readonly registryPath: string;
@@ -46,8 +47,12 @@ export class SessionRegistryManager {
     tool: string,
     project: string | null,
     taskSummary: string | null = null,
-    filesTouched: string[] = []
+    filesTouched: string[] = [],
+    workspacePath?: string,
   ): Promise<{ session_id: string; conflicts: Conflict[] }> {
+    if (workspacePath !== undefined && (typeof workspacePath !== "string" || !isAbsolute(workspacePath))) {
+      throw new Error("Session workspace_path must be an absolute path");
+    }
     const sessionId = `${tool}-${randomBytes(4).toString("hex")}`;
     const now = new Date().toISOString();
 
@@ -61,9 +66,19 @@ export class SessionRegistryManager {
       last_heartbeat: now,
       completed_at: null,
       status: "active",
+      ...(workspacePath !== undefined ? { workspace_path: workspacePath } : {}),
     };
 
     return await this.withLock(async () => {
+      if (workspacePath !== undefined) {
+        try {
+          const canonical = await realpath(workspacePath);
+          if (!(await stat(canonical)).isDirectory()) throw new Error("not a directory");
+          session.workspace_path = canonical;
+        } catch {
+          throw new Error("Session workspace_path must still be an existing directory when registering");
+        }
+      }
       const registry = await this.readRegistry();
       this.cleanStale(registry);
       this.cleanOldCompleted(registry);
@@ -151,10 +166,34 @@ export class SessionRegistryManager {
     });
   }
 
+  async listForMaintenance(): Promise<Session[]> {
+    return this.withMaintenanceSessions(async sessions => sessions);
+  }
+
+  async withMaintenanceSessions<T>(callback: (sessions: Session[]) => Promise<T>): Promise<T> {
+    return this.withLock(async () => {
+      const registry = await this.readRegistry();
+      return callback(registry.sessions);
+    });
+  }
+
+  async acknowledgeWorkspaceRemoval(workspacePath: string): Promise<void> {
+    await this.withLock(async () => {
+      const registry = await this.readRegistry();
+      let changed = false;
+      for (const session of registry.sessions) {
+        if (session.status !== "completed" || session.workspace_path !== workspacePath) continue;
+        delete session.workspace_path;
+        changed = true;
+      }
+      if (changed) await this.writeRegistry(registry);
+    });
+  }
+
   private cleanOldCompleted(registry: SessionRegistry): void {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     registry.sessions = registry.sessions.filter((s) => {
-      if (s.status !== "completed") return true;
+      if (s.status !== "completed" || s.workspace_path !== undefined) return true;
       const ts = s.completed_at ?? s.started_at;
       if (typeof ts !== "string") return false;
       const time = new Date(ts).getTime();
@@ -169,6 +208,7 @@ export class SessionRegistryManager {
       (session) =>
         !(
           session.status === "active" &&
+          session.workspace_path === undefined &&
           new Date(session.last_heartbeat).getTime() < cutoff
         )
     );
@@ -182,6 +222,7 @@ export class SessionRegistryManager {
     } catch (e: any) {
       if (e?.code !== "ENOENT") {
         console.error("[session-registry] Error reading registry:", e.message);
+        throw e;
       }
       return { sessions: [] };
     }
@@ -189,47 +230,28 @@ export class SessionRegistryManager {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
-    } catch (e: any) {
-      await this.quarantineCorruptRegistry(`invalid JSON: ${e?.message}`);
-      return { sessions: [] };
+    } catch {
+      throw new Error("Invalid session registry JSON; repair the existing registry before continuing");
     }
-
-    // Schema validation: ensure sessions is an array of valid objects
-    if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as any).sessions)) {
-      await this.quarantineCorruptRegistry("missing sessions array");
-      return { sessions: [] };
+    if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as SessionRegistry).sessions)) {
+      throw new Error("Invalid session registry: missing sessions array; repair before continuing");
     }
-
-    // Filter out malformed entries
-    const validSessions = (parsed as any).sessions.filter(
-      (s: any): s is Session =>
-        typeof s === "object" &&
-        s !== null &&
-        typeof s.id === "string" &&
-        typeof s.tool === "string" &&
-        typeof s.status === "string" &&
-        typeof s.started_at === "string" &&
-        typeof s.last_heartbeat === "string" &&
-        !isNaN(new Date(s.last_heartbeat).getTime()) &&
-        Array.isArray(s.files_touched)
-    );
-
-    return { sessions: validSessions };
-  }
-
-  /**
-   * Rename a corrupt registry aside so it is never silently dropped.
-   */
-  private async quarantineCorruptRegistry(reason: string): Promise<void> {
-    const quarantinePath = `${this.registryPath}.corrupt-${Date.now()}`;
-    try {
-      await rename(this.registryPath, quarantinePath);
-      console.error(`[session-registry] Corrupt registry (${reason}); preserved at ${quarantinePath}`);
-    } catch (e: any) {
-      if (e?.code !== "ENOENT") {
-        console.error("[session-registry] Failed to quarantine corrupt registry:", e?.message);
+    const sessions = (parsed as SessionRegistry).sessions;
+    const ids = new Set<string>();
+    for (const session of sessions) {
+      if (!session || typeof session !== "object" ||
+        typeof session.id !== "string" || ids.has(session.id) ||
+        typeof session.tool !== "string" ||
+        !["active", "completed"].includes(session.status) ||
+        typeof session.started_at !== "string" || isNaN(Date.parse(session.started_at)) ||
+        typeof session.last_heartbeat !== "string" || isNaN(Date.parse(session.last_heartbeat)) ||
+        !Array.isArray(session.files_touched) || session.files_touched.some(file => typeof file !== "string") ||
+        (session.workspace_path !== undefined && (typeof session.workspace_path !== "string" || !isAbsolute(session.workspace_path)))) {
+        throw new Error("Invalid session registry entry; repair the existing registry before continuing");
       }
+      ids.add(session.id);
     }
+    return { sessions };
   }
 
   private async writeRegistry(registry: SessionRegistry): Promise<void> {
@@ -244,102 +266,48 @@ export class SessionRegistryManager {
     }
   }
 
-  /**
-   * PID-based lockfile for safe concurrent writes.
-   * Times out after 2 seconds with retry. Stale locks are taken over via
-   * write-temp + rename, then confirmed by re-reading our own PID.
-   */
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const lockPath = resolve(this.locksDir, "session-registry.lock");
     await mkdir(this.locksDir, { recursive: true });
-
+    const token = randomBytes(16).toString("hex");
     const lockContent = JSON.stringify({
       pid: process.pid,
+      token,
       tool: "superskill",
       timestamp: new Date().toISOString(),
     });
-
-    const maxRetries = 8;
-    const retryDelay = 100;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      let acquired = false;
+    const deadline = Date.now() + 2000;
+    let fd;
+    while (!fd) {
       try {
-        const fd = await open(lockPath, "wx");
-        try {
-          await fd.write(Buffer.from(lockContent, "utf-8"));
-        } finally {
-          await fd.close();
+        fd = await open(lockPath, "wx", 0o600);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out acquiring session registry lock: ${lockPath}. Remove it only after confirming its owner is no longer running.`);
         }
-        acquired = true;
-      } catch (e: any) {
-        if (e.code !== "EEXIST") throw e;
-      }
-
-      if (!acquired && !(await this.takeOverStaleLock(lockPath, lockContent))) {
-        await new Promise((r) => setTimeout(r, retryDelay));
-        continue;
-      }
-
-      try {
-        return await fn();
-      } finally {
-        await this.releaseLock(lockPath);
+        await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
       }
     }
-
-    throw new Error("Failed to acquire lock after retries");
-  }
-
-  /**
-   * Replace a stale lock by writing our lock to a temp path and renaming it
-   * over the lock. Losers detect a foreign PID on re-read and back off.
-   */
-  private async takeOverStaleLock(lockPath: string, lockContent: string): Promise<boolean> {
-    let stale = false;
     try {
-      const lockStat = await stat(lockPath);
-      if (Date.now() - lockStat.mtimeMs > 5000) {
-        stale = true;
-      } else {
-        const lockData = JSON.parse(await readFile(lockPath, "utf-8"));
-        try {
-          process.kill(lockData.pid, 0);
-        } catch (e: any) {
-          if (e?.code === "ESRCH") stale = true;
-        }
-      }
-    } catch (e: any) {
-      if (e?.code === "ENOENT") return false;
-      return false;
-    }
-
-    if (!stale) return false;
-
-    const tmpPath = `${lockPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    try {
-      await writeFile(tmpPath, lockContent, "utf-8");
-      await rename(tmpPath, lockPath);
-    } catch {
-      await unlink(tmpPath).catch(() => {});
-      return false;
-    }
-
-    try {
-      const confirmed = JSON.parse(await readFile(lockPath, "utf-8"));
-      return confirmed.pid === process.pid;
-    } catch {
-      return false;
+      await fd.writeFile(lockContent, "utf-8");
+      return await fn();
+    } finally {
+      await fd.close();
+      await this.releaseLock(lockPath, token);
     }
   }
 
-  private async releaseLock(lockPath: string): Promise<void> {
+  private async releaseLock(lockPath: string, token: string): Promise<void> {
+    let lockData: { token?: unknown };
     try {
-      const lockData = JSON.parse(await readFile(lockPath, "utf-8"));
-      if (lockData.pid !== process.pid) return;
-    } catch {
-      return;
+      lockData = JSON.parse(await readFile(lockPath, "utf-8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      console.error("[session-registry] Failed to read lock ownership:", (error as Error).message);
+      throw error;
     }
-    await unlink(lockPath).catch(() => {});
+    if (lockData?.token !== token) return;
+    await unlink(lockPath);
   }
 }
