@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-10-10
+
+### Fixed
+- OpenCode host adapter: `worktree activate` now writes an OpenCode V2 plugin definition (`export default { id, setup }` registering the `shell` `create.before` hook) instead of the V1 `shell.env` function form, which OpenCode 2.x rejects with "Plugin must export a default definition with an id and an effect or setup function". The removed Bun `$` helper is replaced with `node:child_process`; the CLI call, JSON merge, and silent-on-failure behavior are unchanged, and a V1 `server()` fallback keeps OpenCode 1.18.29+ working.
+- Re-run `superskill worktree activate` in a repo to regenerate the plugin; the previous file is backed up as `<plugin>.bak.superskill`. Adapter tests now import the generated module and run the shell hook end-to-end so format drift fails CI.
+
 ## [0.11.0] - 2026-10-10
 
 ### Added
