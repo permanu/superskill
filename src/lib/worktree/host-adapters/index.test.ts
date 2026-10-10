@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { claudeAdapter } from "./claude.js";
 import { codexAdapter } from "./codex.js";
 import { opencodeAdapter } from "./opencode.js";
@@ -280,11 +281,58 @@ describe("worktree host adapters", () => {
       expect(result.files).toEqual([opencodePath(repo)]);
       const content = await readFile(opencodePath(repo), "utf-8");
       expect(content.startsWith(`${OPENCODE_MARKER}\n`)).toBe(true);
-      expect(content).toContain("export const SuperskillWorktree = async ({ $ }) => ({");
+      expect(content).toContain("export default {");
+      expect(content).toContain('id: "superskill.worktree"');
+      expect(content).toContain("async setup(ctx) {");
+      expect(content).toContain('ctx.shell.hook("create.before"');
       expect(content).toContain('"shell.env": async (_input, output) => {');
       expect(content).toContain('process.env.SUPERSKILL_CLI ?? "superskill-cli"');
-      expect(content).toContain("await $`${cli} worktree env --json`.quiet().nothrow();");
-      expect(content).toContain("Object.assign(output.env, JSON.parse(result.stdout))");
+      expect(content).toContain('execFile(cli, ["worktree", "env", "--json"]');
+      expect(content).toContain("Object.assign(env, JSON.parse(stdout))");
+    });
+
+    it("defines a default export that satisfies the OpenCode V2 plugin contract", async () => {
+      await opencodeAdapter.install(ctxFor(repo));
+      const modulePath = join(repo, ".opencode", "plugins", "superskill-worktree.mjs");
+      await writeFile(modulePath, await readFile(opencodePath(repo), "utf-8"));
+      const mod = (await import(/* @vite-ignore */ pathToFileURL(modulePath).href)) as {
+        default: { id: unknown; setup: unknown; server: unknown };
+      };
+
+      expect(typeof mod.default.id).toBe("string");
+      expect(typeof mod.default.setup).toBe("function");
+      expect(typeof mod.default.server).toBe("function");
+
+      type ShellEvent = { env?: Record<string, string> };
+      let registered: { name: string; fn: (event: ShellEvent) => Promise<void> } | undefined;
+      const stubCtx = {
+        shell: {
+          hook: async (name: string, fn: (event: ShellEvent) => Promise<void>) => {
+            registered = { name, fn };
+          },
+        },
+      };
+      await (mod.default.setup as (ctx: unknown) => Promise<void>)(stubCtx);
+      expect(registered?.name).toBe("create.before");
+
+      const fakeCli = join(repo, "fake-superskill-cli.sh");
+      await writeFile(fakeCli, '#!/bin/sh\necho \'{"SUPERSKILL_TEST_FLAG":"1"}\'\n');
+      await chmod(fakeCli, 0o755);
+      const previousCli = process.env.SUPERSKILL_CLI;
+      try {
+        process.env.SUPERSKILL_CLI = fakeCli;
+        const event: ShellEvent = {};
+        await registered?.fn(event);
+        expect(event.env?.SUPERSKILL_TEST_FLAG).toBe("1");
+
+        process.env.SUPERSKILL_CLI = join(repo, "missing-superskill-cli");
+        const failing: ShellEvent = {};
+        await registered?.fn(failing);
+        expect(failing.env).toEqual({});
+      } finally {
+        if (previousCli === undefined) delete process.env.SUPERSKILL_CLI;
+        else process.env.SUPERSKILL_CLI = previousCli;
+      }
     });
 
     it("is idempotent", async () => {

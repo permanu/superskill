@@ -374,7 +374,7 @@ superskill worktree gc --undo <journalId>
 | Host | Hook surface | What superskill writes | Notes |
 |---|---|---|---|
 | Claude Code | `SessionStart` hook | `.claude/settings.local.json` | runs `worktree bootstrap --source session --claude-env`, appending exports to `$CLAUDE_ENV_FILE` |
-| OpenCode | `shell.env` plugin | `.opencode/plugins/superskill-worktree.js` | runs `worktree env --json` and merges the env into every shell |
+| OpenCode | plugin `setup` (`ctx.shell.hook`) | `.opencode/plugins/superskill-worktree.js` | V2 default-export definition with a V1 `server()` fallback; runs `worktree env --json` and merges the env into every shell |
 | Codex CLI | `SessionStart` hook | `.codex/hooks.json` | env injected when the session starts |
 | Cursor | `sessionStart` hook | `.cursor/hooks.json` | notes when a Claude Code bootstrap hook is already present (auto-import) |
 | Gemini CLI | `SessionStart` hook | `.gemini/settings.json` | env injected when the session starts |
