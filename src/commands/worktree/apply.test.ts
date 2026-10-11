@@ -50,6 +50,7 @@ describe("worktree apply", () => {
   let base: string;
   let repo: string;
   let previous: string;
+  let previousCacheRoot: string | undefined;
 
   beforeEach(async () => {
     previous = process.cwd();
@@ -61,11 +62,15 @@ describe("worktree apply", () => {
     await writeFile(join(repo, "package.json"), '{"name":"apply-test","private":true}\n');
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-q", "-m", "init"]);
+    previousCacheRoot = process.env.SUPERSKILL_CACHE_ROOT;
+    process.env.SUPERSKILL_CACHE_ROOT = join(base, "cache");
     process.chdir(repo);
   });
 
   afterEach(async () => {
     process.chdir(previous);
+    if (previousCacheRoot === undefined) delete process.env.SUPERSKILL_CACHE_ROOT;
+    else process.env.SUPERSKILL_CACHE_ROOT = previousCacheRoot;
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 

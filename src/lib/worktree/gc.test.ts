@@ -137,6 +137,38 @@ describe("worktree gc", () => {
       expect(byPath.get("repo-a/go-build")?.ageDays).toBeGreaterThanOrEqual(0);
     });
 
+    it("promotes nested cache dirs with dead marker paths to orphaned auto tier", async () => {
+      await mkdir(join(cacheRoot, "repo-a", "cargo-build", "dead1"), { recursive: true });
+      await writeFile(join(cacheRoot, "repo-a", "cargo-build", "dead1", "out"), "d".repeat(128));
+      const markers = join(cacheRoot, "repo-a", ".worktrees");
+      await mkdir(markers, { recursive: true });
+      await writeFile(join(markers, "dead1"), join(base, "gone-worktree\n"));
+      await writeFile(join(markers, "hash1"), `${repo}\n`);
+
+      const candidates = await scanCacheRoot({ cacheRoot });
+      const byPath = new Map(candidates.map((entry) => [entry.path.slice(cacheRoot.length + 1), entry]));
+
+      expect(byPath.get("repo-a/cargo-build/dead1")).toMatchObject({
+        tool: "rust",
+        tier: "auto",
+        orphaned: true,
+      });
+      expect(byPath.get("repo-a/cargo-build/hash1")).toMatchObject({ tier: "consent" });
+      expect(byPath.get("repo-a/cargo-build/hash1")?.orphaned).toBeUndefined();
+      expect(byPath.get("repo-a/cargo-build")?.orphaned).toBeUndefined();
+      expect(byPath.get("repo-a/cargo-build")?.tier).toBe("consent");
+      const relative = candidates.map((entry) => entry.path.slice(cacheRoot.length + 1));
+      expect(relative.some((entry) => entry.includes(".worktrees"))).toBe(false);
+    });
+
+    it("keeps consent tier for nested dirs without a marker", async () => {
+      await mkdir(join(cacheRoot, "repo-a", "cargo-build", "nomarker1"), { recursive: true });
+      const candidates = await scanCacheRoot({ cacheRoot });
+      const entry = candidates.find((item) => item.path.endsWith("nomarker1"));
+      expect(entry?.tier).toBe("consent");
+      expect(entry?.orphaned).toBeUndefined();
+    });
+
     it("scopes the scan to a single repo id", async () => {
       const candidates = await scanCacheRoot({ cacheRoot, repoId: "repo-b" });
       expect(candidates).toHaveLength(1);

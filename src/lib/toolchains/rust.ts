@@ -13,6 +13,13 @@ export function commandExists(cmd: string): boolean {
   return false;
 }
 
+export const DEFAULT_SCCACHE_CACHE_SIZE = "10G";
+
+export function sccacheCacheSize(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.SUPERSKILL_SCCACHE_CACHE_SIZE?.trim();
+  return override && override.length > 0 ? override : DEFAULT_SCCACHE_CACHE_SIZE;
+}
+
 export const rustProvider: ToolchainProvider = {
   id: "rust",
   languages: ["rust"],
@@ -30,7 +37,7 @@ export const rustProvider: ToolchainProvider = {
       vars.push(
         { name: "RUSTC_WRAPPER", value: "sccache" },
         { name: "SCCACHE_DIR", value: join(ctx.cacheNamespace, "sccache") },
-        { name: "SCCACHE_CACHE_SIZE", value: "20G" },
+        { name: "SCCACHE_CACHE_SIZE", value: sccacheCacheSize() },
         { name: "SCCACHE_BASEDIRS", value: ctx.projectRoot },
         { name: "CARGO_INCREMENTAL", value: "0" },
       );

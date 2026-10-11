@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { worktreeBootstrapCommand } from "../../commands/worktree/bootstrap.js";
+import { resolveRepoIdentity, worktreeKey } from "./paths.js";
 import { copyTreeCoW, seedWorktree, verifySeededFiles } from "./seed.js";
 import {
   POLICY_SCHEMA_VERSION,
@@ -273,6 +274,7 @@ describe("worktree seed", () => {
 describe("worktree bootstrap", () => {
   let base: string;
   let repo: string;
+  let previousCacheRoot: string | undefined;
 
   beforeEach(async () => {
     base = await mkdtemp(join(tmpdir(), "worktree-bootstrap-"));
@@ -282,9 +284,13 @@ describe("worktree bootstrap", () => {
     await writeFile(join(repo, "package.json"), '{"name":"bootstrap-test","private":true}\n');
     await git(repo, ["add", "."]);
     await git(repo, ["commit", "-q", "-m", "init"]);
+    previousCacheRoot = process.env.SUPERSKILL_CACHE_ROOT;
+    process.env.SUPERSKILL_CACHE_ROOT = join(base, "cache");
   });
 
   afterEach(async () => {
+    if (previousCacheRoot === undefined) delete process.env.SUPERSKILL_CACHE_ROOT;
+    else process.env.SUPERSKILL_CACHE_ROOT = previousCacheRoot;
     await rm(base, { recursive: true, force: true });
   });
 
@@ -326,6 +332,14 @@ describe("worktree bootstrap", () => {
       expect(result.repoId).toBe("0123456789abcdef");
       expect(result.seeded?.seeded.map((s) => s.relative)).toEqual(["node_modules"]);
       expect(existsSync(join(process.cwd(), "node_modules", "pkg", "index.js"))).toBe(true);
+      const identity = await resolveRepoIdentity(process.cwd());
+      const marker = join(
+        process.env.SUPERSKILL_CACHE_ROOT!,
+        identity.repoId,
+        ".worktrees",
+        worktreeKey(process.cwd()),
+      );
+      expect(existsSync(marker)).toBe(true);
     } finally {
       process.chdir(previous);
     }

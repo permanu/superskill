@@ -12,7 +12,9 @@ import {
   type HookInstallResult,
   type HookUninstallResult,
 } from "./hooks.js";
-import { repoStateDir } from "./paths.js";
+import { migrateLegacyNamespace, recordWorktreeMarker } from "./namespace.js";
+import { cacheNamespace, repoStateDir, worktreeKey } from "./paths.js";
+import { listWorktrees } from "./safety.js";
 import { POLICY_SCHEMA_VERSION, readPolicy, writePolicy, type WorktreePolicy } from "./state.js";
 
 export interface ActivationOptions {
@@ -127,6 +129,7 @@ export async function activateRepo(
 
   const policyChanged = policyDiffers(existing, policy);
   const adapterContext = await buildAdapterContext(worktreeRoot, built.repoRoot, cliPath);
+  const namespaceIdentity = { repoId: built.repoId, legacyRepoId: built.legacyRepoId };
   let changed = policyChanged;
   let hook: HookInstallResult | null = null;
   let adapters: AdapterActionResult[] = [];
@@ -137,6 +140,8 @@ export async function activateRepo(
         ? "dry-run: no policy, hook, or adapter changes written"
         : "consent required: pass --yes (CLI) or confirm=true (MCP)",
     );
+    const migration = await migrateLegacyNamespace(namespaceIdentity, { dryRun: true });
+    if (migration.note !== null) notes.push(migration.note);
     if (hooksEnabled) {
       hook = await installPostCheckoutHook(worktreeRoot, { dryRun: true, cliPath });
       changed = changed || hook.changed;
@@ -162,6 +167,18 @@ export async function activateRepo(
 
   await writePolicy(worktreeRoot, policy);
   notes.push(`policy written to ${policyPath}`);
+
+  const migration = await migrateLegacyNamespace(namespaceIdentity);
+  if (migration.note !== null) notes.push(migration.note);
+  try {
+    const cacheNs = cacheNamespace(built.repoId);
+    for (const worktree of await listWorktrees(worktreeRoot)) {
+      await recordWorktreeMarker(cacheNs, worktreeKey(worktree.path), worktree.path);
+    }
+  } catch (err) {
+    notes.push(`worktree marker registration failed: ${(err as Error).message}`);
+    console.error(`[worktree-activate] marker registration failed: ${(err as Error).message}`);
+  }
 
   if (hooksEnabled) {
     hook = await installPostCheckoutHook(worktreeRoot, { cliPath });

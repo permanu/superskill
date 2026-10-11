@@ -236,7 +236,7 @@ export function renderWorktreeGc(result: unknown): string {
       for (const candidate of plan.selected.slice(0, 40)) {
         const size = formatBytes(candidate.bytes).padStart(9);
         const age = (candidate.ageDays === null ? "?" : `${Math.floor(candidate.ageDays)}d`).padStart(5);
-        const tier = candidate.tier.padEnd(9);
+        const tier = (candidate.orphaned === true ? `${candidate.tier}/orphan` : candidate.tier).padEnd(9);
         const tool = candidate.tool.padEnd(9);
         lines.push(`  ${size}  ${age}  ${tier} ${tool} ${displayPath(candidate.path, plan.cacheRoot)}`);
       }

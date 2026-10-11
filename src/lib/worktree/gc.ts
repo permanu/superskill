@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { ALL_PROVIDERS } from "../toolchains/index.js";
 import type { PruneSpec } from "../toolchains/types.js";
 import { buildProviderContext } from "./context.js";
+import { markerTargetMissing, readWorktreeMarkers } from "./namespace.js";
 import { platformCacheRoot, resolveRepoIdentity } from "./paths.js";
 import { duBytes, quarantinePaths, type QuarantineResult } from "./quarantine.js";
 import { listWorktrees } from "./safety.js";
@@ -27,6 +28,7 @@ export interface GcCandidate {
   bytes: number | null;
   ageDays: number | null;
   tier: GcTier;
+  orphaned?: boolean;
   journalHint?: string;
 }
 
@@ -129,9 +131,13 @@ async function buildCandidate(
   repoId: string,
   inference: ToolInference,
   measure: boolean,
+  orphaned = false,
 ): Promise<GcCandidate> {
   const [bytes, ageDays] = await Promise.all([measure ? duBytes(dir) : Promise.resolve(0), ageDaysOf(dir)]);
-  return { path: dir, repoId, tool: inference.tool, bytes, ageDays, tier: inference.tier };
+  const tier: GcTier = orphaned ? "auto" : inference.tier;
+  const candidate: GcCandidate = { path: dir, repoId, tool: inference.tool, bytes, ageDays, tier };
+  if (orphaned) candidate.orphaned = true;
+  return candidate;
 }
 
 export async function scanCacheRoot(
@@ -169,6 +175,7 @@ export async function scanCacheRoot(
       }
       continue;
     }
+    const markers = await readWorktreeMarkers(repoDir);
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
       const dir = join(repoDir, entry.name);
@@ -186,7 +193,10 @@ export async function scanCacheRoot(
           if (!child.isDirectory() || child.name.startsWith(".")) continue;
           const childInference = inferTool(child.name);
           const effective = childInference.tool === "unknown" ? inference : childInference;
-          candidates.push(await buildCandidate(join(dir, child.name), repoId, effective, measure));
+          const markerTarget = markers.get(child.name);
+          const orphaned =
+            markerTarget !== undefined && (await markerTargetMissing(markerTarget));
+          candidates.push(await buildCandidate(join(dir, child.name), repoId, effective, measure, orphaned));
         }
       }
     }

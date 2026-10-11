@@ -82,10 +82,42 @@ describe("rustProvider", () => {
     );
     expect(map.get("RUSTC_WRAPPER")?.value).toBe("sccache");
     expect(map.get("SCCACHE_DIR")?.value).toBe(join(ctx.cacheNamespace, "sccache"));
-    expect(map.get("SCCACHE_CACHE_SIZE")?.value).toBe("20G");
+    expect(map.get("SCCACHE_CACHE_SIZE")?.value).toBe("10G");
     expect(map.get("SCCACHE_BASEDIRS")?.value).toBe(ctx.projectRoot);
     expect(map.get("CARGO_INCREMENTAL")?.value).toBe("0");
     expect(map.has("CARGO_TARGET_DIR")).toBe(false);
+  });
+
+  it("honors the SUPERSKILL_SCCACHE_CACHE_SIZE override", async () => {
+    const binDir = join(tmp, "bin");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(join(binDir, "sccache"), "");
+    process.env.PATH = binDir;
+    const previous = process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
+    process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = "5G";
+    try {
+      const map = toMap(await rustProvider.env(makeCtx(tmp)));
+      expect(map.get("SCCACHE_CACHE_SIZE")?.value).toBe("5G");
+    } finally {
+      if (previous === undefined) delete process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
+      else process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = previous;
+    }
+  });
+
+  it("ignores a blank SUPERSKILL_SCCACHE_CACHE_SIZE", async () => {
+    const binDir = join(tmp, "bin");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(join(binDir, "sccache"), "");
+    process.env.PATH = binDir;
+    const previous = process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
+    process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = "   ";
+    try {
+      const map = toMap(await rustProvider.env(makeCtx(tmp)));
+      expect(map.get("SCCACHE_CACHE_SIZE")?.value).toBe("10G");
+    } finally {
+      if (previous === undefined) delete process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
+      else process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = previous;
+    }
   });
 
   it("matches machine sccache availability when PATH is untouched", async () => {

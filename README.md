@@ -258,6 +258,8 @@ superskill worktree audit --worktree feat-login --json
 
 Read-only. Options: `--json`; `--eval` (shell `export` lines, the form hooks use); `--shell <sh|fish|powershell>`; `--providers <ids...>` (restrict to detected toolchains such as `rust`, `go`, `node`, `python`, `swift`).
 
+Cache namespaces are keyed by repo identity: the normalized `origin` URL, or the repo's git dir when there is no remote. A `file://` or plain-path remote is followed (bounded, cycle-safe) to the source repo's own identity, so local clones share one namespace; namespaces created under the old per-path scheme are renamed into the shared identity on the next `worktree bootstrap`/`activate` run. `SUPERSKILL_CACHE_ROOT` relocates the cache root; `SUPERSKILL_SCCACHE_CACHE_SIZE` overrides the sccache size cap (default `10G`).
+
 ```bash
 eval "$(superskill worktree env --eval)"
 superskill worktree env --json
@@ -294,7 +296,7 @@ Options:
 | `--undo <journalId>` | Restore a quarantine journal | — |
 | `--json`, `--verbose` | Machine-readable output / per-path skip reasons (CLI only) | off |
 
-Tiering: `auto` (compiler/build caches such as `go-build`, `sccache`, `pnpm-store`, `uv`) is selected only when at least 30 days old unless you pass an explicit age or tier; `consent` (e.g. `cargo-build`, `node-modules`) requires `--tier consent` or an explicit age filter. Tool-native prunes (`go clean -cache`, `pnpm store prune`, `uv cache prune --ci`, …) are printed as informational commands — run them through the tool when you want them.
+Tiering: `auto` (compiler/build caches such as `go-build`, `sccache`, `pnpm-store`, `uv`) is selected only when at least 30 days old unless you pass an explicit age or tier; `consent` (e.g. `cargo-build`, `node-modules`) requires `--tier consent` or an explicit age filter. Nested per-worktree dirs (e.g. `cargo-build/<worktreeKey>`) are promoted to `auto` and tagged `orphan` once their registered worktree path is gone — worktrees register a marker under `<repoHash>/.worktrees/` via the session/worktree-create bootstrap or `worktree activate`. Tool-native prunes (`go clean -cache`, `pnpm store prune`, `uv cache prune --ci`, …) are printed as informational commands — run them through the tool when you want them.
 
 ```bash
 superskill worktree gc                           # report for this repo (dry run)

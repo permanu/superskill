@@ -2,6 +2,7 @@
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { CommandContext } from "../../core/types.js";
+import { namespaceUpkeep } from "../../lib/worktree/namespace.js";
 import { seedWorktree, type SeedResult } from "../../lib/worktree/seed.js";
 import { readPolicy } from "../../lib/worktree/state.js";
 
@@ -167,6 +168,12 @@ export async function worktreeBootstrapCommand(
     }
 
     const source = args.source ?? "worktree-create";
+    const bootstrapDisabled =
+      source === "worktree-create" && process.env.SUPERSKILL_WORKTREE_BOOTSTRAP === "0";
+    if (!bootstrapDisabled) {
+      const upkeep = await namespaceUpkeep(worktreeRoot);
+      notes.push(...upkeep.notes);
+    }
 
     if (source === "session") {
       if (!args.claudeEnv) {

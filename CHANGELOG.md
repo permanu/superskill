@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-10-11
+
+### Fixed
+- Repo identity for local-path remotes (`file://`, absolute/relative paths): the identity now follows the chain to the source repo's own remote (or its git dir), so local clones share one cache namespace instead of each getting a unique snowflake namespace. Legacy per-path namespaces are renamed into the shared identity on the next `worktree bootstrap` (session or worktree-create) or `worktree activate`, preserving cached content.
+- Per-worktree cache dirs (`cargo-build/<worktreeKey>`) whose worktree path no longer exists are flagged as orphans and promoted from consent to auto tier in `worktree gc`/hygiene, so age-based reclamation actually reaches them. Worktrees register liveness markers under `<repoHash>/.worktrees/` via bootstrap and `worktree activate`.
+- `SCCACHE_CACHE_SIZE` no longer hardcodes `20G` (2x the sccache default); it now defaults to `10G` and can be overridden with `SUPERSKILL_SCCACHE_CACHE_SIZE`.
+
 ## [0.11.1] - 2026-10-10
 
 ### Fixed

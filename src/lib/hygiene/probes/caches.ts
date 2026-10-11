@@ -85,6 +85,12 @@ function managedItem(
     candidate.tier === "consent"
       ? `superskill-cli worktree gc --older-than ${floor}d --tier consent --include ${quoteShell(target)} --apply`
       : `superskill-cli worktree gc --older-than ${floor}d --include ${quoteShell(target)} --apply`;
+  const reason =
+    candidate.orphaned === true
+      ? `orphaned worktree cache (registered worktree path is gone), ${ageLabel(candidate.ageDays)}`
+      : candidate.tier === "consent"
+        ? `large cache (${formatBytes(bytes, { nullLabel: "unknown size", maxUnit: "TB" })}), ${ageLabel(candidate.ageDays)} — consent required`
+        : `rebuildable cache, ${ageLabel(candidate.ageDays)} (auto tier)`;
   return {
     id: `cache:${hashId(candidate.path)}`,
     category: "caches",
@@ -94,10 +100,7 @@ function managedItem(
     ageDays: candidate.ageDays,
     tier: candidate.tier,
     due: isDue(candidate.tier, bytes, candidate.ageDays, policy),
-    reason:
-      candidate.tier === "consent"
-        ? `large cache (${formatBytes(bytes, { nullLabel: "unknown size", maxUnit: "TB" })}), ${ageLabel(candidate.ageDays)} — consent required`
-        : `rebuildable cache, ${ageLabel(candidate.ageDays)} (auto tier)`,
+    reason,
     plan,
     meta: { repoId: candidate.repoId, tool: candidate.tool, tier: candidate.tier },
   };

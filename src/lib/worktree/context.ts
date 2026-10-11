@@ -12,6 +12,7 @@ export interface BuiltContext {
   repoRoot: string;
   repoId: string;
   remoteHash: string | null;
+  legacyRepoId: string | null;
   stacks: string[];
 }
 
@@ -52,6 +53,7 @@ export async function buildProviderContext(worktreeRoot: string): Promise<BuiltC
     repoRoot,
     repoId: identity.repoId,
     remoteHash: identity.remoteHash,
+    legacyRepoId: identity.legacyRepoId,
     stacks: stack.languages,
   };
 }

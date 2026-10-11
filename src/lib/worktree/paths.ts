@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir, platform } from "node:os";
-import { join, resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
@@ -99,9 +100,79 @@ export function normalizeRemote(url: string): string {
   }
 }
 
+export function localRemotePath(remote: string): string | null {
+  const value = remote.trim();
+  if (value.length === 0) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    if (!/^file:\/\//i.test(value)) return null;
+    try {
+      return fileURLToPath(value);
+    } catch {
+      return null;
+    }
+  }
+  if (/^[^@/\s]+@[^:/\s[\]]+:/.test(value)) return null;
+  return value;
+}
+
+async function realpathOrNull(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch {
+    return null;
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EACCES" && code !== "ENOTDIR") {
+      console.error(`[worktree-paths] cannot stat ${path}: ${code ?? String(err)}`);
+    }
+    return false;
+  }
+}
+
+const LOCAL_REMOTE_MAX_DEPTH = 8;
+
+function expandLocalPath(localPath: string, fromDir: string): string {
+  const expanded = localPath.startsWith("~/") ? join(homedir(), localPath.slice(2)) : localPath;
+  return isAbsolute(expanded) ? expanded : resolve(fromDir, expanded);
+}
+
+async function resolveLocalRemoteHash(
+  localPath: string,
+  worktreeRoot: string,
+): Promise<string> {
+  let current = (await realpathOrNull(expandLocalPath(localPath, worktreeRoot)))
+    ?? expandLocalPath(localPath, worktreeRoot);
+  const seen = new Set<string>();
+  for (let depth = 0; depth < LOCAL_REMOTE_MAX_DEPTH; depth += 1) {
+    if (seen.has(current) || !(await exists(current))) break;
+    seen.add(current);
+    const nestedRemote = await gitRemoteUrl(current);
+    if (nestedRemote === null) break;
+    const nestedLocal = localRemotePath(nestedRemote);
+    if (nestedLocal === null) return hashId(normalizeRemote(nestedRemote));
+    const next = expandLocalPath(nestedLocal, current);
+    current = (await realpathOrNull(next)) ?? next;
+  }
+  if (await exists(current)) {
+    const nestedCommon = await gitCommonDir(current);
+    if (nestedCommon !== null) {
+      return hashId((await realpathOrNull(nestedCommon)) ?? nestedCommon);
+    }
+  }
+  return hashId(current);
+}
+
 export interface RepoIdentity {
   repoId: string;
   remoteHash: string | null;
+  legacyRepoId: string | null;
   commonDir: string | null;
   topLevel: string | null;
 }
@@ -112,18 +183,24 @@ export async function resolveRepoIdentity(worktreeRoot: string): Promise<RepoIde
     gitTopLevel(worktreeRoot),
     gitRemoteUrl(worktreeRoot),
   ]);
-  const remoteHash = remote ? hashId(normalizeRemote(remote)) : null;
-  const fallbackSource = commonDir ?? topLevel ?? resolve(worktreeRoot);
-  let fallback = fallbackSource;
-  try {
-    const { realpath } = await import("node:fs/promises");
-    fallback = await realpath(fallbackSource);
-  } catch {
-    fallback = fallbackSource;
+  let remoteHash: string | null = null;
+  let legacyRepoId: string | null = null;
+  if (remote) {
+    const localPath = localRemotePath(remote);
+    if (localPath === null) {
+      remoteHash = hashId(normalizeRemote(remote));
+    } else {
+      remoteHash = await resolveLocalRemoteHash(localPath, worktreeRoot);
+      const legacy = hashId(normalizeRemote(remote));
+      if (legacy !== remoteHash) legacyRepoId = legacy;
+    }
   }
+  const fallbackSource = commonDir ?? topLevel ?? resolve(worktreeRoot);
+  const fallback = (await realpathOrNull(fallbackSource)) ?? fallbackSource;
   return {
     repoId: remoteHash ?? hashId(fallback),
     remoteHash,
+    legacyRepoId,
     commonDir,
     topLevel: topLevel ?? worktreeRoot,
   };
