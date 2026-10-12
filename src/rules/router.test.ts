@@ -1,12 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { formatPlanDerivation, formatRuleDerivation } from "./explain.js";
-import { buildIndex, matchGlob } from "./index-builder.js";
+import { buildIndex, matchGlob, simpleStem, termsMatch } from "./index-builder.js";
 import type { RulesIndex } from "./index-builder.js";
 import { loadRules } from "./loader.js";
+import type { ParsedRule } from "./loader.js";
 import { buildPrincipleIndex, loadPrinciples } from "./principles.js";
 import type { ParsedPrinciple, PrinciplesIndex } from "./principles.js";
-import { DEFAULT_BUDGET_TOKENS, inferPhase, route } from "./router.js";
+import { DEFAULT_BUDGET_TOKENS, inferPhase, isLanguageWideGlob, route } from "./router.js";
 import { estimateRuleTokens } from "./select.js";
 
 const FIXTURE_ROOT = fileURLToPath(new URL("./__fixtures__/rules/", import.meta.url));
@@ -14,6 +15,22 @@ const PRINCIPLES_FIXTURE_ROOT = fileURLToPath(new URL("./__fixtures__/principles
 
 let index: RulesIndex;
 let principlesIndex: PrinciplesIndex;
+
+function syntheticRule(overrides: Partial<ParsedRule> & { id: string }): ParsedRule {
+  return {
+    lang: "typescript",
+    prefix: "test",
+    title: `Title ${overrides.id}`,
+    severity: "must",
+    enforce: "review",
+    status: "verified",
+    triggers: { keywords: [], files: [], symbols: [] },
+    sourcesCount: 0,
+    body: "",
+    path: `typescript/${overrides.id}.md`,
+    ...overrides,
+  };
+}
 
 beforeAll(async () => {
   const { rules } = await loadRules(FIXTURE_ROOT);
@@ -34,20 +51,36 @@ describe("route language gating", () => {
     expect(plan.langs).toEqual(["rust"]);
   });
 
-  it("admits a language from file extensions", () => {
-    const plan = route({ prompt: "unrelated words here", stack: ["typescript"], files: ["src/lib.rs"] }, index);
-    expect(plan.rules.map((rule) => rule.id)).toEqual(["rust-own-avoid-clone", "rust-style-naming"]);
-    expect(plan.rules[0]?.reason).toBe("file **/*.rs (1x)");
+  it("uses file extensions as a language gate rather than a score source", () => {
+    const gated = route({ prompt: "unrelated words here", stack: ["typescript"], files: ["src/lib.rs"] }, index);
+    expect(gated.langs).toEqual(["rust", "typescript"]);
+    expect(gated.rules).toEqual([]);
+
+    const selected = route({ prompt: "clone the repository", stack: [], files: ["src/lib.rs"] }, index);
+    expect(selected.langs).toEqual(["rust"]);
+    expect(selected.rules.map((entry) => entry.id)).toEqual(["rust-own-avoid-clone"]);
   });
 
   it("is permissive when there is no language evidence", () => {
     const plan = route({ prompt: "parse json", stack: [] }, index);
     expect(plan.rules.map((rule) => rule.id)).toEqual(["typescript-err-parse-boundary"]);
   });
+
+  it("does not treat a prose 'go' as the Go language without context", () => {
+    const plan = route({ prompt: "go faster on this", stack: [] }, index);
+    expect(plan.langs).toEqual(["python", "rust", "typescript"]);
+    expect(plan.rules).toEqual([]);
+  });
+
+  it("treats an ambiguous language token as a language when the prompt provides context", () => {
+    const plan = route({ prompt: "write a go service", stack: [] }, index);
+    expect(plan.langs).toEqual(["go"]);
+    expect(plan.rules).toEqual([]);
+  });
 });
 
 describe("route scoring and ordering", () => {
-  it("selects by keyword and file hit and explains the derivation", () => {
+  it("selects by keyword hits without language-wide glob noise", () => {
     const plan = route(
       { prompt: "parse the JSON boundary in the handler", stack: ["typescript"], files: ["src/handler.ts"] },
       index,
@@ -56,16 +89,72 @@ describe("route scoring and ordering", () => {
       {
         id: "typescript-err-parse-boundary",
         title: "Parse external input at the boundary",
-        reason: "keyword 'boundary' (1x), keyword 'json' (1x), keyword 'parse' (1x), file **/*.ts (1x)",
+        reason: "keyword 'boundary' (1x), keyword 'json' (1x), keyword 'parse' (1x)",
       },
     ]);
     expect(plan.explain).toEqual([
       {
         id: "typescript-err-parse-boundary",
-        matched: ["keyword 'boundary' (1x)", "keyword 'json' (1x)", "keyword 'parse' (1x)", "file **/*.ts (1x)"],
-        score: 130,
+        matched: ["keyword 'boundary' (1x)", "keyword 'json' (1x)", "keyword 'parse' (1x)"],
+        score: 30,
       },
     ]);
+  });
+
+  it("ignores language-wide globs and scores discriminative globs below keywords", () => {
+    const wide = syntheticRule({ id: "typescript-test-wide", triggers: { keywords: [], files: ["**/*.ts"], symbols: [] } });
+    const globbed = syntheticRule({
+      id: "typescript-z-test-glob",
+      triggers: { keywords: [], files: ["**/*_test.ts"], symbols: [] },
+    });
+    const keyword = syntheticRule({
+      id: "typescript-a-test-keyword",
+      triggers: { keywords: ["cache"], files: [], symbols: [] },
+    });
+    const scoringIndex = buildIndex([wide, globbed, keyword]);
+    const plan = route({ prompt: "cache", stack: ["typescript"], files: ["src/a_test.ts"] }, scoringIndex);
+    expect(plan.rules.map((entry) => entry.id)).toEqual(["typescript-a-test-keyword", "typescript-z-test-glob"]);
+    expect(plan.explain.map((entry) => entry.score)).toEqual([10, 4]);
+  });
+
+  it("breaks equal scores by keyword hit count before id", () => {
+    const keywordHeavy = syntheticRule({
+      id: "typescript-z-keyword-heavy",
+      triggers: { keywords: ["cache"], files: [], symbols: [] },
+    });
+    const fileHeavy = syntheticRule({
+      id: "typescript-a-file-heavy",
+      triggers: { keywords: [], files: ["**/*_test.ts"], symbols: [] },
+    });
+    const scoringIndex = buildIndex([keywordHeavy, fileHeavy]);
+    const plan = route(
+      {
+        prompt: "cache cache",
+        stack: ["typescript"],
+        files: ["a_test.ts", "b_test.ts", "c_test.ts", "d_test.ts", "e_test.ts"],
+      },
+      scoringIndex,
+    );
+    expect(plan.explain.map((entry) => entry.score)).toEqual([20, 20]);
+    expect(plan.rules.map((entry) => entry.id)).toEqual(["typescript-z-keyword-heavy", "typescript-a-file-heavy"]);
+  });
+
+  it("breaks equal scores and keyword hits by symbol hit count before id", () => {
+    const symbolHeavy = syntheticRule({
+      id: "typescript-z-symbol-heavy",
+      triggers: { keywords: ["cache"], files: [], symbols: ["Foo"] },
+    });
+    const fileBacked = syntheticRule({
+      id: "typescript-a-file-backed",
+      triggers: { keywords: ["cache"], files: ["**/*_test.ts"], symbols: [] },
+    });
+    const scoringIndex = buildIndex([symbolHeavy, fileBacked]);
+    const plan = route(
+      { prompt: "cache Foo Foo Foo Foo", stack: ["typescript"], files: ["a_test.ts"] },
+      scoringIndex,
+    );
+    expect(plan.explain.map((entry) => entry.score)).toEqual([14, 14]);
+    expect(plan.rules.map((entry) => entry.id)).toEqual(["typescript-z-symbol-heavy", "typescript-a-file-backed"]);
   });
 
   it("orders by severity tier before score", () => {
@@ -266,6 +355,40 @@ describe("matchGlob", () => {
   });
 });
 
+describe("isLanguageWideGlob", () => {
+  it("detects language-wide globs for the rule's own language only", () => {
+    expect(isLanguageWideGlob("**/*.ts", "typescript")).toBe(true);
+    expect(isLanguageWideGlob("**/*.tsx", "typescript")).toBe(true);
+    expect(isLanguageWideGlob("**/*.go", "go")).toBe(true);
+    expect(isLanguageWideGlob("**/*.ts", "rust")).toBe(false);
+    expect(isLanguageWideGlob("**/*_test.go", "go")).toBe(false);
+    expect(isLanguageWideGlob("**/go.mod", "go")).toBe(false);
+    expect(isLanguageWideGlob("src/*.ts", "typescript")).toBe(false);
+  });
+});
+
+describe("termsMatch", () => {
+  const match = (a: string, b: string): boolean => termsMatch(simpleStem(a), simpleStem(b));
+
+  it("matches equal stems", () => {
+    expect(match("cache", "cache")).toBe(true);
+  });
+
+  it("matches stems that differ only by a restored trailing e", () => {
+    expect(match("cache", "caching")).toBe(true);
+    expect(match("caches", "cache")).toBe(true);
+    expect(match("parsing", "parse")).toBe(true);
+    expect(match("validating", "validate")).toBe(true);
+    expect(match("explode", "exploding")).toBe(true);
+  });
+
+  it("does not match unrelated stems", () => {
+    expect(match("cache", "cactus")).toBe(false);
+    expect(match("parse", "parser")).toBe(false);
+    expect(match("explode", "explosion")).toBe(false);
+  });
+});
+
 describe("inferPhase", () => {
   it("routes common task verbs to their phase", () => {
     expect(inferPhase("fix the retry bug")).toBe("implement");
@@ -296,6 +419,11 @@ describe("inferPhase", () => {
     expect(inferPhase("")).toBe("explore");
     expect(inferPhase("think about the problem")).toBe("explore");
   });
+
+  it("picks the phase of the earliest matched keyword, not the first matching group", () => {
+    expect(inferPhase("add a null check to the parser")).toBe("implement");
+    expect(inferPhase("plan the refactor")).toBe("explore");
+  });
 });
 
 
@@ -319,5 +447,22 @@ describe("catalog relevance", () => {
     expect(ids("review `this` usage")).toContain("typescript-api-this-return-type");
     expect(ids("review this type in fluent APIs")).toContain("typescript-api-this-return-type");
     expect(ids("review this.value access")).toContain("typescript-api-this-return-type");
+  });
+
+  it("selects cache rules by keyword instead of letting language-wide globs flood the plan", () => {
+    const plan = route(
+      { prompt: "fix caching bug in cache layer", stack: ["typescript"], files: ["src/cache.ts"] },
+      catalogIndex,
+    );
+    expect(plan.rules.map((entry) => entry.id)).toContain("typescript-mem-bounded-cache");
+    expect(plan.explain.map((entry) => entry.id).filter((id) => id.includes("-anti-"))).toEqual([]);
+  });
+
+  it("does not select rules from language-wide globs alone", () => {
+    const plan = route(
+      { prompt: "unrelated words here", stack: ["typescript"], files: ["src/cache.ts"] },
+      catalogIndex,
+    );
+    expect(plan.rules).toEqual([]);
   });
 });

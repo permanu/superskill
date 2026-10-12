@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph } from "../../lib/graph/store.js";
@@ -9,6 +9,13 @@ import { listInstalledSkills } from "../../lib/skill-installer.js";
 import type { SkillNode, ProjectNode, SessionNode } from "../../lib/graph/schema.js";
 
 export const UNAUDITED_MARKER = ".unaudited-superskill";
+
+export interface InstalledSkillProvenance {
+  name: string;
+  source: string;
+  audit_summary: string;
+  unaudited: boolean;
+}
 
 export interface StatusResult {
   initialized: boolean;
@@ -31,31 +38,72 @@ export interface StatusResult {
   graph_path: string;
   unaudited_count: number;
   unaudited_skills: string[];
+  installed_skills: InstalledSkillProvenance[];
   warnings: string[];
 }
 
-export async function findUnauditedInstalledSkills(): Promise<string[]> {
-  const names: string[] = [];
-  for (const skill of await listInstalledSkills()) {
-    try {
-      await stat(join(skill.dir, UNAUDITED_MARKER));
-      names.push(skill.name);
-    } catch (err: unknown) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        console.error(`[skill-status] failed to check ${UNAUDITED_MARKER} for ${skill.name}: ${(err as Error).message}`);
-      }
-    }
-  }
-  return names.sort();
+interface AuditLike {
+  gen: string;
+  socket: string;
+  snyk: string;
 }
 
-function auditSummary(audits: { gen: string; socket: string; snyk: string }): string {
+function asAudits(value: unknown): AuditLike | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const pick = (v: unknown): string => (typeof v === "string" ? v : "unknown");
+  return { gen: pick(record.gen), socket: pick(record.socket), snyk: pick(record.snyk) };
+}
+
+function auditSummary(audits: AuditLike): string {
   const vals = [audits.gen, audits.socket, audits.snyk];
   if (vals.some((v) => v === "fail")) return "blocked";
   if (vals.some((v) => v === "warn")) return "warn";
   if (vals.every((v) => v === "pass")) return "pass";
   return "unknown";
+}
+
+async function readMarker(dir: string): Promise<Record<string, unknown> | null> {
+  let raw: string;
+  try {
+    raw = await readFile(join(dir, UNAUDITED_MARKER), "utf-8");
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      console.error(`[skill-status] failed to read ${UNAUDITED_MARKER} in ${dir}: ${(err as Error).message}`);
+    }
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    console.error(`[skill-status] unparseable ${UNAUDITED_MARKER} in ${dir}; treating the skill as unaudited`);
+    return {};
+  }
+}
+
+/**
+ * Per-skill audit provenance for every installed skill, including skills that
+ * were installed without complete audits (marker present).
+ */
+export async function listInstalledSkillProvenance(): Promise<InstalledSkillProvenance[]> {
+  const installed: InstalledSkillProvenance[] = [];
+  for (const skill of await listInstalledSkills()) {
+    const marker = await readMarker(skill.dir);
+    const audits = skill.audits ?? asAudits(marker?.audits);
+    installed.push({
+      name: skill.name,
+      source: (marker && typeof marker.source === "string" ? marker.source : skill.source) ?? "unknown",
+      audit_summary: audits ? auditSummary(audits) : "unknown",
+      unaudited: marker !== null,
+    });
+  }
+  return installed.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function findUnauditedInstalledSkills(): Promise<string[]> {
+  return (await listInstalledSkillProvenance()).filter((skill) => skill.unaudited).map((skill) => skill.name);
 }
 
 export async function statusCommand(
@@ -64,7 +112,8 @@ export async function statusCommand(
 ): Promise<StatusResult> {
   const projectDir = process.cwd();
   const graph = await loadGraph(projectDir);
-  const unauditedSkills = await findUnauditedInstalledSkills();
+  const installedSkills = await listInstalledSkillProvenance();
+  const unauditedSkills = installedSkills.filter((skill) => skill.unaudited).map((skill) => skill.name);
   const warnings = unauditedSkills.length > 0
     ? [`WARN: ${unauditedSkills.length} installed skill(s) were installed without a skills.sh audit: ${unauditedSkills.join(", ")}. Audit before use.`]
     : [];
@@ -80,6 +129,7 @@ export async function statusCommand(
       graph_path: join(projectDir, ".superskill", "graph.json"),
       unaudited_count: unauditedSkills.length,
       unaudited_skills: unauditedSkills,
+      installed_skills: installedSkills,
       warnings,
     };
   }
@@ -120,6 +170,7 @@ export async function statusCommand(
     graph_path: join(projectDir, ".superskill", "graph.json"),
     unaudited_count: unauditedSkills.length,
     unaudited_skills: unauditedSkills,
+    installed_skills: installedSkills,
     warnings,
   };
 }

@@ -9,14 +9,20 @@ export interface SecretMatch {
 const PATTERNS: Array<{ type: string; pattern: RegExp }> = [
   { type: "private-key", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/ },
   { type: "api-key", pattern: /(?:api[_-]?key|apikey)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{20,}["']?/i },
+  { type: "generic-secret", pattern: /(?:api[_-]?key|token|secret|password)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{16,}["']?/i },
   { type: "token", pattern: /(?:token|secret|password|passwd|pwd)\s*[=:]\s*["']?[a-zA-Z0-9_\-!@#$%^&*]{12,}["']?/i },
   { type: "bearer-token", pattern: /Bearer\s+[a-zA-Z0-9_\-\.]{20,}/ },
   { type: "aws-key", pattern: /AKIA[0-9A-Z]{16}/ },
+  { type: "aws-secret-key", pattern: /(?:aws[_-]?)?secret[_-]?access[_-]?key\s*[=:]\s*["']?[a-zA-Z0-9/+=]{40}["']?/i },
   { type: "github-token", pattern: /(?:ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36,}/ },
   { type: "webhook-secret", pattern: /whsec_[a-zA-Z0-9]{20,}/ },
   { type: "supabase-key", pattern: /(?:eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})/ },
   { type: "slack-token", pattern: /xox[baprs]-[a-zA-Z0-9-]{10,}/ },
+  { type: "slack-webhook", pattern: /hooks\.slack\.com\/services\/[a-zA-Z0-9\/_-]{10,}/ },
   { type: "stripe-key", pattern: /(?:sk|pk)_(?:test|live)_[a-zA-Z0-9]{20,}/ },
+  { type: "anthropic-key", pattern: /\bsk-ant-[a-zA-Z0-9_-]{20,}/ },
+  { type: "openai-key", pattern: /\bsk-(?!ant-)[a-zA-Z0-9_-]{20,}/ },
+  { type: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/ },
   { type: "heroku-api-key", pattern: /heroku[^\n]{0,40}?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i },
   { type: "encryption-key", pattern: /(?:encryption[_-]?key|enc[_-]?key)\s*[=:]\s*["']?[a-zA-Z0-9+/=]{16,}["']?/i },
 ];
@@ -30,10 +36,11 @@ export function scanForSecrets(content: string): SecretMatch[] {
 
     for (const { type, pattern } of PATTERNS) {
       if (pattern.test(line)) {
+        const redactAll = new RegExp(pattern.source, `${pattern.flags}g`);
         matches.push({
           type,
           line: i + 1,
-          snippet: line.trim().slice(0, 80),
+          snippet: line.replace(redactAll, "[redacted]").trim().slice(0, 80),
         });
       }
     }

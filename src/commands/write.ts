@@ -13,6 +13,8 @@ import { snapshotVersion } from "../lib/versioning.js";
 import { VaultError } from "../lib/vault-fs.js";
 import { upsertVaultFile } from "../lib/knowledge-index.js";
 
+const VALID_WRITE_MODES = new Set(["overwrite", "append", "prepend"]);
+
 export async function writeCommand(
   args: {
     path: string;
@@ -24,6 +26,13 @@ export async function writeCommand(
 ): Promise<{ written: boolean; path: string; bytes: number }> {
   const { path, content, mode = "append", frontmatter: fmOverrides } = args;
   const vaultFs = ctx.vaultFs;
+
+  if (!VALID_WRITE_MODES.has(mode)) {
+    throw new VaultError(
+      "INVALID_ARGUMENT",
+      `Unknown write mode: "${mode}". Allowed modes: overwrite, append, prepend.`
+    );
+  }
 
   const secretMatches = scanForSecrets(content);
   if (secretMatches.length > 0) {
@@ -40,7 +49,7 @@ export async function writeCommand(
     const fm = createFrontmatter(fmOverrides ?? {});
     const errors = validateFrontmatter(fm);
     if (errors.length > 0) throw new Error(`Invalid frontmatter: ${errors.join("; ")}`);
-    if (mode === "overwrite" && existing) await snapshotVersion(vaultFs, ctx.vaultPath, vaultFs.jailPath(path), existing);
+    if (existing) await snapshotVersion(vaultFs, ctx.vaultPath, vaultFs.jailPath(path), existing);
     return serializeFrontmatter(fm, content);
   }, { create: true });
   await syncIndex(ctx, path);

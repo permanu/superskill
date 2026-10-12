@@ -24,6 +24,7 @@ export interface EvidenceCommandArgs {
   ts?: string;
   cwd?: string;
   project?: string;
+  limit?: number;
 }
 
 export async function evidenceCommand(
@@ -84,11 +85,12 @@ export async function evidenceCommand(
       if (!ticket) throw new Error(`Not a ticket: ${ticketPath}`);
 
       const evidence = await readEvidence(ctx.vaultFs, projectSlug, ticket.id);
+      const listed = args.limit !== undefined ? evidence.slice(0, args.limit) : evidence;
       return {
         ticket: ticket.id,
         path: evidencePath(projectSlug, ticket.id),
-        evidence,
-        count: evidence.length,
+        evidence: listed,
+        count: listed.length,
       };
     }
 

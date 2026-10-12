@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VaultFS } from "../vault-fs.js";
@@ -459,5 +459,117 @@ describe("traverse index", () => {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
     await openTraverser({ ...opts(), refresh: true });
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).builtAt).not.toBe(before);
+  });
+
+  it("returns vault hits for natural-language tasks and drops stopwords from the query", async () => {
+    const notes = join(fx.vault, "projects", "testproj", "notes");
+    writeFileSync(
+      join(notes, "query.md"),
+      "---\ntype: note\n---\n# Query note\n\nPlease fix rust ownership code issues.\n",
+    );
+    writeFileSync(
+      join(notes, "stopwords.md"),
+      "---\ntype: note\n---\n# Stopwords\n\nthe and of it to be.\n",
+    );
+    const traverser = await openTraverser({ ...opts(), vaultPath: fx.vault, projectSlug: "testproj" });
+
+    const natural = traverser.resolve("please fix rust ownership code issues");
+    const naturalVault = natural.items.filter((item) => item.kind === "vault").map((item) => item.id);
+    expect(naturalVault).toContain("vault:projects/testproj/notes/query.md");
+
+    const stopwords = traverser.resolve("the and of it to be");
+    expect(stopwords.items.filter((item) => item.kind === "vault")).toEqual([]);
+  });
+
+  it("resolve honors files when routing language scope", async () => {
+    const traverser = await openTraverser(opts());
+    const withoutFiles = traverser.resolve("style").items.map((item) => item.id);
+    expect(withoutFiles).not.toContain("rule:python-style-pep8");
+    const withPython = traverser.resolve("style", { files: ["src/handler.py"] }).items.map((item) => item.id);
+    expect(withPython).toContain("rule:python-style-pep8");
+  });
+
+  it("resolve uses file languages for skill routing when the project stack is empty", async () => {
+    const graphPath = join(fx.repo, ".superskill", "graph.json");
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      nodes: Array<{ type: string; stack?: string[] }>;
+      edges: unknown[];
+    };
+    graph.nodes = graph.nodes.map((node) => (node.type === "project" ? { ...node, stack: [] } : node));
+    writeFileSync(graphPath, JSON.stringify(graph));
+    const traverser = await openTraverser(opts());
+
+    const withoutFiles = traverser.resolve("fix the bug").items.map((item) => item.id);
+    expect(withoutFiles).not.toContain("skill:code/rust");
+    const withRust = traverser.resolve("fix the bug", { files: ["src/x.rs"] }).items.map((item) => item.id);
+    expect(withRust).toContain("skill:code/rust");
+  });
+
+  it("reuses code and rules sections when only the vault changes", async () => {
+    const cacheFile = join(fx.repo, ".superskill", "traverse.json");
+    await openTraverser({ ...opts(), vaultPath: fx.vault, projectSlug: "testproj" });
+    const before = JSON.parse(readFileSync(cacheFile, "utf8"));
+    expect(before.sections.code.fingerprint).toBeTruthy();
+
+    const beta = join(fx.vault, "projects", "testproj", "notes", "beta.md");
+    writeFileSync(beta, "---\ntype: note\n---\n# Beta\n\nmigration checklist for kafka consumers.\n");
+    const future = new Date(Date.now() + 2000);
+    utimesSync(beta, future, future);
+
+    const next = await openTraverser({ ...opts(), vaultPath: fx.vault, projectSlug: "testproj" });
+    expect(next.node("vault:projects/testproj/notes/beta.md")).not.toBeNull();
+    const after = JSON.parse(readFileSync(cacheFile, "utf8"));
+    expect(after.sections.code).toEqual(before.sections.code);
+    expect(after.sections.rules).toEqual(before.sections.rules);
+    expect(after.sections.vault).not.toEqual(before.sections.vault);
+    expect(after.builtAt).not.toBe(before.builtAt);
+  });
+
+  it("publishes the cache atomically under concurrent opens", async () => {
+    const cacheFile = join(fx.repo, ".superskill", "traverse.json");
+    const traversers = await Promise.all(
+      Array.from({ length: 6 }, () => openTraverser({ ...opts(), refresh: true })),
+    );
+    for (const traverser of traversers) {
+      expect(traverser.node("rule:rust-own-borrow-over-clone")).not.toBeNull();
+    }
+    const parsed = JSON.parse(readFileSync(cacheFile, "utf8"));
+    expect(parsed.version).toBe(2);
+    expect(Array.isArray(parsed.sections.code.nodes)).toBe(true);
+    expect(Array.isArray(parsed.sections.rules.nodes)).toBe(true);
+    expect(Array.isArray(parsed.sections.vault.nodes)).toBe(true);
+    const leftovers = readdirSync(join(fx.repo, ".superskill")).filter((name) => name.includes(".tmp-"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("recomputes a changed symbol span from fresh content", async () => {
+    const path = join(fx.repo, "worker.py");
+    writeFileSync(path, "def run():\n    return 1\n");
+    const traverser = await openTraverser(opts());
+    const runId = traverser.children("code:worker.py").children.find((node) => node.label === "run")!.id;
+
+    writeFileSync(path, "# shifted\ndef run():\n    return 2\n");
+    const future = new Date(Date.now() + 2000);
+    utimesSync(path, future, future);
+
+    const opened = await traverser.open(runId);
+    expect(opened.content).toBe("def run():\n    return 2");
+    expect(opened.stale).toBeUndefined();
+  });
+
+  it("marks a stale symbol open with the whole file when the span cannot be recomputed", async () => {
+    const path = join(fx.repo, "renamed.py");
+    writeFileSync(path, "def run():\n    return 1\n");
+    const traverser = await openTraverser(opts());
+    const runId = traverser.children("code:renamed.py").children.find((node) => node.label === "run")!.id;
+
+    writeFileSync(path, "def gone():\n    return 2\n# tail sentinel\n");
+    const future = new Date(Date.now() + 2000);
+    utimesSync(path, future, future);
+
+    const opened = await traverser.open(runId);
+    expect(opened.stale).toBe(true);
+    expect(opened.content).toContain("def gone()");
+    expect(opened.content).toContain("tail sentinel");
   });
 });

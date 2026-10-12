@@ -110,3 +110,43 @@ describe("worktree CLI help coverage", () => {
     expect(group.helpInformation().length).toBeGreaterThan(0);
   });
 });
+
+describe("CLI 0.13.0 surface", () => {
+  const program = createProgram();
+
+  function command(path: string[]): Command {
+    let current: Command | undefined = program;
+    for (const name of path) {
+      current = findCommand(current as Command, name);
+      expect(current, `command ${path.join(" ")}`).toBeDefined();
+    }
+    return current as Command;
+  }
+
+  it("registers upgrade with --dry-run and --json", () => {
+    const upgrade = command(["upgrade"]);
+    expect(optionFlags(upgrade)).toEqual(expect.arrayContaining(["--dry-run", "--json"]));
+    expect(renderHelp(upgrade)).toContain("Examples:");
+  });
+
+  it("registers the session coordination flags", () => {
+    const register = command(["session", "register"]);
+    expect(optionFlags(register)).toEqual(expect.arrayContaining(["--workspace", "--allow-shared"]));
+    expect(optionFlags(command(["session", "heartbeat"]))).toContain("--files");
+    const complete = command(["session", "complete"]);
+    expect(optionFlags(complete)).toEqual(
+      expect.arrayContaining(["--blocked", "--partially-completed", "--verification-run", "--summary", "--outcome", "--files", "--tasks"]),
+    );
+  });
+
+  it("registers skill install, hygiene and evidence flags", () => {
+    expect(optionFlags(command(["skill", "install"]))).toContain("--allow-unaudited");
+    expect(optionFlags(command(["hygiene"]))).toContain("--due");
+    expect(optionFlags(command(["evidence", "add"]))).toContain("--ts");
+  });
+
+  it("describes graph cross-project as project-jailed", () => {
+    const cross = command(["graph", "cross-project"]);
+    expect(cross.description()).toBe("Project-jailed search; cross-project is denied");
+  });
+});

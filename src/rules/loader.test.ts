@@ -1,9 +1,15 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadRuleContent } from "./content.js";
 import { loadRules } from "./loader.js";
 
 const FIXTURE_ROOT = fileURLToPath(new URL("./__fixtures__/rules/", import.meta.url));
+const MISMATCH_ROOT = fileURLToPath(new URL("./__fixtures__/mismatch/", import.meta.url));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("loadRules", () => {
   it("loads every contract-shaped rule and skips malformed files with warnings", async () => {
@@ -88,5 +94,23 @@ describe("loadRules", () => {
     const { rules, warnings } = await loadRules(join(FIXTURE_ROOT, "rust"));
     expect(rules.map((rule) => rule.id)).toEqual(["rust-own-avoid-clone", "rust-style-naming"]);
     expect(warnings).toEqual([]);
+  });
+
+  it("warns but keeps loading when the id does not match the file stem", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { rules, warnings } = await loadRules(MISMATCH_ROOT);
+    expect(rules.map((rule) => rule.id)).toEqual(["typescript-original-name"]);
+    expect(warnings).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[rules-loader] id 'typescript-original-name' does not match filename 'renamed.md'",
+    );
+  });
+
+  it("resolves rule content by id through the parsed index when the derived path misses", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const contents = await loadRuleContent(["typescript-original-name"], MISMATCH_ROOT);
+    const content = contents.get("typescript-original-name");
+    expect(content?.title).toBe("Mismatched id fixture");
+    expect(content?.body).toContain("Fixture body resolved through the parsed rule index.");
   });
 });

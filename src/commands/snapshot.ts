@@ -33,12 +33,7 @@ export async function snapshotRepoState(
 
   const body = `# Repository State\n\n**Snapshot**: ${now}\n**Branch**: ${args.branch ?? "unknown"}\n**Last Commit**: ${args.last_commit ?? "unknown"}\n`;
 
-  const existing = await ctx.vaultFs.exists(filePath);
-  if (existing) {
-    await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
-  } else {
-    await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
-  }
+  await ctx.vaultFs.write(filePath, serializeFrontmatter(fm, body));
 
   return {
     path: filePath,

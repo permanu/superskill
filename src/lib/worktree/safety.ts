@@ -215,7 +215,10 @@ export async function auditWorktreeSafety(worktreePath: string): Promise<Worktre
     !untracked &&
     ignoredFiles.length === 0 &&
     !ignoredTruncated &&
+    unpushedCommits === 0 &&
+    stashCount === 0 &&
     inProgressOps.length === 0 &&
+    !locked &&
     !hasSubmodules;
 
   const reasons: string[] = [];

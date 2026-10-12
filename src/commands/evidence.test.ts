@@ -170,6 +170,26 @@ describe("evidenceCommand", () => {
       expect(result.evidence!.map((record) => record.command)).toEqual(["npm test", "review"]);
     });
 
+    it("limits listed evidence after existing order", async () => {
+      await createTicket(ctx);
+      for (const command of ["first", "second", "third"]) {
+        await evidenceCommand(
+          { action: "add", ticket: "ticket-001", command, commit: "c1", project: "test-project" },
+          ctx,
+        );
+      }
+
+      const limited = await evidenceCommand(
+        { action: "list", ticket: "ticket-001", project: "test-project", limit: 2 },
+        ctx,
+      );
+      expect(limited.evidence!.map((record) => record.command)).toEqual(["first", "second"]);
+      expect(limited.count).toBe(2);
+
+      const all = await evidenceCommand({ action: "list", ticket: "ticket-001", project: "test-project" }, ctx);
+      expect(all.count).toBe(3);
+    });
+
     it("returns an empty list when nothing was recorded", async () => {
       await createTicket(ctx);
       const result = await evidenceCommand({ action: "list", ticket: "ticket-001", project: "test-project" }, ctx);

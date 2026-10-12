@@ -1,6 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from "fs";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "fs";
+import { randomBytes } from "crypto";
 import { dirname } from "path";
+
+const MAX_WRITE_ATTEMPTS = 3;
 
 export function readJsonConfig(filePath: string): Record<string, any> | null {
   if (!existsSync(filePath)) return {};
@@ -12,15 +27,112 @@ export function readJsonConfig(filePath: string): Record<string, any> | null {
   }
 }
 
-export function writeJsonConfig(filePath: string, config: Record<string, any>): void {
+function readRaw(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function parseForWrite(filePath: string, raw: string): Record<string, any> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    return parsed as Record<string, any>;
+  } catch {
+    throw new Error(`[json-config] Refusing to overwrite unparseable JSON: ${filePath}`);
+  }
+}
+
+function serialize(config: Record<string, any>): string {
+  return JSON.stringify(config, null, 2) + "\n";
+}
+
+function targetMode(filePath: string): number {
+  try {
+    return statSync(filePath).mode & 0o777;
+  } catch {
+    return 0o600;
+  }
+}
+
+function cleanupTmp(tmpPath: string): void {
+  try {
+    unlinkSync(tmpPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(`[json-config] Could not remove temp file ${tmpPath}: ${(error as Error).message}`);
+    }
+  }
+}
+
+function writeTmp(filePath: string, content: string): string {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  const fd = openSync(tmpPath, "wx", targetMode(filePath));
+  try {
+    writeSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  return tmpPath;
+}
+
+function rotateBackup(filePath: string, before: string | null, content: string): void {
+  if (before === null || before === content) return;
+  const backupPath = `${filePath}.bak.superskill`;
+  if (readRaw(backupPath) === before) return;
+  copyFileSync(filePath, backupPath);
+}
+
+function atomicWriteJson(
+  filePath: string,
+  apply: (current: Record<string, any>) => Record<string, any> | null,
+  retryable: boolean
+): boolean {
   const dir = dirname(filePath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+    const before = readRaw(filePath);
+    const current = before === null ? {} : parseForWrite(filePath, before);
+    const next = apply(current);
+    if (next === null) return false;
+    const content = serialize(next);
+    if (before === content) return false;
+
+    const tmpPath = writeTmp(filePath, content);
+    try {
+      const after = readRaw(filePath);
+      if (after !== before) {
+        if (!retryable) {
+          throw new Error(`[json-config] ${filePath} changed during write; concurrent changes were left intact`);
+        }
+        cleanupTmp(tmpPath);
+        continue;
+      }
+      rotateBackup(filePath, before, content);
+      renameSync(tmpPath, filePath);
+      return true;
+    } catch (error) {
+      cleanupTmp(tmpPath);
+      throw error;
+    }
   }
-  if (existsSync(filePath)) {
-    copyFileSync(filePath, `${filePath}.bak.superskill`);
-  }
-  writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  throw new Error(`[json-config] ${filePath} kept changing during write; gave up after ${MAX_WRITE_ATTEMPTS} attempts`);
+}
+
+export function writeJsonConfig(filePath: string, config: Record<string, any>): void {
+  atomicWriteJson(filePath, () => config, false);
+}
+
+export function updateJsonConfig(
+  filePath: string,
+  mutate: (config: Record<string, any>) => Record<string, any> | null
+): boolean {
+  return atomicWriteJson(filePath, mutate, true);
 }
 
 export function addMcpEntry(

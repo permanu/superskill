@@ -15,7 +15,7 @@ import { estimateTokens } from "../../lib/token-estimator.js";
 import { getPhaseBudget, fitSkillsToBudget } from "../../lib/context-budget.js";
 import type { BudgetItem, DroppedItem } from "../../lib/context-budget.js";
 import { scanForPromptInjection } from "../../lib/security-scanner.js";
-import { auditIsBlocked, auditIsWarn } from "../../lib/security-gate.js";
+import { auditHasFailure, auditIsUnknown, auditIsWarn } from "../../lib/security-gate.js";
 import { detectTool } from "../../lib/tool-detector.js";
 import { loadRuleContent, loadPrincipleContent, type PrincipleContent, type RuleContent } from "../../rules/content.js";
 import { formatRuleDerivation } from "../../rules/explain.js";
@@ -374,9 +374,12 @@ async function activateSkillsContent(
 
     const safeIds: string[] = [];
     for (const skill of neighborhood.matchedSkills) {
-      if (auditIsBlocked(skill.audits)) {
+      if (auditHasFailure(skill.audits)) {
         warnings.push(`BLOCKED: ${skill.id} failed security audit`);
         continue;
+      }
+      if (auditIsUnknown(skill.audits)) {
+        warnings.push(`WARN: ${skill.id} has unknown audit status`);
       }
       if (auditIsWarn(skill.audits)) {
         warnings.push(`WARN: ${skill.id} has medium-risk audit findings`);

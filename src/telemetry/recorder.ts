@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,23 @@ export const MAX_EVENTS_BYTES = 5 * 1024 * 1024;
 export function telemetryPaths(home = homedir()): TelemetryPaths {
   const dir = join(home, ".superskill", "telemetry");
   return { dir, settings: join(dir, "settings.json"), events: join(dir, "events.jsonl") };
+}
+
+async function ensurePrivateDir(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  try {
+    await chmod(dir, 0o700);
+  } catch (e) {
+    console.error("[telemetry] could not tighten directory permissions:", (e as Error).message);
+  }
+}
+
+async function tightenFilePermissions(path: string): Promise<void> {
+  try {
+    await chmod(path, 0o600);
+  } catch (e) {
+    console.error(`[telemetry] could not tighten permissions for ${path}:`, (e as Error).message);
+  }
 }
 
 function envToggle(value: string | undefined): boolean | null {
@@ -49,10 +66,11 @@ export async function writeTelemetrySettings(
   paths: TelemetryPaths = telemetryPaths()
 ): Promise<TelemetrySettings> {
   const settings: TelemetrySettings = { enabled, updated_at: new Date().toISOString() };
-  await mkdir(paths.dir, { recursive: true });
+  await ensurePrivateDir(paths.dir);
   const tmp = `${paths.settings}.tmp-${process.pid}`;
-  await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+  await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
   await rename(tmp, paths.settings);
+  await tightenFilePermissions(paths.settings);
   return settings;
 }
 
@@ -114,6 +132,7 @@ async function rotateIfNeeded(paths: TelemetryPaths, maxBytes: number): Promise<
     const info = await stat(paths.events);
     if (info.size < maxBytes) return;
     await rename(paths.events, `${paths.events}.1`);
+    await tightenFilePermissions(`${paths.events}.1`);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") console.error("[telemetry] rotate check failed:", (e as Error).message);
@@ -131,9 +150,10 @@ export async function recordTelemetryEvent(
 ): Promise<boolean> {
   try {
     if (!(await isTelemetryEnabled(paths))) return false;
-    await mkdir(paths.dir, { recursive: true });
+    await ensurePrivateDir(paths.dir);
     await rotateIfNeeded(paths, maxBytes);
-    await appendFile(paths.events, `${JSON.stringify(event)}\n`, "utf-8");
+    await appendFile(paths.events, `${JSON.stringify(event)}\n`, { encoding: "utf-8", mode: 0o600 });
+    await tightenFilePermissions(paths.events);
     return true;
   } catch (e) {
     console.error("[telemetry] record failed:", (e as Error).message);

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-13
+
+### Added
+- Autonomous legacy repair at MCP server start: managed launchers (JSON + TOML), owned legacy `obsidian-mcp`/`obsidian-kb` aliases, and instruction blocks — including unmarked legacy OpenCode/Cursor files — are reconciled and upgraded to the current format without a manual `setup` run. `superskill upgrade` performs the same reconciliation on demand, with `--dry-run` and `--json`.
+- `setup --check` reports configuration drift read-only, and setup/upgrade dry runs now report what would actually change.
+- Session coordination hardening: exclusive TTL'd workspace leases (`allow_shared` for co-tenants), heartbeat file-lease refresh with conflict reporting, `expired` sessions with pid/host liveness, `listInterrupted` (surfaced by `resume`), and worktree cleanup gated on completion age and live pids.
+- Incremental knowledge index: a per-file `files` table with `user_version` migration means only changed notes are re-parsed; `removeVaultFileFromIndex` keeps prune/move/delete in sync; extract/capture write through the index and validate item types.
+- Search recall: `KnowledgeIndex.search` does AND-first retrieval with an OR fallback and recency-decayed ranking; `graph_traverse resolve` accepts `files` and pre-filters natural-language vault queries.
+- MCP output bounding: compact JSON by default (`SUPERSKILL_PRETTY=1` for pretty), a global `SUPERSKILL_MAX_RESPONSE_BYTES` cap (default 64 KB) with explicit truncation markers, `read.max_bytes`, full-mode `project_context.max_tokens`, and `limit` on list actions (default 50, cap 500, negatives clamped).
+- Security: fail-closed skill installs for unknown/warn audits with an explicit `allow_unaudited`/`--allow-unaudited` override, audit provenance in `skill list`/`skill status`, extended secret patterns (OpenAI, Anthropic, Google, AWS secret keys, Slack webhooks, generic tokens), whole-skill-directory prompt-injection scans, a local vault write audit trail, 0700/0600 telemetry permissions, trust-on-first-use Maven jar hashing, and pinned CDN assets with SRI (no external font requests).
+- Doctor health checks: version parity (package vs plugin/marketplace), managed-launcher staleness, config backup residue, stale graph/session/cleanup locks, session registry and knowledge-index schema health, and a real worktree-cache probe.
+- CI version-parity gate (`npm run check:versions`).
+- Rules: stem-variant `termsMatch` matching (e.g. `cache` ↔ `caching`) across router, principles, and traverse; phase inference scores the earliest matched keyword instead of the first matching group; loader warns on id/filename mismatches and content resolution falls back to the parsed index.
+
+### Changed
+- MCP tool responses are compact JSON and bounded; error payloads stay uncapped.
+- `write` validates its mode and snapshots existing content before any replacement, not just explicit `overwrite`.
+- Session registry operations never hold the registry lock across worktree cleanup; stale locks (registry, cleanup, graph) are recovered when their owning pid is dead, and a live pid is never stolen.
+- Prune validates retention values (negative/NaN rejected), honors learning/brainstorm/ADR retention, computes `oldestFile`, and keeps the knowledge index consistent on archive/delete.
+- Setup writes are atomic (temp file + revalidation + rename) and ownership-gated: foreign MCP entries are preserved and reported; instruction rewrites are scoped to managed markers so user content survives.
+- Telemetry, `knowledge_rebuild`, and `qa_viz` annotations/rate limits corrected; list tools paginate via `limit`.
+- `graph cross-project` help text now states it is project-jailed by design.
+
+### Fixed
+- Router `files` hints no longer flood selection with language-wide glob matches; keyword evidence outranks glob-only candidates and ties break by keyword/symbol hit counts.
+- `session complete` persists the session note using the resolved project when `project` is omitted (MCP clients no longer lose the memory loop).
+- Knowledge index writes no longer trigger a full project rebuild on the next search; `.stamp` state migrates to the per-file table.
+- Traverse cache is sectioned (code/rules/vault) and written atomically with unique temp files; symbol spans detect stale files instead of returning wrong line ranges.
+- Corrupt `graph.json` is quarantined (`graph.json.corrupt-<ts>`) instead of permanently bricking mutations; stale graph locks are recovered by pid liveness.
+- `resume` reports interrupted sessions; `onboard` counts installed skills; `link` rejects unsafe wikilink targets; `snapshot` dead branch removed; watchdog `--count` rejects NaN.
+- Doctor's worktree-cache check is a real probe instead of a hard-coded `ok`.
+
+### Removed
+- The `preuninstall` lifecycle script (npm ≥ 7 never runs uninstall scripts). Use `superskill teardown` to remove MCP entries, instructions, slash commands, and the shared skill.
+
 ## [0.12.0] - 2026-10-12
 
 ### Changed

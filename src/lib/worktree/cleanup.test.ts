@@ -3,14 +3,19 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, writeFile, rm, access, realpath, readFile, symlink, lstat } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { cleanupCompletedWorktrees } from "./cleanup.js";
 
 const exec = promisify(execFile);
 const env = { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const git = async (cwd: string, args: string[]) => (await exec("git", args, { cwd, env, timeout: 10000 })).stdout.trim();
 const present = async (path: string) => access(path).then(() => true, () => false);
-const completed = (path: string) => [{ id: "done", status: "completed", workspace_path: path }];
+const completed = (path: string) => [{
+  id: "done",
+  status: "completed",
+  workspace_path: path,
+  completed_at: new Date(Date.now() - 120_000).toISOString(),
+}];
 
 describe("completed worktree cleanup", () => {
   let base: string;
@@ -161,6 +166,43 @@ catch (error) { process.stderr.write(error.stderr || "failed"); process.exit(err
     expect((await cleanupCompletedWorktrees(repo, completed(repo))).removed).toEqual([]);
     expect((await cleanupCompletedWorktrees(repo, [])).removed).toEqual([]);
     expect((await cleanupCompletedWorktrees(repo, completed(tree), { currentSessionId: "done" })).removed).toEqual([]);
+    const currentSession = await cleanupCompletedWorktrees(repo, completed(tree), { currentSessionId: "done" });
+    expect(currentSession.kept.find((item) => item.path === tree)?.reason).toContain("active or current session");
+  });
+
+  it("keeps worktrees whose owning session completed less than a minute ago", async () => {
+    await writeFile(join(tree, "note.txt"), "done\n");
+    await git(tree, ["commit", "-qam", "done"]);
+    await git(repo, ["merge", "--ff-only", "task"]);
+    const recent = [{ id: "done", status: "completed", workspace_path: tree, completed_at: new Date().toISOString() }];
+
+    const result = await cleanupCompletedWorktrees(repo, recent);
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept.find((item) => item.path === tree)?.reason).toContain("less than 60s");
+  });
+
+  it("keeps worktrees whose owning session process is still running on this host", async () => {
+    await writeFile(join(tree, "note.txt"), "done\n");
+    await git(tree, ["commit", "-qam", "done"]);
+    await git(repo, ["merge", "--ff-only", "task"]);
+    const live = [{ ...completed(tree)[0], pid: process.pid, host: hostname() }];
+
+    const result = await cleanupCompletedWorktrees(repo, live);
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept.find((item) => item.path === tree)?.reason).toContain("still running");
+  });
+
+  it("keeps worktrees without a recorded completion time", async () => {
+    await writeFile(join(tree, "note.txt"), "done\n");
+    await git(tree, ["commit", "-qam", "done"]);
+    await git(repo, ["merge", "--ff-only", "task"]);
+
+    const result = await cleanupCompletedWorktrees(repo, [{ id: "done", status: "completed", workspace_path: tree }]);
+
+    expect(result.removed).toEqual([]);
+    expect(result.kept.find((item) => item.path === tree)?.reason).toContain("less than 60s");
   });
 
   it("protects main when it is checked out in a linked worktree", async () => {
@@ -204,6 +246,30 @@ catch (error) { process.stderr.write(error.stderr || "failed"); process.exit(err
     const result = await cleanupCompletedWorktrees(repo, []);
     expect(result.errors.some((error) => error.reason.includes("locked"))).toBe(true);
     expect(await present(lockPath)).toBe(true);
+  });
+
+  it("recovers a stale cleanup lock left by a dead process", async () => {
+    await writeFile(join(tree, "note.txt"), "done\n");
+    await git(tree, ["commit", "-qam", "done"]);
+    await git(repo, ["merge", "--ff-only", "task"]);
+    const lockPath = join(repo, ".git", "superskill-worktree-cleanup.lock");
+    await writeFile(lockPath, JSON.stringify({ pid: 999999999, createdAt: Date.now() - 120_000, token: "abandoned" }));
+
+    const result = await cleanupCompletedWorktrees(repo, completed(tree));
+
+    expect(result.removed).toEqual([tree]);
+    expect(await present(lockPath)).toBe(false);
+  });
+
+  it("does not steal a cleanup lock owned by a live pid even when it is old", async () => {
+    const lockPath = join(repo, ".git", "superskill-worktree-cleanup.lock");
+    const content = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000, token: "live" });
+    await writeFile(lockPath, content);
+
+    const result = await cleanupCompletedWorktrees(repo, []);
+
+    expect(result.errors.some((error) => error.reason.includes("locked"))).toBe(true);
+    expect(await readFile(lockPath, "utf-8")).toBe(content);
   });
 
   it("keeps submodule worktrees", async () => {

@@ -37,6 +37,7 @@ export async function taskCommand(
     sprint?: string;
     tags?: string[];
     project?: string;
+    limit?: number;
   },
   ctx: CommandContext,
 ): Promise<{
@@ -89,6 +90,9 @@ export async function taskCommand(
       }
       if (args.assignedTo) {
         filtered = filtered.filter((t) => t.assigned_to === args.assignedTo);
+      }
+      if (args.limit !== undefined) {
+        filtered = filtered.slice(0, args.limit);
       }
 
       return { tasks: filtered };
@@ -146,7 +150,8 @@ export async function taskCommand(
       const board: Record<string, TaskItem[]> = {};
 
       for (const col of STATUS_COLUMNS) {
-        board[col] = tasks.filter((t) => t.status === col);
+        const columnTasks = tasks.filter((t) => t.status === col);
+        board[col] = args.limit !== undefined ? columnTasks.slice(0, args.limit) : columnTasks;
       }
 
       return { board };

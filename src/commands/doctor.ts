@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,14 +16,19 @@ import { validateCatalogCached } from "../rules/validation-cache.js";
 import { getTimeAgo } from "../lib/time-utils.js";
 import { detectClients } from "../setup/detect.js";
 import { readJsonConfig } from "../setup/json-config.js";
+import { isLatestLauncher, isManagedLauncher } from "../setup/launcher.js";
 import type { DetectedClient } from "../setup/types.js";
 import { isTelemetryEnabled, telemetryPaths } from "../telemetry/recorder.js";
 import { readTelemetryEvents } from "../telemetry/report.js";
 import { isHookInstalled } from "../lib/worktree/hooks.js";
+import { platformCacheRoot } from "../lib/worktree/paths.js";
 import { readPolicy } from "../lib/worktree/state.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
+const INDEX_FILENAME = ".knowledge-index.sqlite";
+const EXPECTED_INDEX_USER_VERSION = 1;
+const STALE_LOCK_MS = 5 * 60 * 1000;
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
 
@@ -81,6 +86,117 @@ function playwrightCoreVersion(): string | null {
   try {
     const pkg = require("playwright-core/package.json") as { version?: string };
     return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return null;
+  }
+}
+
+export function versionParity(root: string, packageVersion: string): { status: CheckStatus; detail: string } {
+  const sources: Array<{ label: string; version: string }> = [
+    { label: "package.json", version: packageVersion },
+  ];
+  const missing: string[] = [];
+
+  const pluginPath = join(root, ".claude-plugin", "plugin.json");
+  try {
+    const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as { version?: unknown };
+    if (typeof plugin.version === "string") sources.push({ label: "plugin.json", version: plugin.version });
+    else missing.push("plugin.json has no version");
+  } catch {
+    missing.push("plugin.json not readable");
+  }
+
+  const marketplacePath = join(root, ".claude-plugin", "marketplace.json");
+  try {
+    const marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8")) as {
+      metadata?: { version?: unknown };
+      plugins?: Array<{ version?: unknown }>;
+    };
+    let found = false;
+    if (typeof marketplace.metadata?.version === "string") {
+      sources.push({ label: "marketplace.json metadata", version: marketplace.metadata.version });
+      found = true;
+    }
+    for (const [index, plugin] of (marketplace.plugins ?? []).entries()) {
+      if (typeof plugin.version === "string") {
+        sources.push({ label: `marketplace.json plugins[${index}]`, version: plugin.version });
+        found = true;
+      }
+    }
+    if (!found) missing.push("marketplace.json has no version");
+  } catch {
+    missing.push("marketplace.json not readable");
+  }
+
+  const mismatched = sources.filter((entry) => entry.version !== packageVersion);
+  if (mismatched.length > 0) {
+    return {
+      status: "fail",
+      detail: mismatched.map((entry) => `${entry.label} ${entry.version}`).join(", ") + ` != package.json ${packageVersion}`,
+    };
+  }
+  if (missing.length > 0) {
+    return { status: "warn", detail: missing.join("; ") };
+  }
+  return { status: "ok", detail: `${sources.length} source(s) all at ${packageVersion}` };
+}
+
+export interface LauncherStaleness {
+  stale: string[];
+  current: number;
+  custom: string[];
+}
+
+export function launcherStaleness(clients: DetectedClient[]): LauncherStaleness {
+  const stale: string[] = [];
+  const custom: string[] = [];
+  let current = 0;
+  for (const client of clients) {
+    try {
+      if (client.config.configFormat === "toml") {
+        const text = readFileSync(client.mcpConfigPath, "utf-8");
+        if (!/\[mcp_servers\.superskill(?:\.env)?\]/.test(text)) continue;
+        const launcherToken = '"(?:superskill|superskill-cli)(?:@[^"]+)?"';
+        const staleLauncher =
+          new RegExp(`^\\s*command\\s*=\\s*${launcherToken}\\s*$`, "m").test(text) ||
+          new RegExp(`^\\s*args\\s*=\\s*\\[\\s*"-y"\\s*,\\s*${launcherToken}\\s*\\]\\s*$`, "m").test(text) ||
+          new RegExp(`^\\s*command\\s*=\\s*\\[\\s*"npx"\\s*,\\s*"-y"\\s*,\\s*${launcherToken}\\s*\\]\\s*$`, "m").test(text);
+        if (staleLauncher) stale.push(client.config.name);
+        else current += 1;
+        continue;
+      }
+      const config = readJsonConfig(client.mcpConfigPath);
+      if (config === null) continue;
+      const root = config[client.config.rootKey];
+      const entry = typeof root === "object" && root !== null
+        ? (root as Record<string, unknown>).superskill
+        : undefined;
+      if (entry === undefined) continue;
+      if (!isManagedLauncher(entry)) {
+        custom.push(client.config.name);
+        continue;
+      }
+      if (isLatestLauncher(entry)) current += 1;
+      else stale.push(client.config.name);
+    } catch (e) {
+      console.error(`[doctor] launcher probe failed for ${client.config.name}: ${(e as Error).message}`);
+    }
+  }
+  return { stale, current, custom };
+}
+
+export function backupResidue(clients: DetectedClient[]): string[] {
+  const residues: string[] = [];
+  for (const client of clients) {
+    const backup = `${client.mcpConfigPath}.bak.superskill`;
+    if (existsSync(backup)) residues.push(backup);
+  }
+  return residues;
+}
+
+function lockAge(path: string): number | null {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
   } catch {
     return null;
   }
@@ -196,13 +312,39 @@ export async function worktreeDoctorChecks(cwd: string): Promise<DoctorCheck[]> 
         )
   );
 
+  const cacheRoot = platformCacheRoot();
+  let cacheWritable = false;
+  let cacheError: string | undefined;
+  try {
+    await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+    const probe = join(cacheRoot, `.doctor-probe-${process.pid}-${Date.now().toString(36)}`);
+    await writeFile(probe, "probe", { flag: "wx", mode: 0o600 });
+    await rm(probe, { force: true });
+    cacheWritable = true;
+  } catch (e) {
+    cacheError = (e as Error).message;
+    console.error(`[doctor] cache-root probe failed: ${cacheError}`);
+  }
+
+  const cacheIssues: string[] = [];
+  if (policy === null) cacheIssues.push("no shared policy");
+  if (!hookInstalled) cacheIssues.push("no post-checkout hook");
+  if (!cacheWritable) cacheIssues.push(`cache root not writable (${cacheError})`);
   checks.push(
-    check(
-      "worktree-caches",
-      "Worktree caches",
-      "ok",
-      "shared per-repo cache; `worktree gc` is report-only by default (deletion requires explicit flags)"
-    )
+    cacheIssues.length === 0
+      ? check(
+          "worktree-caches",
+          "Worktree caches",
+          "ok",
+          `shared cache writable at ${cacheRoot}; \`worktree gc\` is report-only by default (deletion requires explicit flags)`
+        )
+      : check(
+          "worktree-caches",
+          "Worktree caches",
+          "warn",
+          cacheIssues.join("; "),
+          "run the `worktree_activate` MCP tool to install policy + hook, and check permissions on the cache root"
+        )
   );
 
   return checks;
@@ -246,6 +388,17 @@ export async function doctorCommand(
   }
   checks.push(check("install", "Install", "ok", `superskill ${version} at ${root} (installed ${installedAt.toISOString()})`));
 
+  const parity = versionParity(root, version);
+  checks.push(
+    check(
+      "version-parity",
+      "Version parity",
+      parity.status,
+      parity.detail,
+      parity.status === "fail" ? "bump package.json, .claude-plugin/plugin.json and marketplace.json together (npm run check:versions)" : undefined
+    )
+  );
+
   const processes = await listMcpProcesses();
   if (processes.length === 0) {
     checks.push(check("mcp-freshness", "MCP server freshness", "skip", "no running superskill MCP server found"));
@@ -285,6 +438,7 @@ export async function doctorCommand(
     }
   }
 
+  let mappedSlug: string | null = null;
   if (!vaultExists) {
     checks.push(check("project-map", "Project mapping", "skip", "no vault"));
   } else {
@@ -294,10 +448,10 @@ export async function doctorCommand(
         check("project-map", "Project mapping", "warn", "project-map.json does not exist", "run `superskill-cli register` (or `skill init`), or pass -p <slug>")
       );
     } else {
-      const slug = await detectProject(process.cwd(), vaultPath);
+      mappedSlug = await detectProject(process.cwd(), vaultPath);
       checks.push(
-        slug !== null
-          ? check("project-map", "Project mapping", "ok", `${process.cwd()} -> ${slug}`)
+        mappedSlug !== null
+          ? check("project-map", "Project mapping", "ok", `${process.cwd()} -> ${mappedSlug}`)
           : check("project-map", "Project mapping", "warn", `no mapping for ${process.cwd()}`, "run `superskill-cli register` (or `skill init`)")
       );
     }
@@ -420,6 +574,148 @@ export async function doctorCommand(
         ? check("clients", "MCP clients", "ok", `${configured.length}/${clients.length} detected client(s) have a superskill MCP entry`)
         : check("clients", "MCP clients", "warn", `0/${clients.length} detected client(s) configured`, "run `superskill-cli setup --dry-run` then `setup`")
     );
+  }
+
+  const launchers = launcherStaleness(clients);
+  if (launchers.stale.length === 0 && launchers.current === 0 && launchers.custom.length === 0) {
+    checks.push(check("launchers", "Launcher staleness", "skip", "no managed superskill launcher found"));
+  } else if (launchers.stale.length > 0) {
+    checks.push(
+      check(
+        "launchers",
+        "Launcher staleness",
+        "warn",
+        `${launchers.stale.join(", ")} still use a non-latest launcher`,
+        "run `superskill upgrade` (or `superskill-cli setup`) to reconcile managed launchers"
+      )
+    );
+  } else {
+    const custom = launchers.custom.length > 0 ? `, ${launchers.custom.length} custom entr${launchers.custom.length === 1 ? "y" : "ies"} preserved` : "";
+    checks.push(check("launchers", "Launcher staleness", "ok", `${launchers.current} managed launcher(s) current${custom}`));
+  }
+
+  const residues = backupResidue(clients);
+  checks.push(
+    residues.length > 0
+      ? check(
+          "backup-residue",
+          "Backup residue",
+          "warn",
+          `${residues.length} leftover backup(s): ${residues.slice(0, 3).join(", ")}${residues.length > 3 ? ", …" : ""}`,
+          "verify the current config parses, then delete the .bak.superskill copy"
+        )
+      : check("backup-residue", "Backup residue", "ok", "no .bak.superskill files left behind")
+  );
+
+  const lockPaths: Array<{ label: string; path: string }> = [
+    { label: "graph lock", path: join(projectDir, ".superskill", "graph.lock") },
+  ];
+  if (vaultExists) {
+    lockPaths.push({ label: "session registry lock", path: join(vaultPath, "coordination", "locks", "session-registry.lock") });
+  }
+  const commonDir = await git(projectDir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (commonDir.code === 0 && commonDir.stdout.trim() !== "") {
+    lockPaths.push({ label: "worktree cleanup lock", path: join(commonDir.stdout.trim(), "superskill-worktree-cleanup.lock") });
+  }
+  const staleLocks: string[] = [];
+  const heldLocks: string[] = [];
+  for (const lock of lockPaths) {
+    const age = lockAge(lock.path);
+    if (age === null) continue;
+    if (age > STALE_LOCK_MS) staleLocks.push(`${lock.label} (${lock.path}, ${Math.round(age / 60000)}m old)`);
+    else heldLocks.push(lock.label);
+  }
+  checks.push(
+    staleLocks.length > 0
+      ? check(
+          "locks",
+          "Locks",
+          "warn",
+          `stale lock(s): ${staleLocks.join("; ")}`,
+          "confirm no superskill process is running, then remove the stale lock file"
+        )
+      : check("locks", "Locks", "ok", heldLocks.length > 0 ? `held (in use): ${heldLocks.join(", ")}` : "no superskill locks held")
+  );
+
+  if (!vaultExists) {
+    checks.push(check("sessions", "Sessions", "skip", "no vault"));
+  } else {
+    const registryPath = join(vaultPath, "coordination", "session-registry.json");
+    if (!existsSync(registryPath)) {
+      checks.push(check("sessions", "Sessions", "ok", "no sessions registered"));
+    } else {
+      let parsed: { sessions?: unknown } | null = null;
+      try {
+        parsed = JSON.parse(readFileSync(registryPath, "utf-8")) as { sessions?: unknown };
+      } catch {
+        parsed = null;
+      }
+      const parsedSessions = parsed?.sessions;
+      const sessions = Array.isArray(parsedSessions)
+        ? (parsedSessions as Array<{ status?: unknown; last_heartbeat?: unknown }>)
+        : null;
+      if (sessions === null) {
+        checks.push(
+          check("sessions", "Sessions", "fail", "session-registry.json is unparseable", "inspect or remove the coordination/session-registry.json file")
+        );
+      } else {
+        const active = sessions.filter((session) => session.status === "active");
+        const cutoff = Date.now() - ctx.config.sessionTtlHours * 60 * 60 * 1000;
+        const staleActive = active.filter((session) => {
+          const heartbeat = typeof session.last_heartbeat === "string" ? Date.parse(session.last_heartbeat) : Number.NaN;
+          return Number.isFinite(heartbeat) && heartbeat < cutoff;
+        });
+        checks.push(
+          staleActive.length > 0
+            ? check(
+                "sessions",
+                "Sessions",
+                "warn",
+                `${active.length} active (${staleActive.length} expired past the ${ctx.config.sessionTtlHours}h TTL), ${sessions.length - active.length} completed`,
+                "expired sessions are cleaned up on the next register/heartbeat; complete abandoned sessions if they are yours"
+              )
+            : check("sessions", "Sessions", "ok", `${active.length} active, ${sessions.length - active.length} completed; heartbeats fresh`)
+        );
+      }
+    }
+  }
+
+  if (mappedSlug === null) {
+    checks.push(check("index", "Knowledge index", "skip", "no mapped project for this checkout"));
+  } else {
+    const indexPath = join(vaultPath, "projects", mappedSlug, INDEX_FILENAME);
+    if (!existsSync(indexPath)) {
+      checks.push(
+        check("index", "Knowledge index", "warn", `no ${INDEX_FILENAME} for ${mappedSlug}`, "run a search or `skill init` to build the knowledge index")
+      );
+    } else {
+      let userVersion: number | null = null;
+      try {
+        const { DatabaseSync } = await import("node:sqlite");
+        const db = new DatabaseSync(indexPath, { readOnly: true });
+        try {
+          const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+          userVersion = Number(row?.user_version ?? 0);
+        } finally {
+          db.close();
+        }
+      } catch (e) {
+        console.error(`[doctor] index probe failed: ${(e as Error).message}`);
+      }
+      checks.push(
+        userVersion === null
+          ? check("index", "Knowledge index", "warn", `cannot read schema version of ${indexPath}`, "it will be rebuilt on the next search")
+          : userVersion >= EXPECTED_INDEX_USER_VERSION
+            ? check("index", "Knowledge index", "ok", `schema v${userVersion} current for ${mappedSlug}`)
+            : check(
+                "index",
+                "Knowledge index",
+                "warn",
+                `schema v${userVersion} older than v${EXPECTED_INDEX_USER_VERSION} for ${mappedSlug}`,
+                "it will be rebuilt on the next search"
+              )
+      );
+    }
   }
 
   checks.push(...(await worktreeDoctorChecks(process.cwd())));

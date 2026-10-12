@@ -10,17 +10,30 @@ import { mermaidFlowchart, type VizModel } from "./viz-model.js";
 export const GENERATED_MARKER = "<!-- superskill:generated -->";
 
 const CDN = {
-  fonts:
-    "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap",
-  elkjs: "https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js",
-  cytoscape: "https://cdn.jsdelivr.net/npm/cytoscape@3.34.3/dist/cytoscape.min.js",
-  cytoscapeElk: "https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/dist/cytoscape-elk.js",
-  mermaid: "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js",
+  elkjs: {
+    url: "https://cdn.jsdelivr.net/npm/elkjs@0.9.3/lib/elk.bundled.js",
+    integrity: "sha384-KO35c6PFq7tFxAEx6FtATwL9vOBOmCzQYr7GM0iTr3oO22s7Jc9OkclOH4AV7jwK",
+  },
+  cytoscape: {
+    url: "https://cdn.jsdelivr.net/npm/cytoscape@3.34.3/dist/cytoscape.min.js",
+    integrity: "sha384-qPKQxl9uMXOw7vSTUDAnpUilhLuulovw6P5Z4db4bqxW5VhumS7przEmHX0iM0Oc",
+  },
+  cytoscapeElk: {
+    url: "https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/dist/cytoscape-elk.js",
+    integrity: "sha384-VCqo69qSTjiAwEkpykDLjsy96VKDH33my5mKmDfk3HhB85Iy4QwZ9R0IXqYuxV1A",
+  },
+  mermaid: {
+    url: "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js",
+    integrity: "sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2",
+  },
 };
 
-const FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="${CDN.fonts}" rel="stylesheet"/>`;
+function cdnScript(asset: { url: string; integrity: string }): string {
+  return `<script src="${asset.url}" integrity="${asset.integrity}" crossorigin="anonymous"></script>`;
+}
+
+const FONT_STACK_BODY = "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+const FONT_STACK_MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace";
 
 const FALLBACK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.4l1.7 4.3 4.3 1.7-4.3 1.7L8 13.4 6.3 9.1 2 7.4l4.3-1.7z" fill="none" stroke="#e8b268" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
 
@@ -60,8 +73,8 @@ const PALETTE_CSS = `
     --ink-3: #8f96a3;
     --accent: #e8b268;
     --accent-ink: #1a1408;
-    --f-body: "Space Grotesk", sans-serif;
-    --f-mono: "JetBrains Mono", ui-monospace, monospace;
+    --f-body: ${FONT_STACK_BODY};
+    --f-mono: ${FONT_STACK_MONO};
   }
 `;
 
@@ -385,7 +398,7 @@ const CLIENT_JS = String.raw`
         startOnLoad: false,
         theme: "base",
         securityLevel: "strict",
-        fontFamily: "Space Grotesk, sans-serif",
+        fontFamily: "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
         themeVariables: __SUPERSKILL_THEME__
       });
     } catch (e) { console.error(e); }
@@ -398,7 +411,7 @@ const CLIENT_JS = String.raw`
       "border-color": "data(color)",
       "label": "data(title)",
       "color": "#e9e7e2",
-      "font-family": "Space Grotesk, sans-serif",
+      "font-family": "'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
       "font-size": 14,
       "text-wrap": "wrap",
       "text-max-width": 200,
@@ -443,7 +456,7 @@ const CLIENT_JS = String.raw`
       "taxi-turn": 10,
       "taxi-turn-min-distance": 8,
       "label": "data(etype)",
-      "font-family": "JetBrains Mono, monospace",
+      "font-family": "'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
       "font-size": 11,
       "color": "#b3b0a8",
       "text-background-color": "#0f1116",
@@ -1217,11 +1230,10 @@ export function renderKnowledgeGraphHtml(model: VizModel): string {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>${title} — SuperSkill</title>
 <link rel="icon" href="${favicon}"/>
-${FONT_LINKS}
-<script src="${CDN.elkjs}"></script>
-<script src="${CDN.cytoscape}"></script>
-<script src="${CDN.cytoscapeElk}"></script>
-<script src="${CDN.mermaid}"></script>
+${cdnScript(CDN.elkjs)}
+${cdnScript(CDN.cytoscape)}
+${cdnScript(CDN.cytoscapeElk)}
+${cdnScript(CDN.mermaid)}
 <style>
 ${PALETTE_CSS}
   [hidden] { display: none !important; }
@@ -1546,8 +1558,7 @@ export function renderArchitectureDiagramsHtml(model: VizModel): string {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Architecture diagrams — ${escapeHtml(rootTitle)}</title>
 <link rel="icon" href="${favicon}"/>
-${FONT_LINKS}
-<script src="${CDN.mermaid}"></script>
+${cdnScript(CDN.mermaid)}
 <style>
 ${PALETTE_CSS}
   * { box-sizing: border-box; }
@@ -1602,7 +1613,7 @@ ${sections}
       startOnLoad: true,
       theme: "base",
       securityLevel: "strict",
-      fontFamily: "Space Grotesk, sans-serif",
+      fontFamily: "${FONT_STACK_BODY}",
       themeVariables: ${JSON.stringify(MERMAID_THEME)}
     });
   } else {

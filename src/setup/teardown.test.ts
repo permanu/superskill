@@ -1,179 +1,189 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { dirname, join } from "path";
 import { teardownClient, teardownAll } from "./teardown.js";
-import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";
-import { removeTomlBlock } from "./toml-config.js";
-import { removeMarkdownInstruction, removeMdcInstruction } from "./instructions.js";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClient } from "./detect.js";
 import type { DetectedClient } from "./types.js";
 
-vi.mock("./json-config.js");
-vi.mock("./toml-config.js");
-vi.mock("./instructions.js");
 vi.mock("./detect.js", () => ({
   detectClient: vi.fn().mockReturnValue(null),
 }));
-vi.mock("fs", () => ({
-  existsSync: vi.fn(),
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  unlinkSync: vi.fn(),
-}));
 
-const mockExists = vi.mocked(existsSync);
-
-beforeEach(() => vi.resetAllMocks());
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(detectClient).mockReturnValue(null);
+});
 
 function makeDetected(slug: string): DetectedClient {
-  const config = CLIENT_REGISTRY.find((c) => c.slug === slug)!;
+  const root = mkdtempSync(join(tmpdir(), `teardown-${slug}-`));
+  roots.push(root);
+  const source = CLIENT_REGISTRY.find((client) => client.slug === slug)!;
+  const commands = join(root, "commands");
+  const config = {
+    ...source,
+    commandPaths: source.commandPaths ? { darwin: commands, linux: commands, win32: commands } : undefined,
+  };
   return {
     config,
-    mcpConfigPath: `/home/${slug}/config`,
-    instructionPath: `/home/${slug}/instruction`,
+    mcpConfigPath: join(root, "config.json"),
+    instructionPath: join(root, slug === "cursor" ? "superskill.mdc" : "AGENTS.md"),
   };
 }
 
 describe("teardownClient", () => {
-  it("removes JSON MCP entry and markdown instruction", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({
-      mcpServers: { "superskill": { command: "npx" } },
-    });
-    vi.mocked(removeMcpEntry).mockReturnValue({
-      config: { mcpServers: {} },
-      removed: true,
-    });
-    vi.mocked(removeMarkdownInstruction).mockReturnValue(true);
+  it("removes the owned JSON MCP entry and the markdown instruction block", () => {
+    const detected = makeDetected("claude-code");
+    writeFileSync(
+      detected.mcpConfigPath,
+      JSON.stringify({ other: 42, mcpServers: { superskill: { command: "npx", args: ["-y", "superskill"] }, keep: { command: "keep" } } }),
+    );
+    writeFileSync(detected.instructionPath!, "# Personal\n\n<!-- superskill:start -->\nold\n<!-- superskill:end -->\n");
 
-    const result = teardownClient(makeDetected("claude-code"));
-    expect(result.client).toBe("Claude Code");
+    const result = teardownClient(detected);
+    expect(result.error).toBeUndefined();
     expect(result.mcpRemoved).toBe(true);
     expect(result.instructionRemoved).toBe(true);
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcpServers.superskill).toBeUndefined();
+    expect(config.mcpServers.keep).toEqual({ command: "keep" });
+    expect(config.other).toBe(42);
+    expect(readFileSync(detected.instructionPath!, "utf-8")).toBe("# Personal\n");
   });
 
-  it("handles missing config file gracefully", () => {
-    mockExists.mockReturnValue(false);
-    vi.mocked(removeMarkdownInstruction).mockReturnValue(false);
-
-    const result = teardownClient(makeDetected("claude-code"));
+  it("preserves foreign superskill entries and reports them", () => {
+    const detected = makeDetected("claude-code");
+    writeFileSync(
+      detected.mcpConfigPath,
+      JSON.stringify({ mcpServers: { superskill: { command: "custom-wrapper", args: ["--mine"] } } }),
+    );
+    const result = teardownClient(detected);
     expect(result.mcpRemoved).toBe(false);
+    expect(result.preserved).toEqual(["superskill"]);
+    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8")).mcpServers.superskill.command).toBe("custom-wrapper");
   });
 
-  it("reports nothing removed when entry not found", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({ mcpServers: {} });
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: { mcpServers: {} }, removed: false });
-    vi.mocked(removeMarkdownInstruction).mockReturnValue(false);
-
-    const result = teardownClient(makeDetected("claude-code"));
-    expect(result.mcpRemoved).toBe(false);
-    expect(result.instructionRemoved).toBe(false);
-  });
-
-  it("handles dry run", () => {
-    const result = teardownClient(makeDetected("claude-code"), { dryRun: true });
+  it("preserves a foreign legacy-named entry while removing an owned one", () => {
+    const detected = makeDetected("claude-code");
+    writeFileSync(
+      detected.mcpConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          "obsidian-mcp": { command: "npx", args: ["-y", "superskill"] },
+          "obsidian-kb": { command: "npx", args: ["-y", "obsidian-kb"] },
+        },
+      }),
+    );
+    const result = teardownClient(detected);
     expect(result.mcpRemoved).toBe(true);
-    expect(result.instructionRemoved).toBe(true);
+    expect(result.preserved).toEqual(["obsidian-kb"]);
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcpServers["obsidian-mcp"]).toBeUndefined();
+    expect(config.mcpServers["obsidian-kb"]).toBeDefined();
   });
 
-  it("removes TOML MCP entry (Codex)", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readFileSync).mockReturnValue("toml content");
-    vi.mocked(removeTomlBlock).mockReturnValue({ content: "clean", removed: true });
-    vi.mocked(removeMarkdownInstruction).mockReturnValue(true);
+  it("handles missing config and dry run", () => {
+    const detected = makeDetected("claude-code");
+    const missing = teardownClient(detected);
+    expect(missing.mcpRemoved).toBe(false);
+    expect(missing.instructionRemoved).toBe(false);
 
-    const result = teardownClient(makeDetected("codex"));
+    const dry = teardownClient(detected, { dryRun: true });
+    expect(dry.mcpRemoved).toBe(true);
+    expect(dry.instructionRemoved).toBe(true);
+    expect(existsSync(detected.mcpConfigPath)).toBe(false);
+  });
+
+  it("reports unparseable JSON instead of clobbering it", () => {
+    const detected = makeDetected("claude-code");
+    writeFileSync(detected.mcpConfigPath, "{ broken");
+    const result = teardownClient(detected);
+    expect(result.error).toContain("Invalid JSON");
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).toBe("{ broken");
+  });
+
+  it("removes the owned TOML block (Codex)", () => {
+    const detected = makeDetected("codex");
+    writeFileSync(
+      detected.mcpConfigPath,
+      `model = "preserved"\n\n# superskill:start\n[mcp_servers.superskill]\ncommand = "npx"\nargs = ["-y", "superskill"]\n# superskill:end\n`,
+    );
+    const result = teardownClient(detected);
     expect(result.mcpRemoved).toBe(true);
-    expect(writeFileSync).toHaveBeenCalled();
+    const content = readFileSync(detected.mcpConfigPath, "utf-8");
+    expect(content).toContain('model = "preserved"');
+    expect(content).not.toContain("superskill");
   });
 
-  it("removes mdc instruction (Cursor)", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({ mcpServers: {} });
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
-    vi.mocked(removeMdcInstruction).mockReturnValue(true);
+  it("removes an owned unmarked TOML table and leaves foreign tables alone", () => {
+    const detected = makeDetected("codex");
+    writeFileSync(
+      detected.mcpConfigPath,
+      `[mcp_servers.superskill]\ncommand = "npx"\nargs = ["-y", "superskill"]\n`,
+    );
+    expect(teardownClient(detected).mcpRemoved).toBe(true);
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).not.toContain("superskill");
 
-    const result = teardownClient(makeDetected("cursor"));
+    writeFileSync(
+      detected.mcpConfigPath,
+      `[mcp_servers.superskill]\ncommand = "npx"\nargs = ["-y", "someone-elses-server"]\n`,
+    );
+    const foreign = teardownClient(detected);
+    expect(foreign.mcpRemoved).toBe(false);
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).toContain("someone-elses-server");
+  });
+
+  it("removes the mdc instruction (Cursor)", () => {
+    const detected = makeDetected("cursor");
+    writeFileSync(detected.instructionPath!, "---\nalwaysApply: true\n---\n");
+    const result = teardownClient(detected);
     expect(result.instructionRemoved).toBe(true);
+    expect(existsSync(detected.instructionPath!)).toBe(false);
   });
 
-  it("removes config-array instruction (OpenCode)", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({ instructions: ["/home/opencode/instruction"] });
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
-
-    const result = teardownClient(makeDetected("opencode"));
+  it("removes the config-array instruction path and file (OpenCode)", () => {
+    const detected = makeDetected("opencode");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({ instructions: [detected.instructionPath, "/other/path"] }));
+    writeFileSync(detected.instructionPath!, "notes");
+    const result = teardownClient(detected);
     expect(result.instructionRemoved).toBe(true);
-    expect(unlinkSync).toHaveBeenCalled();
-  });
-
-  it("handles none instruction strategy", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({});
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
-
-    const result = teardownClient(makeDetected("claude-desktop"));
-    expect(result.instructionRemoved).toBe(false);
-  });
-
-  it("handles a null JSON config and dry-run TOML teardown", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue(null);
-    const nullJson = teardownClient(makeDetected("claude-code"));
-    expect(nullJson.mcpRemoved).toBe(false);
-
-    vi.mocked(readFileSync).mockClear();
-    const tomlDry = teardownClient(makeDetected("codex"), { dryRun: true });
-    expect(tomlDry.mcpRemoved).toBe(true);
-    expect(readFileSync).not.toHaveBeenCalled();
-  });
-
-  it("keeps the TOML file when no superskill block is found", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readFileSync).mockReturnValue("plain content");
-    vi.mocked(removeTomlBlock).mockReturnValue({ content: "plain content", removed: false });
-
-    const result = teardownClient(makeDetected("codex"));
-    expect(result.mcpRemoved).toBe(false);
-    expect(writeFileSync).not.toHaveBeenCalled();
-  });
-
-  it("ignores instruction strategies without an instruction path", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({});
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
-
-    for (const slug of ["claude-code", "cursor", "opencode"]) {
-      const result = teardownClient({ ...makeDetected(slug), instructionPath: undefined });
-      expect(result.instructionRemoved).toBe(false);
-    }
+    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8")).instructions).toEqual(["/other/path"]);
+    expect(existsSync(detected.instructionPath!)).toBe(false);
   });
 
   it("leaves the config array alone when the instruction path is not listed", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readJsonConfig).mockReturnValue({ instructions: ["/other/path"] });
-    vi.mocked(removeMcpEntry).mockReturnValue({ config: {}, removed: false });
+    const detected = makeDetected("opencode");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({ instructions: ["/other/path"] }));
+    const before = readFileSync(detected.mcpConfigPath, "utf-8");
+    teardownClient(detected);
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).toBe(before);
+  });
 
-    const result = teardownClient(makeDetected("opencode"));
-    expect(result.instructionRemoved).toBe(true);
-    expect(writeJsonConfig).not.toHaveBeenCalled();
+  it("handles none instruction strategy", () => {
+    const detected = makeDetected("claude-desktop");
+    const result = teardownClient(detected);
+    expect(result.instructionRemoved).toBe(false);
   });
 
   it("reports slash commands as a dry-run marker", () => {
-    mockExists.mockReturnValue(true);
-    const result = teardownClient(makeDetected("opencode"), { dryRun: true });
+    const detected = makeDetected("opencode");
+    const result = teardownClient(detected, { dryRun: true });
     expect(result.slashCommandsRemoved).toEqual(["(dry-run)"]);
   });
 
-  it("captures unexpected file errors", () => {
-    mockExists.mockReturnValue(true);
-    vi.mocked(readFileSync).mockImplementation(() => {
-      throw new Error("boom");
-    });
-
-    const result = teardownClient(makeDetected("codex"));
-    expect(result.error).toBe("boom");
+  it("removes an owned legacy setup entry from a legacy config file", () => {
+    const detected = makeDetected("continue");
+    detected.mcpConfigPath = join(dirname(detected.mcpConfigPath), "continue", "mcpServers", "superskill.json");
+    const legacy = join(dirname(detected.mcpConfigPath), "../config.json");
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, JSON.stringify({ other: 42, mcpServers: { superskill: { command: "npx", args: ["-y", "superskill"], env: { VAULT_PATH: "/v" } } } }));
+    teardownClient(detected);
+    expect(JSON.parse(readFileSync(legacy, "utf-8"))).toEqual({ other: 42, mcpServers: {} });
   });
 });
 

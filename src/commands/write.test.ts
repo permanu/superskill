@@ -99,4 +99,32 @@ describe("writeCommand", () => {
       ),
     ).rejects.toMatchObject({ code: "SECRET_REJECTED" });
   });
+
+  describe("mode validation and versioning", () => {
+    it("rejects unknown modes without modifying the file", async () => {
+      await vaultFs.write("guard.md", "original");
+      await expect(
+        writeCommand({ path: "guard.md", content: "replacement", mode: "replace" as any }, ctx),
+      ).rejects.toThrow("Unknown write mode");
+      expect(await vaultFs.read("guard.md")).toBe("original");
+    });
+
+    it("snapshots existing content before overwrite replacement", async () => {
+      await vaultFs.write("versioned.md", "---\ncreated: 2024-01-01\n---\n\nOld body");
+      await writeCommand({ path: "versioned.md", content: "New body", mode: "overwrite" }, ctx);
+
+      const versions = await vaultFs.list("projects/_shared/_versions/versioned", 1);
+      const snapshot = versions.find((f) => f.endsWith(".md"));
+      expect(snapshot).toBeDefined();
+      expect(await vaultFs.read(snapshot!)).toContain("Old body");
+      expect(await vaultFs.read("versioned.md")).toContain("New body");
+    });
+
+    it("does not snapshot append mode", async () => {
+      await vaultFs.write("appended.md", "---\ncreated: 2024-01-01\n---\n\nBody");
+      await writeCommand({ path: "appended.md", content: "more", mode: "append" }, ctx);
+      expect(await vaultFs.exists("projects/_shared/_versions/appended")).toBe(false);
+      expect(await vaultFs.read("appended.md")).toContain("Body");
+    });
+  });
 });

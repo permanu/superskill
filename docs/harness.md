@@ -105,8 +105,11 @@ stable IDs are enforced by `tests/constitution.test.ts`.
 
 `superskill setup` writes a short instruction block into each detected client's
 instruction file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, Cursor `.mdc`, OpenCode
-instructions file). The block is delimited by `<!-- superskill:start -->` /
-`<!-- superskill:end -->` markers and is idempotent.
+instructions file). The block is delimited by `<!-- superskill:begin -->` /
+`<!-- superskill:end -->` markers and is idempotent; only the marked block is
+rewritten, so user content around it is preserved. Blocks written by older
+releases under the `<!-- superskill:start -->` marker are recognized and upgraded
+in place.
 
 `superskill skill init` appends the same minimal rules to an existing
 `AGENTS.md` / `CLAUDE.md` under the `## SuperSkill` heading, and skips files that

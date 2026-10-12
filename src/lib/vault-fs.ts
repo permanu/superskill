@@ -1,8 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile, open, mkdir, readdir, stat, lstat, realpath, readlink, unlink, rename } from "fs/promises";
+import { appendFile, readFile, open, mkdir, readdir, stat, lstat, realpath, readlink, unlink, rename } from "fs/promises";
 import { join, resolve, relative, dirname, basename, isAbsolute } from "path";
 import { randomUUID } from "crypto";
+import { homedir } from "os";
 import { scanForSecrets, formatSecretWarnings } from "./secret-scanner.js";
+
+const VAULT_AUDIT_MAX_BYTES = 5 * 1024 * 1024;
+
+interface VaultWriteAuditEntry {
+  ts: string;
+  op: "update" | "delete" | "move";
+  path: string;
+  bytes: number;
+  secretScan: "clean" | "rejected";
+  projectSlug?: string;
+  from?: string;
+}
+
+/** Best-effort audit trail; failures are logged and never break a vault write. */
+async function appendVaultWriteAudit(entry: VaultWriteAuditEntry): Promise<void> {
+  try {
+    const dir = join(homedir(), ".superskill", "audit");
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const file = join(dir, "vault-writes.jsonl");
+    try {
+      const info = await stat(file);
+      if (info.size >= VAULT_AUDIT_MAX_BYTES) await rename(file, `${file}.1`);
+    } catch (e: any) {
+      if (e.code !== "ENOENT") console.error("[vault-fs] audit rotation failed:", e);
+    }
+    await appendFile(file, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
+  } catch (e) {
+    console.error("[vault-fs] audit write failed:", (e as Error).message);
+  }
+}
 
 /**
  * Safe filesystem operations on the vault.
@@ -94,6 +125,22 @@ export class VaultFS {
     return `${prefix}/${n}`;
   }
 
+  private auditEntry(
+    op: "update" | "delete" | "move",
+    path: string,
+    bytes: number,
+    secretScan: "clean" | "rejected",
+  ): VaultWriteAuditEntry {
+    return {
+      ts: new Date().toISOString(),
+      op,
+      path,
+      bytes,
+      secretScan,
+      ...(typeof this._projectSlug === "string" ? { projectSlug: this._projectSlug } : {}),
+    };
+  }
+
   async read(relativePath: string): Promise<string> {
     const abs = this.resolve(relativePath);
     await this.verifyNoSymlinkEscape(relativePath);
@@ -147,7 +194,15 @@ export class VaultFS {
       }
       const content = await transform(current);
       if (existed && content === current) return { path: relativePath, bytes: Buffer.byteLength(content, "utf-8"), content };
-      assertSafeVaultContent(content);
+      const bytes = Buffer.byteLength(content, "utf-8");
+      try {
+        assertSafeVaultContent(content);
+      } catch (e) {
+        if (e instanceof VaultError && e.code === "SECRET_REJECTED") {
+          await appendVaultWriteAudit(this.auditEntry("update", relativePath, bytes, "rejected"));
+        }
+        throw e;
+      }
       const handle = await open(temp, "wx", mode);
       try {
         await handle.writeFile(content, "utf-8");
@@ -161,7 +216,8 @@ export class VaultFS {
       }
       await lock.assertOwned();
       await rename(temp, abs);
-      return { path: relativePath, bytes: Buffer.byteLength(content, "utf-8"), content };
+      await appendVaultWriteAudit(this.auditEntry("update", relativePath, bytes, "clean"));
+      return { path: relativePath, bytes, content };
     } finally {
       try {
         await unlink(temp);
@@ -296,7 +352,14 @@ export class VaultFS {
       await this.verifyNoSymlinkEscape(relativePath);
       if (await this.mutationPath(relativePath) !== canonical) throw new VaultError("PERMISSION_DENIED", `Path changed while deleting: ${relativePath}`);
       await lock.assertOwned();
+      let bytes = 0;
+      try {
+        bytes = (await stat(abs)).size;
+      } catch (e: any) {
+        if (e.code !== "ENOENT") console.error("[vault-fs] delete audit size unavailable:", e);
+      }
       await unlink(abs);
+      await appendVaultWriteAudit(this.auditEntry("delete", relativePath, bytes, "clean"));
     } catch (e: any) {
       if (e.code === "ENOENT") throw new VaultError("FILE_NOT_FOUND", `Not found: ${relativePath}`);
       throw e;
@@ -320,6 +383,13 @@ export class VaultFS {
       }
       for (const lock of locks) await lock.assertOwned();
       await rename(absFrom, absTo);
+      let bytes = 0;
+      try {
+        bytes = (await stat(absTo)).size;
+      } catch (e: any) {
+        if (e.code !== "ENOENT") console.error("[vault-fs] move audit size unavailable:", e);
+      }
+      await appendVaultWriteAudit({ ...this.auditEntry("move", newRelativePath, bytes, "clean"), from: relativePath });
     } catch (e: any) {
       if (e.code === "ENOENT") throw new VaultError("FILE_NOT_FOUND", `Not found: ${relativePath}`);
       throw e;

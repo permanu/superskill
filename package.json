@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",
@@ -52,7 +52,7 @@
     "verify:grammars": "node scripts/verify-grammars.mjs",
     "prepublishOnly": "npm run build",
     "postinstall": "node dist/setup/postinstall.js || true",
-    "preuninstall": "node dist/setup/preuninstall.js || true"
+    "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

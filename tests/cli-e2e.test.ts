@@ -326,6 +326,66 @@ describe("CLI E2E: stats + deprecate", () => {
   });
 });
 
+describe("CLI E2E: 0.13.0 CLI surface", () => {
+  let vaultRoot: string;
+  let cleanup: () => Promise<void>;
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  test("graph cross-project help marks the search as project-jailed", async () => {
+    ({ vaultRoot, cleanup } = await setupVault());
+    const r = await runCli(["graph", "cross-project", "--help"], { env: env(vaultRoot) });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Project-jailed");
+    expect(r.stdout).toContain("cross-project is denied");
+    expect(r.stdout).not.toContain("Search across all projects");
+  });
+
+  test("upgrade --help documents --dry-run and --json", async () => {
+    ({ vaultRoot, cleanup } = await setupVault());
+    const r = await runCli(["upgrade", "--help"], { env: env(vaultRoot) });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("Usage: superskill upgrade");
+    expect(r.stdout).toContain("--dry-run");
+    expect(r.stdout).toContain("--json");
+  });
+
+  test("session subcommand help documents the coordination flags", async () => {
+    ({ vaultRoot, cleanup } = await setupVault());
+    const register = await runCli(["session", "register", "--help"], { env: env(vaultRoot) });
+    expect(register.exitCode).toBe(0);
+    expect(register.stdout).toContain("--workspace");
+    expect(register.stdout).toContain("--allow-shared");
+
+    const heartbeat = await runCli(["session", "heartbeat", "--help"], { env: env(vaultRoot) });
+    expect(heartbeat.exitCode).toBe(0);
+    expect(heartbeat.stdout).toContain("--files");
+
+    const complete = await runCli(["session", "complete", "--help"], { env: env(vaultRoot) });
+    expect(complete.exitCode).toBe(0);
+    expect(complete.stdout).toContain("--blocked");
+    expect(complete.stdout).toContain("--partially-completed");
+    expect(complete.stdout).toContain("--verification-run");
+  });
+
+  test("skill install, hygiene and evidence add help document the new flags", async () => {
+    ({ vaultRoot, cleanup } = await setupVault());
+    const install = await runCli(["skill", "install", "--help"], { env: env(vaultRoot) });
+    expect(install.exitCode).toBe(0);
+    expect(install.stdout).toContain("--allow-unaudited");
+
+    const hygiene = await runCli(["hygiene", "--help"], { env: env(vaultRoot) });
+    expect(hygiene.exitCode).toBe(0);
+    expect(hygiene.stdout).toContain("--due");
+
+    const evidence = await runCli(["evidence", "add", "--help"], { env: env(vaultRoot) });
+    expect(evidence.exitCode).toBe(0);
+    expect(evidence.stdout).toContain("--ts");
+  });
+});
+
 describe("CLI E2E: error handling", () => {
   let vaultRoot: string;
   let cleanup: () => Promise<void>;

@@ -48,7 +48,7 @@ describe("integration > coordination", () => {
 
     it("register two sessions then list_active returns both", async () => {
       await sessionCommand({ action: "register", tool: "claude-code", project: "my-project", taskSummary: "Task A" }, ctx);
-      await sessionCommand({ action: "register", tool: "opencode", project: "my-project", taskSummary: "Task B" }, ctx);
+      await sessionCommand({ action: "register", tool: "opencode", project: "my-project", taskSummary: "Task B", allowShared: true }, ctx);
 
       const list = await sessionCommand({ action: "list_active" }, ctx);
 

@@ -1,18 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, readFile, rm, symlink } from "fs/promises";
+import { mkdir, writeFile, readFile, realpath, rm, stat, symlink } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { pathToFileURL } from "url";
 import { transpileModule, ModuleKind, ScriptTarget } from "typescript";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { join, dirname } from "path";
 import { VaultFS, VaultError } from "./vault-fs.js";
 
 describe("VaultFS", () => {
   let vaultRoot: string;
   let vaultFs: VaultFS;
+  let testHome: string;
+  let originalHome: string | undefined;
 
   beforeEach(async () => {
+    originalHome = process.env.HOME;
+    const rawHome = join(tmpdir(), `vault-fs-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(rawHome, { recursive: true });
+    testHome = await realpath(rawHome);
+    process.env.HOME = testHome;
     vaultRoot = join(homedir(), `.vault-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(vaultRoot, { recursive: true });
     vaultFs = new VaultFS(vaultRoot);
@@ -20,6 +27,9 @@ describe("VaultFS", () => {
 
   afterEach(async () => {
     await rm(vaultRoot, { recursive: true, force: true });
+    await rm(testHome, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
   });
 
   describe("atomic updates", () => {
@@ -127,6 +137,58 @@ describe("VaultFS", () => {
       expect(content).toContain("updated");
       expect(content).toContain("appended");
       expect(await vaultFs.read("alias.md")).toBe(content);
+    });
+  });
+
+  describe("vault write audit trail", () => {
+    const auditFile = (): string => join(testHome, ".superskill", "audit", "vault-writes.jsonl");
+
+    async function readAudit(): Promise<Array<Record<string, unknown>>> {
+      const raw = await readFile(auditFile(), "utf-8");
+      return raw.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+    }
+
+    it("records update, delete, and move operations without content, at 0700/0600", async () => {
+      await vaultFs.write("note.md", "hello world");
+      await vaultFs.update("note.md", () => "changed content");
+      await vaultFs.move("note.md", "moved.md");
+      await vaultFs.delete("moved.md");
+
+      const entries = await readAudit();
+      expect(entries.map((entry) => entry.op)).toEqual(["update", "update", "move", "delete"]);
+      expect(entries[0]).toMatchObject({ op: "update", path: "note.md", bytes: 11, secretScan: "clean" });
+      expect(entries[1]).toMatchObject({ op: "update", path: "note.md", secretScan: "clean" });
+      expect(entries[2]).toMatchObject({ op: "move", path: "moved.md", from: "note.md", secretScan: "clean" });
+      expect(entries[3]).toMatchObject({ op: "delete", path: "moved.md", secretScan: "clean" });
+      expect(entries.every((entry) => typeof entry.ts === "string")).toBe(true);
+      const raw = await readFile(auditFile(), "utf-8");
+      expect(raw).not.toContain("hello world");
+      expect(raw).not.toContain("changed content");
+      expect((await stat(join(testHome, ".superskill", "audit"))).mode & 0o777).toBe(0o700);
+      expect((await stat(auditFile())).mode & 0o777).toBe(0o600);
+    });
+
+    it("records secret-rejected updates without the rejected value", async () => {
+      const secret = `ghp_${"A".repeat(36)}`;
+      await vaultFs.write("safe.md", "safe");
+      await expect(vaultFs.update("safe.md", () => secret)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      const entries = await readAudit();
+      expect(entries.at(-1)).toMatchObject({ op: "update", path: "safe.md", secretScan: "rejected" });
+      expect(await readFile(auditFile(), "utf-8")).not.toContain(secret);
+    });
+
+    it("includes the project slug when the vault is project-scoped", async () => {
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await scoped.write("note.md", "scoped");
+      const entries = await readAudit();
+      expect(entries.at(-1)).toMatchObject({ op: "update", path: "note.md", projectSlug: "alpha" });
+    });
+
+    it("keeps writes working when the audit log cannot be written", async () => {
+      await writeFile(join(vaultRoot, "blocker"), "file-in-the-way");
+      process.env.HOME = join(vaultRoot, "blocker");
+      await vaultFs.write("still-works.md", "ok");
+      expect(await vaultFs.read("still-works.md")).toBe("ok");
     });
   });
 

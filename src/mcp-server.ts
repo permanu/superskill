@@ -11,12 +11,12 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { createRegistry } from "./core/registry.js";
-import { refreshExistingManagedInstallation } from "./setup/refresh.js";
+import { createRegistry, serializeToolResult, capResponseBytes, maxResponseBytes, boundReadContent } from "./core/registry.js";
+import { refreshStartupState } from "./setup/refresh.js";
 import { handleInfoFlags } from "./core/cli-info.js";
 import { VaultError } from "./lib/vault-fs.js";
 import { createScopedCtx, getSessionRegistry } from "./app-context.js";
-import { readCommand, listCommand } from "./commands/read.js";
+import { listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
 import { formatResumeContext, type ResumeContext } from "./commands/resume.js";
 import { getTimeAgo } from "./lib/time-utils.js";
@@ -34,7 +34,8 @@ const writeTimestamps: number[] = [];
 
 const WRITE_TOOLS = new Set([
   "write", "decide", "task", "learn", "brainstorm", "session",
-  "prune", "deprecate", "init", "skill_install", "skill_remove",
+  "prune", "deprecate", "init", "knowledge_rebuild", "telemetry",
+  "skill_install", "skill_remove",
   "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
   "rollback", "capture", "register", "watchdog",
   "worktree_activate", "worktree_apply", "worktree_gc", "worktree_uninstall",
@@ -83,14 +84,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { path, depth } = raw;
       if (!path || typeof path !== "string") throw new Error("Missing required field: path (string)");
       try {
-        const content = await readCommand({ path }, ctx);
+        const content = await registry.execute(name, raw, ctx) as string;
         return { content: [{ type: "text", text: content }] };
       } catch (readErr: unknown) {
         const code = readErr instanceof VaultError ? readErr.code : undefined;
         const isDir = readErr instanceof Error && "code" in readErr && (readErr as NodeJS.ErrnoException).code === "EISDIR";
         if (code === "FILE_NOT_FOUND" || isDir) {
           const entries = await listCommand({ path, depth: typeof depth === "number" ? depth : 1 }, ctx);
-          return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
+          return { content: [{ type: "text", text: boundReadContent(serializeToolResult(entries), raw.max_bytes) }] };
         }
         throw readErr;
       }
@@ -98,14 +99,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "resume") {
       const result = await registry.execute(name, raw, ctx);
-      if (raw.format === "json") {
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-      return { content: [{ type: "text", text: formatResumeContext(result as ResumeContext) }] };
+      const text = raw.format === "json"
+        ? serializeToolResult(result)
+        : formatResumeContext(result as ResumeContext);
+      return { content: [{ type: "text", text: capResponseBytes(text, maxResponseBytes()) }] };
     }
 
     const result = await registry.execute(name, raw, ctx);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, name === "superskill" && raw.detail !== "full" ? undefined : 2) }] };
+    return { content: [{ type: "text", text: capResponseBytes(serializeToolResult(result), maxResponseBytes()) }] };
   } catch (e: unknown) {
     const code = e instanceof VaultError ? e.code : "INTERNAL_ERROR";
     const msg = e instanceof Error ? e.message : String(e);
@@ -125,6 +126,12 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       name: "Active Sessions",
       description: "Currently active agent sessions across all tools",
       mimeType: "application/json",
+    },
+    {
+      uri: "vault://project/<slug>/context",
+      name: "Project Context",
+      description: "The context.md for one project; replace <slug> with the project slug",
+      mimeType: "text/markdown",
     },
   ],
 }));
@@ -307,7 +314,11 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
 async function main() {
   if (handleInfoFlags(process.argv.slice(2), version)) return;
-  refreshExistingManagedInstallation();
+  try {
+    await refreshStartupState();
+  } catch (error) {
+    console.error(`[mcp-server] startup refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

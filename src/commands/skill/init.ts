@@ -15,7 +15,7 @@ import {
   addEdge,
 } from "../../lib/graph/store.js";
 import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
-import { auditIsBlocked } from "../../lib/security-gate.js";
+import { auditHasFailure } from "../../lib/security-gate.js";
 import { loadCatalog, packagedCatalogVersion } from "../../lib/catalog.js";
 import { registerProject } from "../../lib/project-map.js";
 import type {
@@ -304,7 +304,7 @@ export async function initProject(
       if (catalogIds.has(native.id) || catalogIds.has(native.name)) continue;
       const audits = native.audits ?? { gen: "unknown", socket: "unknown", snyk: "unknown" };
 
-      if (auditIsBlocked(audits)) {
+      if (auditHasFailure(audits)) {
         skillsBlocked++;
         blockedIds.add(native.id);
         continue;

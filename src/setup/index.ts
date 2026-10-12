@@ -9,6 +9,9 @@ import type { DetectedClient } from "./types.js";
 import { resolveHome, currentPlatform } from "./types.js";
 import { installSharedSkill, removeSharedSkill } from "./skill.js";
 
+export { upgradeCommand } from "./upgrade.js";
+export type { UpgradeReport } from "./upgrade.js";
+
 export function registerSetupCommands(program: Command): void {
   program
     .command("setup")
@@ -16,10 +19,12 @@ export function registerSetupCommands(program: Command): void {
     .option("--all", "Configure all supported clients (even undetected)")
     .option("--clients <list>", "Comma-separated client slugs")
     .option("--dry-run", "Show what would change without writing")
+    .option("--check", "Report drift without writing (same reporting as --dry-run)")
     .option("--force", "Overwrite existing superskill entries")
     .option("--vault-path <path>", "Override vault path")
-    .action(async (opts: { all?: boolean; clients?: string; dryRun?: boolean; force?: boolean; vaultPath?: string }) => {
+    .action(async (opts: { all?: boolean; clients?: string; dryRun?: boolean; check?: boolean; force?: boolean; vaultPath?: string }) => {
       const vaultPath = opts.vaultPath ?? process.env.VAULT_PATH ?? "~/Vaults/ai";
+      const readOnly = opts.dryRun === true || opts.check === true;
       const clientSlugs = opts.clients?.split(",").map((s) => s.trim());
 
       const unknown = clientSlugs?.filter(slug => !CLIENT_REGISTRY.some(client => client.slug === slug));
@@ -79,13 +84,14 @@ export function registerSetupCommands(program: Command): void {
         return;
       }
 
-      console.log(`\n${opts.dryRun ? "Would configure" : "Configuring"}...\n`);
+      console.log(`\n${opts.dryRun ? "Would configure" : opts.check ? "Checking" : "Configuring"}...\n`);
       let configured = 0;
       let failed = 0;
 
       for (const target of targets) {
         const result = configureClient(target, vaultPath, {
           dryRun: opts.dryRun,
+          check: opts.check,
           force: opts.force,
         });
 
@@ -95,16 +101,21 @@ export function registerSetupCommands(program: Command): void {
           failed++;
         } else {
           if (result.mcpConfigured) {
-            console.log(`    + MCP server ${opts.dryRun ? "would be added to" : "added to"} ${target.mcpConfigPath}`);
+            const verb = opts.dryRun ? "would be added to" : opts.check ? "needs updating in" : "added to";
+            console.log(`    + MCP server ${verb} ${target.mcpConfigPath}`);
           }
           if (result.skipped) {
             console.log(`    ~ ${result.skipped}`);
+          }
+          if (result.preserved && result.preserved.length > 0) {
+            console.log(`    ~ Preserved (not superskill-managed): ${result.preserved.join(", ")}`);
           }
           if (result.instructionConfigured) {
             const instrLabel = target.config.instructionStrategy === "mdc-file"
               ? "Rule written to"
               : "Instruction added to";
-            console.log(`    + ${instrLabel} ${target.instructionPath ?? "config"}`);
+            const label = opts.dryRun ? `Would write ${instrLabel.toLowerCase()}` : opts.check ? `Needs update: ${instrLabel}` : instrLabel;
+            console.log(`    + ${label} ${target.instructionPath ?? "config"}`);
           }
           if (result.slashCommandsInstalled && result.slashCommandsInstalled.length > 0) {
             console.log(`    + Slash commands: ${result.slashCommandsInstalled.map((c) => "/" + c).join(" ")}`);
@@ -122,12 +133,12 @@ export function registerSetupCommands(program: Command): void {
 
       // Install the harness-agnostic skill shared by hosts with skill discovery
       try {
-        const skill = installSharedSkill({ dryRun: opts.dryRun });
+        const skill = installSharedSkill({ dryRun: readOnly });
         if (skill.skipped) {
           console.log(`  SuperSkill skill ~ ${skill.skipped} (${skill.path})`);
         } else {
           console.log(
-            `  SuperSkill skill ${opts.dryRun ? "would be installed at" : "installed at"} ${skill.path}`
+            `  SuperSkill skill ${opts.dryRun ? "would be installed at" : opts.check ? "checked at" : "installed at"} ${skill.path}`
           );
         }
       } catch (e: unknown) {
@@ -135,7 +146,7 @@ export function registerSetupCommands(program: Command): void {
       }
 
       console.log(
-        `\nDone! ${configured} client(s) ${opts.dryRun ? "would be configured" : "configured"}.\n`
+        `\nDone! ${configured} client(s) ${opts.dryRun ? "would be configured" : opts.check ? "checked" : "configured"}.\n`
       );
 
       const targetSlugs = new Set(targets.map((t) => t.config.slug));
@@ -177,6 +188,7 @@ export function registerSetupCommands(program: Command): void {
           if (r.mcpRemoved) console.log("    - MCP entry removed");
           if (r.instructionRemoved) console.log("    - Instruction removed");
           if (r.slashCommandsRemoved && r.slashCommandsRemoved.length > 0) console.log("    - Slash commands removed");
+          if (r.preserved && r.preserved.length > 0) console.log(`    ~ Preserved (not superskill-managed): ${r.preserved.join(", ")}`);
           if (!r.mcpRemoved && !r.instructionRemoved) console.log("    ~ Nothing found");
         }
       }

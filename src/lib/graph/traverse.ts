@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { findNode, findNodes, loadGraph } from "./store.js";
 import { alwaysOnSkillIds, matchTask, packsToLoad } from "./router.js";
@@ -9,9 +10,11 @@ import type { Graph, ProjectNode, SkillNode } from "./schema.js";
 import { catalogRoot, loadCatalog } from "../catalog.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { rulesCatalogRoot } from "../../rules/loader.js";
-import { keywordKeys, normalizeTerms, simpleStem } from "../../rules/index-builder.js";
+import { isProseWord, keywordKeys, normalizeTerms, simpleStem, termsMatch } from "../../rules/index-builder.js";
 import { scanRepo, DEFAULT_SKIP_DIRS } from "../codegraph/scan.js";
-import { languageForFile } from "../codegraph/grammars.js";
+import { getParser, languageForFile, loadLanguage, resolveGrammarWasm, supportedLanguages } from "../codegraph/grammars.js";
+import type { LanguageId } from "../codegraph/types.js";
+import { extractorFor } from "../codegraph/extractors/index.js";
 import { ensureProjectIndex, indexPathFor } from "../knowledge-index.js";
 import { VaultError } from "../vault-fs.js";
 import type { VaultFS } from "../vault-fs.js";
@@ -73,6 +76,36 @@ export interface TraverseIndexData {
   edges: TraverseEdge[];
 }
 
+interface TraverseCacheSection {
+  fingerprint: string;
+  nodes: TraverseNode[];
+  edges: TraverseEdge[];
+}
+
+interface TraverseCacheFile {
+  version: number;
+  fingerprint: string;
+  builtAt: number;
+  sections: {
+    code: TraverseCacheSection;
+    rules: TraverseCacheSection;
+    vault: TraverseCacheSection;
+  };
+}
+
+interface TraverseCacheRead {
+  builtAt: number;
+  code: TraverseCacheSection | null;
+  rules: TraverseCacheSection | null;
+  vault: TraverseCacheSection | null;
+}
+
+interface TraverseSectionFingerprints {
+  code: string;
+  rules: string;
+  vault: string;
+}
+
 export interface TraverseOpenOptions {
   root?: string;
   vaultPath?: string;
@@ -122,6 +155,7 @@ export interface TraverseContent {
   bytes: number;
   tokens: number;
   truncated: boolean;
+  stale?: boolean;
   content: string;
 }
 
@@ -276,32 +310,62 @@ function dirStats(dir: string, accept: (name: string) => boolean, skipDirs: Read
   return { count: files.length, mtime, size };
 }
 
-function computeFingerprint(ctx: TraverseContext): string {
+function grammarStats(): Array<{ language: string; path: string; mtime: number; size: number }> {
+  const stats: Array<{ language: string; path: string; mtime: number; size: number }> = [];
+  for (const language of supportedLanguages()) {
+    const resolved = resolveGrammarWasm(language);
+    if (!resolved) continue;
+    const stat = statFile(resolved.path);
+    stats.push({ language, path: resolved.path, mtime: stat?.mtime ?? 0, size: stat?.size ?? 0 });
+  }
+  return stats;
+}
+
+function vaultFingerprintData(ctx: TraverseContext): unknown {
+  if (!ctx.vaultPath || !ctx.projectSlug) return null;
+  const files = listFiles(join(ctx.vaultPath, "projects", ctx.projectSlug), (name) => name.endsWith(".md"));
+  const hash = createHash("sha256");
+  for (const file of files) {
+    try {
+      const stat = statSync(file);
+      hash.update(JSON.stringify([relative(ctx.vaultPath, file), stat.size, stat.mtimeMs, stat.ctimeMs]));
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`[traverse] cannot stat vault note ${file}: ${messageOf(error)}`);
+      hash.update(JSON.stringify([relative(ctx.vaultPath, file), "missing"]));
+    }
+  }
+  const index = indexPathFor(ctx.vaultPath, ctx.projectSlug);
+  return {
+    notes: hash.digest("hex"),
+    index: statFile(index),
+    wal: statFile(`${index}-wal`),
+  };
+}
+
+function computeSectionFingerprints(ctx: TraverseContext): TraverseSectionFingerprints {
+  const base = { v: TRAVERSE_INDEX_VERSION, root: ctx.root };
   const rules = dirStats(ctx.rulesDir, (name) => name.endsWith(".md"));
   const catalog = dirStats(ctx.catalogDir, (name) => name.endsWith(".md"), new Set(["rules"]));
+  const graph = statFile(join(ctx.root, ".superskill", "graph.json"));
   const src = listFiles(ctx.root, name => languageForFile(name) !== null, new Set(DEFAULT_SKIP_DIRS), true)
     .map(path => ({ path: relative(ctx.root, path), ...statFile(path) }));
-  const graph = statFile(join(ctx.root, ".superskill", "graph.json"));
-  const vault =
-    ctx.vaultPath && ctx.projectSlug
-      ? {
-          db: statFile(indexPathFor(ctx.vaultPath, ctx.projectSlug)),
-          stamp: statFile(`${indexPathFor(ctx.vaultPath, ctx.projectSlug)}.stamp`),
-        }
-      : null;
-  return JSON.stringify({
-    v: TRAVERSE_INDEX_VERSION,
-    root: ctx.root,
-    vaultPath: ctx.vaultPath ?? null,
-    projectSlug: ctx.projectSlug ?? null,
-    catalogDir: ctx.catalogDir,
-    rulesDir: ctx.rulesDir,
-    rules,
-    catalog,
-    src,
-    graph,
-    vault,
-  });
+  return {
+    code: JSON.stringify({ ...base, kind: "code", src, grammars: grammarStats() }),
+    rules: JSON.stringify({ ...base, kind: "rules", rulesDir: ctx.rulesDir, catalogDir: ctx.catalogDir, rules, catalog, graph }),
+    vault: JSON.stringify({
+      ...base,
+      kind: "vault",
+      vaultPath: ctx.vaultPath ?? null,
+      projectSlug: ctx.projectSlug ?? null,
+      vault: vaultFingerprintData(ctx),
+    }),
+  };
+}
+
+function combinedFingerprint(fingerprints: TraverseSectionFingerprints): string {
+  return createHash("sha256")
+    .update(JSON.stringify([fingerprints.code, fingerprints.rules, fingerprints.vault]))
+    .digest("hex");
 }
 
 class Builder {
@@ -589,9 +653,12 @@ async function addCodeSection(builder: Builder, ctx: TraverseContext): Promise<v
   const { graph } = await scanRepo(ctx.root);
   const ids = new Map<string, string>();
   const sources = new Map<string, string[]>();
+  const stats = new Map<string, FileStat | null>();
   for (const file of graph.nodes.filter(node => node.kind === "module")) {
     const abs = join(ctx.root, file.file);
-    const bytes = statSize(abs);
+    const stat = statFile(abs);
+    stats.set(file.file, stat);
+    const bytes = stat?.size ?? 0;
     const id = `code:${file.file}`;
     ids.set(file.id, id);
     builder.addNode({ id, kind: "code", label: file.file.split("/").pop()!, parent: ensureCodeDirs(builder, file.file), path: file.file, file: abs, bytes, tokens: traverseTokensForBytes(bytes), meta: { language: file.language } });
@@ -603,8 +670,9 @@ async function addCodeSection(builder: Builder, ctx: TraverseContext): Promise<v
     const id = `symbol:${node.id}`;
     const content = (sources.get(node.file) ?? []).slice(node.span.startLine - 1, node.span.endLine).join("\n");
     const bytes = Buffer.byteLength(content, "utf8");
+    const stat = stats.get(node.file) ?? null;
     ids.set(node.id, id);
-    builder.addNode({ id, kind: "code", label: node.name, parent: `code:${node.file}`, path: node.file, file: join(ctx.root, node.file), bytes, tokens: traverseTokensForBytes(bytes), meta: { symbol: true, kind: node.kind, language: node.language, ...node.span } });
+    builder.addNode({ id, kind: "code", label: node.name, parent: `code:${node.file}`, path: node.file, file: join(ctx.root, node.file), bytes, tokens: traverseTokensForBytes(bytes), meta: { symbol: true, kind: node.kind, language: node.language, mtime: stat?.mtime ?? -1, size: stat?.size ?? -1, ...node.span } });
   }
   for (const edge of graph.edges) {
     const from = ids.get(edge.from);
@@ -718,21 +786,46 @@ function addGraphEdges(builder: Builder, graph: Graph): void {
   }
 }
 
-async function buildIndexData(ctx: TraverseContext, graph: Graph, fingerprint: string): Promise<TraverseIndexData> {
+async function buildRulesSection(ctx: TraverseContext, graph: Graph, fingerprint: string): Promise<TraverseCacheSection> {
   const builder = new Builder();
   builder.addContainer("graph", "graph", undefined, "root");
-  addVaultSection(builder, ctx);
   addRulesSection(builder, ctx);
-  await addCodeSection(builder, ctx);
   await addSkillsSection(builder, ctx, graph);
   addSkillRuleEdges(builder);
   addRuleRelatedEdges(builder);
   addGraphEdges(builder, graph);
+  return { fingerprint, nodes: [...builder.nodes.values()], edges: builder.edges };
+}
+
+async function buildCodeSection(ctx: TraverseContext, fingerprint: string): Promise<TraverseCacheSection> {
+  const builder = new Builder();
+  await addCodeSection(builder, ctx);
+  return { fingerprint, nodes: [...builder.nodes.values()], edges: builder.edges };
+}
+
+function buildVaultSection(ctx: TraverseContext, fingerprint: string): TraverseCacheSection {
+  const builder = new Builder();
+  addVaultSection(builder, ctx);
+  return { fingerprint, nodes: [...builder.nodes.values()], edges: builder.edges };
+}
+
+function assembleIndexData(
+  ctx: TraverseContext,
+  sections: { code: TraverseCacheSection; rules: TraverseCacheSection; vault: TraverseCacheSection },
+  fingerprint: string,
+  builtAt: number,
+): TraverseIndexData {
+  const builder = new Builder();
+  builder.addContainer("graph", "graph", undefined, "root");
+  for (const section of [sections.rules, sections.code, sections.vault]) {
+    for (const node of section.nodes) builder.addNode({ ...node });
+    for (const edge of section.edges) builder.addEdge(edge);
+  }
   builder.finalize();
   return {
     version: TRAVERSE_INDEX_VERSION,
     fingerprint,
-    builtAt: Date.now(),
+    builtAt,
     root: ctx.root,
     vaultPath: ctx.vaultPath ?? null,
     projectSlug: ctx.projectSlug ?? null,
@@ -743,23 +836,41 @@ async function buildIndexData(ctx: TraverseContext, graph: Graph, fingerprint: s
   };
 }
 
-function writeCache(cacheFile: string, data: TraverseIndexData): void {
+function writeCache(cacheFile: string, data: TraverseCacheFile): void {
+  const tmp = `${cacheFile}.tmp-${process.pid}-${randomUUID()}`;
   try {
     mkdirSync(dirname(cacheFile), { recursive: true });
-    const tmp = `${cacheFile}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(data), "utf8");
+    writeFileSync(tmp, JSON.stringify(data), { encoding: "utf8", flag: "wx" });
     renameSync(tmp, cacheFile);
   } catch (error: unknown) {
     console.error(`[traverse] failed to write cache ${cacheFile}: ${messageOf(error)}`);
+    try {
+      rmSync(tmp, { force: true });
+    } catch (cleanupError: unknown) {
+      console.error(`[traverse] failed to remove temp cache ${tmp}: ${messageOf(cleanupError)}`);
+    }
   }
 }
 
-function readCache(cacheFile: string, fingerprint: string): TraverseIndexData | null {
+function sectionFromCache(value: unknown, fingerprint: string): TraverseCacheSection | null {
+  if (value === null || typeof value !== "object") return null;
+  const section = value as Partial<TraverseCacheSection>;
+  if (section.fingerprint !== fingerprint) return null;
+  if (!Array.isArray(section.nodes) || !Array.isArray(section.edges)) return null;
+  return { fingerprint, nodes: section.nodes, edges: section.edges };
+}
+
+function readCache(cacheFile: string, fingerprints: TraverseSectionFingerprints): TraverseCacheRead | null {
   try {
-    const parsed = JSON.parse(readFileSync(cacheFile, "utf8")) as TraverseIndexData;
-    if (parsed.version !== TRAVERSE_INDEX_VERSION || parsed.fingerprint !== fingerprint) return null;
-    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) return null;
-    return parsed;
+    const parsed = JSON.parse(readFileSync(cacheFile, "utf8")) as Partial<TraverseCacheFile>;
+    if (parsed.version !== TRAVERSE_INDEX_VERSION || parsed.sections === undefined || parsed.sections === null) return null;
+    const sections = parsed.sections as Partial<TraverseCacheFile["sections"]>;
+    return {
+      builtAt: typeof parsed.builtAt === "number" ? parsed.builtAt : 0,
+      code: sectionFromCache(sections.code, fingerprints.code),
+      rules: sectionFromCache(sections.rules, fingerprints.rules),
+      vault: sectionFromCache(sections.vault, fingerprints.vault),
+    };
   } catch {
     return null;
   }
@@ -780,8 +891,13 @@ export async function buildTraverseIndex(options: TraverseOpenOptions = {}): Pro
   const ctx = resolveContext(options);
   if (ctx.vaultPath && ctx.projectSlug) ensureProjectIndex(ctx.vaultPath, ctx.projectSlug);
   const graph = await loadGraph(ctx.root);
-  const fingerprint = computeFingerprint(ctx);
-  return buildIndexData(ctx, graph, fingerprint);
+  const fingerprints = computeSectionFingerprints(ctx);
+  const sections = {
+    rules: await buildRulesSection(ctx, graph, fingerprints.rules),
+    code: await buildCodeSection(ctx, fingerprints.code),
+    vault: buildVaultSection(ctx, fingerprints.vault),
+  };
+  return assembleIndexData(ctx, sections, combinedFingerprint(fingerprints), Date.now());
 }
 
 function toView(node: TraverseNode): TraverseNodeView {
@@ -801,7 +917,20 @@ function taskTokenKeys(task: string): Set<string> {
   return keys;
 }
 
-function taskLanguageScope(task: string, graph: Graph): Set<string> {
+const MAX_VAULT_QUERY_TERMS = 24;
+
+function vaultQuery(task: string): string {
+  const terms: string[] = [];
+  for (const token of tokenizeTask(task)) {
+    if (token.length < 2 || isProseWord(token)) continue;
+    if (terms.some((term) => termsMatch(term, token))) continue;
+    terms.push(token);
+    if (terms.length >= MAX_VAULT_QUERY_TERMS) break;
+  }
+  return terms.join(" ");
+}
+
+function taskLanguageScope(task: string, graph: Graph, files: readonly string[] = []): Set<string> {
   const scope = new Set<string>();
   for (const token of tokenizeTask(task)) {
     const lang = normalizeLang(token);
@@ -811,6 +940,10 @@ function taskLanguageScope(task: string, graph: Graph): Set<string> {
   for (const stackItem of project?.stack ?? []) {
     const lang = normalizeLang(stackItem);
     if (lang) scope.add(lang);
+  }
+  for (const file of files) {
+    const language = languageForFile(file);
+    if (language) scope.add(normalizeLang(language) ?? language.toLowerCase());
   }
   return scope;
 }
@@ -955,10 +1088,12 @@ export class Traverser {
 
   private vaultMatches(task: string, limit: number): Array<{ node: TraverseNode; reason: string }> {
     if (!this.ctx.vaultPath || !this.ctx.projectSlug) return [];
+    const query = vaultQuery(task);
+    if (query.length === 0) return [];
     try {
       const index = ensureProjectIndex(this.ctx.vaultPath, this.ctx.projectSlug);
       return index
-        .search(task, limit)
+        .search(query, limit)
         .map((hit) => ({ node: this.byId.get(`vault:${hit.path}`), reason: hit.title ? `vault match: ${hit.title}` : "vault match" }))
         .filter((entry): entry is { node: TraverseNode; reason: string } => entry.node !== undefined);
     } catch (error: unknown) {
@@ -967,13 +1102,14 @@ export class Traverser {
     }
   }
 
-  resolve(task: string, options: { limit?: number } = {}): TraverseResolveResult {
+  resolve(task: string, options: { limit?: number; files?: string[] } = {}): TraverseResolveResult {
     const text = String(task ?? "");
+    const files = options.files ?? [];
     const limit = Math.max(1, Math.floor(options.limit ?? DEFAULT_RESOLVE_LIMIT));
     const phase = inferPhase(text);
     const packs = [...packsToLoad(text, phase)].sort();
     const keys = taskTokenKeys(text);
-    const scope = taskLanguageScope(text, this.graph);
+    const scope = taskLanguageScope(text, this.graph, files);
     const items: TraverseResolveItem[] = [];
     const seen = new Set<string>();
 
@@ -1010,8 +1146,8 @@ export class Traverser {
     let matchedSkillIds: string[];
     let alwaysSkillIds: string[];
     if (graphSkills.length > 0) {
-      matchedSkillIds = matchTask(text, this.graph);
-      alwaysSkillIds = alwaysOnSkillIds(this.graph, text);
+      matchedSkillIds = matchTask(text, this.graph, { files });
+      alwaysSkillIds = alwaysOnSkillIds(this.graph, text, { files });
     } else {
       matchedSkillIds = localSkillMatches(this.skillNodes, keys, scope, new Set(packs));
       alwaysSkillIds = this.skillNodes
@@ -1080,6 +1216,7 @@ export class Traverser {
     }
 
     let content: string;
+    let stale = false;
     if (node.kind === "vault") {
       if (this.ctx.vaultFs && node.path) {
         content = await this.ctx.vaultFs.read(node.path);
@@ -1097,8 +1234,25 @@ export class Traverser {
           throw new VaultError("PERMISSION_DENIED", `Code path escapes project: ${node.path}`);
         }
       }
-      content = readFileSync(node.file, "utf8");
-      if (node.meta?.symbol) content = content.split("\n").slice(Number(node.meta.startLine) - 1, Number(node.meta.endLine)).join("\n");
+      if (node.meta?.symbol) {
+        const stat = statFile(node.file);
+        const indexedMtime = Number(node.meta.mtime);
+        const indexedSize = Number(node.meta.size);
+        const changed = stat !== null && (stat.mtime !== indexedMtime || stat.size !== indexedSize);
+        if (changed) {
+          const span = await recomputeSymbolSpan(node);
+          if (span) {
+            content = readFileSync(node.file, "utf8").split("\n").slice(span.startLine - 1, span.endLine).join("\n");
+          } else {
+            content = readFileSync(node.file, "utf8");
+            stale = true;
+          }
+        } else {
+          content = readFileSync(node.file, "utf8").split("\n").slice(Number(node.meta.startLine) - 1, Number(node.meta.endLine)).join("\n");
+        }
+      } else {
+        content = readFileSync(node.file, "utf8");
+      }
     }
 
     const bytes = Buffer.byteLength(content, "utf8");
@@ -1111,8 +1265,41 @@ export class Traverser {
       bytes,
       tokens: traverseTokensForBytes(bytes),
       truncated,
+      ...(stale ? { stale: true } : {}),
       content: truncated ? truncateUtf8(content, maxBytes) : content,
     };
+  }
+}
+
+async function recomputeSymbolSpan(node: TraverseNode): Promise<{ startLine: number; endLine: number } | null> {
+  if (!node.file || !node.path) return null;
+  const language = node.meta?.language;
+  if (typeof language !== "string" || language === "external") return null;
+  let source: string;
+  try {
+    source = readFileSync(node.file, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parser = await getParser();
+    const loaded = await loadLanguage(language as LanguageId);
+    parser.setLanguage(loaded);
+    const tree = parser.parse(source);
+    try {
+      const result = extractorFor(language as LanguageId)({ file: node.path, source, tree, language: language as LanguageId });
+      const indexedStart = Number(node.meta?.startLine);
+      const candidates = result.nodes
+        .filter((entry) => entry.name === node.label && entry.kind === node.meta?.kind)
+        .sort((a, b) => Math.abs(a.span.startLine - indexedStart) - Math.abs(b.span.startLine - indexedStart));
+      if (candidates.length === 0) return null;
+      return { startLine: candidates[0].span.startLine, endLine: candidates[0].span.endLine };
+    } finally {
+      tree.delete();
+    }
+  } catch (error: unknown) {
+    console.error(`[traverse] failed to recompute span for ${node.id}: ${messageOf(error)}`);
+    return null;
   }
 }
 
@@ -1120,12 +1307,42 @@ export async function openTraverser(options: TraverseOpenOptions = {}): Promise<
   const ctx = resolveContext(options);
   if (ctx.vaultPath && ctx.projectSlug) ensureProjectIndex(ctx.vaultPath, ctx.projectSlug);
   const graph = await loadGraph(ctx.root);
-  const fingerprint = computeFingerprint(ctx);
+  const fingerprints = computeSectionFingerprints(ctx);
   const cacheFile = options.cacheFile ? resolve(options.cacheFile) : join(ctx.root, ".superskill", "traverse.json");
-  let data = options.refresh === true ? null : readCache(cacheFile, fingerprint);
-  if (data === null) {
-    data = await buildIndexData(ctx, graph, fingerprint);
-    writeCache(cacheFile, data);
+  const cached = options.refresh === true ? null : readCache(cacheFile, fingerprints);
+  const sections = {
+    code: cached?.code ?? null,
+    rules: cached?.rules ?? null,
+    vault: cached?.vault ?? null,
+  };
+  let rebuilt = false;
+  if (sections.rules === null) {
+    sections.rules = await buildRulesSection(ctx, graph, fingerprints.rules);
+    rebuilt = true;
+  }
+  if (sections.code === null) {
+    sections.code = await buildCodeSection(ctx, fingerprints.code);
+    rebuilt = true;
+  }
+  if (sections.vault === null) {
+    sections.vault = buildVaultSection(ctx, fingerprints.vault);
+    rebuilt = true;
+  }
+  const builtAt = rebuilt ? Date.now() : (cached?.builtAt || Date.now());
+  const fingerprint = combinedFingerprint(fingerprints);
+  const data = assembleIndexData(
+    ctx,
+    { code: sections.code, rules: sections.rules, vault: sections.vault },
+    fingerprint,
+    builtAt,
+  );
+  if (rebuilt) {
+    writeCache(cacheFile, {
+      version: TRAVERSE_INDEX_VERSION,
+      fingerprint,
+      builtAt,
+      sections: { code: sections.code, rules: sections.rules, vault: sections.vault },
+    });
   }
   return new Traverser(data, graph, ctx);
 }

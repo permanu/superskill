@@ -25,8 +25,9 @@ import { join, resolve, basename, relative, isAbsolute } from "path";
 import { readdir, readFile, writeFile, mkdir, cp, rm, stat, realpath, lstat } from "fs/promises";
 import matter from "gray-matter";
 import { fetchPublisherSkills, fetchSkillPage, type PublisherSkill } from "./skills-sh/client.js";
-import { auditIsBlocked, auditIsWarn } from "./security-gate.js";
+import { auditIsBlocked, auditIsUnknown, auditIsWarn } from "./security-gate.js";
 import { scanForPromptInjection } from "./security-scanner.js";
+import type { AuditResult } from "./graph/schema.js";
 
 const exec = promisify(execFile);
 
@@ -53,6 +54,12 @@ export interface InstallResult {
   errors: string[];
   warnings: string[];
   blocked: string[];
+}
+
+export interface InstallOptions {
+  selectSkills?: string[];
+  /** Explicit opt-in to install skills with missing, incomplete, or warning audits. */
+  allowUnaudited?: boolean;
 }
 
 // ── Source Parsing ──────────────────────────────────
@@ -225,6 +232,9 @@ export function _resetInstallDir(): void { _installDir = null; }
 
 const SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const UNAUDITED_MARKER = ".unaudited-superskill";
+const MAX_SCANNED_FILES = 200;
+const MAX_SCANNED_FILE_BYTES = 1024 * 1024;
+const SKIP_SCAN_DIRS = new Set(["node_modules", "__pycache__"]);
 
 export function isValidSkillName(name: string): boolean {
   if (name === "." || name === "..") return false;
@@ -244,17 +254,82 @@ function resolveSkillDir(installDir: string, name: string): string | null {
   return target;
 }
 
-async function writeUnauditedMarker(installDir: string, name: string): Promise<void> {
+async function writeUnauditedMarker(
+  installDir: string,
+  name: string,
+  details: { source: string; reason: string; audits?: AuditResult },
+): Promise<void> {
   const dir = resolveSkillDir(installDir, name);
   if (!dir) return;
   await assertNoDestinationSymlinks(dir);
   const marker = {
     unaudited: true,
-    source: "github-fallback",
-    reason: "skills.sh was unreachable; no audit results available",
+    source: details.source,
+    reason: details.reason,
+    ...(details.audits ? { audits: details.audits } : {}),
     installedAt: new Date().toISOString(),
   };
   await writeFile(join(dir, UNAUDITED_MARKER), JSON.stringify(marker, null, 2), "utf-8");
+}
+
+interface SkillDirScan {
+  blockedReason?: string;
+  warnings: string[];
+  scanned: number;
+  skipped: number;
+  truncated: boolean;
+}
+
+/**
+ * Scan every markdown file in a skill directory before it is copied.
+ * Bounded: files over 1 MB are skipped and the total scan is capped.
+ */
+async function scanSkillDirectory(skillDir: string): Promise<SkillDirScan> {
+  const result: SkillDirScan = { warnings: [], scanned: 0, skipped: 0, truncated: false };
+  const queue: string[] = [skillDir];
+  while (queue.length > 0) {
+    const dir = queue.shift()!;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      console.error(`[skill-installer] failed to read ${dir} for scanning: ${(err as Error).message}`);
+      continue;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith(".") || SKIP_SCAN_DIRS.has(entry.name)) continue;
+        queue.push(full);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+      if (result.scanned >= MAX_SCANNED_FILES) {
+        result.truncated = true;
+        return result;
+      }
+      result.scanned++;
+      try {
+        const info = await stat(full);
+        if (info.size > MAX_SCANNED_FILE_BYTES) {
+          result.skipped++;
+          continue;
+        }
+        const content = await readFile(full, "utf-8");
+        const scan = scanForPromptInjection(content);
+        if (scan.blocked) {
+          result.blockedReason = `${relative(skillDir, full)}: ${scan.reason}`;
+          return result;
+        }
+        for (const warning of scan.warnings) {
+          result.warnings.push(`${relative(skillDir, full)}: ${warning}`);
+        }
+      } catch (err) {
+        console.error(`[skill-installer] failed to scan ${full}: ${(err as Error).message}`);
+      }
+    }
+  }
+  return result;
 }
 
 async function assertNoDestinationSymlinks(path: string): Promise<void> {
@@ -285,7 +360,7 @@ async function assertNoDestinationSymlinks(path: string): Promise<void> {
 async function installFromSkillsSh(
   owner: string,
   repo: string,
-  options?: { selectSkills?: string[] },
+  options?: InstallOptions,
 ): Promise<InstallResult> {
   const installDir = _installDir ?? getInstallDir();
   await mkdir(installDir, { recursive: true });
@@ -332,15 +407,31 @@ async function installFromSkillsSh(
         continue;
       }
 
-      // Step 3: Check audit results — block on "fail"
-      if (auditIsBlocked(pageData.audits)) {
-        blocked.push(`${skillRef.skill}: BLOCKED — audit failed (gen=${pageData.audits.gen}, socket=${pageData.audits.socket}, snyk=${pageData.audits.snyk})`);
+      // Step 3: Fail-closed audit gate — "fail" always blocks; unknown/warn need an explicit opt-in
+      const audits = pageData.audits;
+      const auditDetail = `gen=${audits.gen}, socket=${audits.socket}, snyk=${audits.snyk}`;
+      const hasFail = [audits.gen, audits.socket, audits.snyk].some((status) => status === "fail");
+      const unknownAudit = auditIsUnknown(audits);
+      const allPass = !auditIsBlocked(audits) && !auditIsWarn(audits);
+      if (hasFail) {
+        blocked.push(`${skillRef.skill}: BLOCKED — audit failed (${auditDetail})`);
+        continue;
+      }
+      if (unknownAudit && !options?.allowUnaudited) {
+        blocked.push(`${skillRef.skill}: BLOCKED — audit status unknown (fail-closed) (${auditDetail}); re-run with allowUnaudited/--allow-unaudited to override`);
+        continue;
+      }
+      if (auditIsWarn(audits) && !options?.allowUnaudited) {
+        blocked.push(`${skillRef.skill}: BLOCKED — audits not all pass (${auditDetail}); re-run with allowUnaudited/--allow-unaudited to override`);
         continue;
       }
 
-      // Step 4: Warn on "warn" audit status
-      if (auditIsWarn(pageData.audits)) {
-        warnings.push(`${skillRef.skill}: audit warning (gen=${pageData.audits.gen}, socket=${pageData.audits.socket}, snyk=${pageData.audits.snyk})`);
+      // Step 4: Surface warn/unknown statuses that were explicitly allowed
+      if (auditIsWarn(audits)) {
+        warnings.push(`${skillRef.skill}: audit warning (${auditDetail})`);
+      }
+      if (unknownAudit) {
+        warnings.push(`${skillRef.skill}: audit status unknown — installing unaudited via allowUnaudited (${auditDetail})`);
       }
 
       // Step 5: Scan for prompt injection
@@ -371,6 +462,13 @@ async function installFromSkillsSh(
       const skillMd = `---\nname: ${skillRef.skill}\ndescription: Skill from ${owner}/${repo}\nsource: skills.sh\ninstalls: ${pageData.installs}\nstars: ${pageData.stars}\naudits:\n  gen: ${pageData.audits.gen}\n  socket: ${pageData.audits.socket}\n  snyk: ${pageData.audits.snyk}\n---\n\n${content}`;
 
       await writeFile(join(destDir, "SKILL.md"), skillMd, "utf-8");
+      if (!allPass) {
+        await writeUnauditedMarker(installDir, skillRef.skill, {
+          source: "skills.sh",
+          reason: `audits not all pass (${auditDetail}); installed with allowUnaudited`,
+          audits,
+        });
+      }
       installed.push(skillRef.skill);
     } catch (err) {
       errors.push(`${skillRef.skill}: ${(err as Error).message}`);
@@ -397,7 +495,7 @@ async function installFromSkillsSh(
  */
 async function installFromGitHub(
   parsed: ParsedSource,
-  options?: { selectSkills?: string[] },
+  options?: InstallOptions,
 ): Promise<InstallResult> {
   const installDir = _installDir ?? getInstallDir();
   await mkdir(installDir, { recursive: true });
@@ -432,15 +530,20 @@ async function installFromGitHub(
 
     for (const skill of toInstall) {
       try {
-        // Read and scan the SKILL.md content
-        const content = await readFile(skill.skillFile, "utf-8");
-        const scanResult = scanForPromptInjection(content);
-        if (scanResult.blocked) {
-          blocked.push(`${skill.name}: BLOCKED — ${scanResult.reason}`);
+        // Scan every markdown file before copying the whole directory
+        const scan = await scanSkillDirectory(skill.skillDir);
+        if (scan.blockedReason) {
+          blocked.push(`${skill.name}: BLOCKED — ${scan.blockedReason}`);
           continue;
         }
-        for (const w of scanResult.warnings) {
+        for (const w of scan.warnings) {
           warnings.push(`${skill.name}: ${w}`);
+        }
+        if (scan.truncated) {
+          warnings.push(`${skill.name}: scan stopped after ${MAX_SCANNED_FILES} markdown files`);
+        }
+        if (scan.skipped > 0) {
+          warnings.push(`${skill.name}: ${scan.skipped} markdown file(s) over 1 MB were not scanned`);
         }
 
         const destDir = resolveSkillDir(installDir, skill.name);
@@ -480,7 +583,7 @@ async function installFromGitHub(
  */
 export async function installSkills(
   source: string,
-  options?: { selectSkills?: string[] },
+  options?: InstallOptions,
 ): Promise<InstallResult> {
   const parsed = parseSource(source);
   if (!parsed) {
@@ -533,12 +636,32 @@ export async function installSkills(
     };
   }
 
+  if (!options?.allowUnaudited) {
+    console.error(`[skill-installer] skills.sh unreachable for ${parsed.owner}/${parsed.repo}; refusing the unaudited GitHub fallback (allowUnaudited not set)`);
+    return {
+      success: false,
+      installed: [],
+      errors: [
+        ...shResult.errors,
+        `skills.sh unreachable for ${parsed.owner}/${parsed.repo}. Refusing the unaudited GitHub clone without allowUnaudited (--allow-unaudited).`,
+      ],
+      warnings: [
+        ...shResult.warnings,
+        "GitHub fallback skipped: no skills.sh audit results are available, so the install would be unaudited.",
+      ],
+      blocked: shResult.blocked,
+    };
+  }
+
   // Only a thrown/fetch-failed skills.sh attempt may use the unaudited fallback
-  console.error(`[skill-installer] WARNING: skills.sh unreachable for ${parsed.owner}/${parsed.repo}; installing via unaudited GitHub clone`);
+  console.error(`[skill-installer] WARNING: skills.sh unreachable for ${parsed.owner}/${parsed.repo}; installing via unaudited GitHub clone (allowUnaudited)`);
   const fallback = await installFromGitHub(parsed, options);
   if (fallback.installed.length > 0) {
     for (const name of fallback.installed) {
-      await writeUnauditedMarker(installDir, name);
+      await writeUnauditedMarker(installDir, name, {
+        source: "github-fallback",
+        reason: "skills.sh was unreachable; no audit results available",
+      });
     }
     fallback.warnings.push(
       `Installed without skills.sh audit. Marked with ${UNAUDITED_MARKER}; run audits before use.`
@@ -575,9 +698,26 @@ export async function removeSkill(name: string): Promise<{ success: boolean; err
 /**
  * List installed skills with basic metadata.
  */
-export async function listInstalledSkills(): Promise<Array<{ name: string; description: string; dir: string }>> {
+export interface InstalledSkillInfo {
+  name: string;
+  description: string;
+  dir: string;
+  source?: string;
+  audits?: AuditResult;
+}
+
+function frontmatterAudits(data: Record<string, unknown>): AuditResult | undefined {
+  const raw = data.audits;
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const pick = (value: unknown): "pass" | "warn" | "fail" | "unknown" =>
+    value === "pass" || value === "warn" || value === "fail" || value === "unknown" ? value : "unknown";
+  return { gen: pick(record.gen), socket: pick(record.socket), snyk: pick(record.snyk) };
+}
+
+export async function listInstalledSkills(): Promise<InstalledSkillInfo[]> {
   const installDir = _installDir ?? getInstallDir();
-  const skills: Array<{ name: string; description: string; dir: string }> = [];
+  const skills: InstalledSkillInfo[] = [];
 
   try {
     const entries = await readdir(installDir, { withFileTypes: true });
@@ -598,10 +738,13 @@ export async function listInstalledSkills(): Promise<Array<{ name: string; descr
           const content = await readFile(candidate, "utf-8");
           const { data } = matter(content);
           if (typeof data.name === "string") {
+            const audits = frontmatterAudits(data);
             skills.push({
               name: data.name,
               description: typeof data.description === "string" ? data.description : "",
               dir,
+              ...(typeof data.source === "string" ? { source: data.source } : {}),
+              ...(audits ? { audits } : {}),
             });
             break;
           }

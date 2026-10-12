@@ -79,10 +79,11 @@ describe("worktreeDoctorChecks", () => {
     expect(["ok", "warn"]).toContain(hook?.status);
   });
 
-  it("always reports the report-only gc info check", async () => {
+  it("always reports the worktree cache probe", async () => {
     const checks = await worktreeDoctorChecks(repo);
     const caches = checks.find((entry) => entry.id === "worktree-caches");
     expect(caches).toBeDefined();
-    expect(caches?.detail).toContain("report-only");
+    expect(["ok", "warn", "fail"]).toContain(caches?.status);
+    expect(caches?.detail?.length ?? 0).toBeGreaterThan(0);
   });
 });

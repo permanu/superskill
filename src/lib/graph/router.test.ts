@@ -173,10 +173,10 @@ describe("getPhaseForTask", () => {
     expect(getPhaseForTask("what does this project do")).toBe("explore");
   });
 
-  it("prioritizes ship > review > implement > explore", () => {
+  it("uses the earliest matched keyword, then group priority", () => {
     expect(getPhaseForTask("deploy and review the release")).toBe("ship");
-    expect(getPhaseForTask("review and fix tests before release")).toBe("ship");
-    expect(getPhaseForTask("add feature then review")).toBe("review");
+    expect(getPhaseForTask("review and fix tests before release")).toBe("review");
+    expect(getPhaseForTask("add feature then review")).toBe("implement");
   });
 });
 

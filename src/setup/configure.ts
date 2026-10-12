@@ -3,14 +3,28 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { legacyMcpEntry, removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, SetupResult } from "./types.js";
-import { INSTRUCTION_TEXT } from "./types.js";
-import { readJsonConfig, writeJsonConfig, addMcpEntry, removeMcpEntry } from "./json-config.js";
+import {
+  readJsonConfig,
+  updateJsonConfig,
+  addMcpEntry,
+  removeMcpEntry,
+} from "./json-config.js";
+import { isManagedLauncher, LATEST_ARGS, LATEST_ARRAY } from "./launcher.js";
 import { insertTomlBlock } from "./toml-config.js";
 import {
+  planMarkdownInstruction,
+  planMdcInstruction,
   writeMarkdownInstruction,
   writeMdcInstruction,
 } from "./instructions.js";
 import { installSlashCommands } from "./commands.js";
+
+const LEGACY_NAMES = ["obsidian-mcp", "obsidian-kb"];
+
+export function buildLauncher(commandType: "string" | "array"): { command: string | string[]; args?: string[] } {
+  if (commandType === "array") return { command: [...LATEST_ARRAY] };
+  return { command: "npx", args: [...LATEST_ARGS] };
+}
 
 export function buildMcpEntry(
   commandType: "string" | "array",
@@ -19,19 +33,14 @@ export function buildMcpEntry(
   extraFields?: Record<string, unknown>
 ): Record<string, unknown> {
   const base: Record<string, unknown> = { ...extraFields };
-
-  if (commandType === "array") {
-    base.command = ["npx", "-y", "--prefer-online", "superskill@latest"];
-  } else {
-    base.command = "npx";
-    base.args = ["-y", "--prefer-online", "superskill@latest"];
-  }
-
+  const launcher = buildLauncher(commandType);
+  base.command = launcher.command;
+  if (launcher.args) base.args = launcher.args;
   base[envKey] = { VAULT_PATH: vaultPath };
   return base;
 }
 
-function buildTomlBlock(vaultPath: string): string {
+export function buildTomlBlock(vaultPath: string): string {
   return `[mcp_servers.superskill]
 command = "npx"
 args = ["-y", "--prefer-online", "superskill@latest"]
@@ -40,12 +49,31 @@ args = ["-y", "--prefer-online", "superskill@latest"]
 VAULT_PATH = ${JSON.stringify(vaultPath).replace(/\x7f/g, "\\u007f")}`;
 }
 
+function appendSkip(current: string | undefined, message: string): string {
+  return current ? `${current}; ${message}` : message;
+}
+
+function legacyEntryNames(existing: Record<string, any>, rootKey: string): { owned: string[]; foreign: string[] } {
+  const owned: string[] = [];
+  const foreign: string[] = [];
+  const root = existing[rootKey];
+  if (typeof root !== "object" || root === null) return { owned, foreign };
+  for (const name of LEGACY_NAMES) {
+    const entry = (root as Record<string, unknown>)[name];
+    if (entry === undefined) continue;
+    (isManagedLauncher(entry) ? owned : foreign).push(name);
+  }
+  return { owned, foreign };
+}
+
 export function configureClient(
   detected: DetectedClient,
   vaultPath: string,
-  options: { dryRun?: boolean; force?: boolean } = {}
+  options: { dryRun?: boolean; check?: boolean; force?: boolean } = {}
 ): SetupResult {
   const { config, mcpConfigPath, instructionPath } = detected;
+  const readOnly = options.dryRun === true || options.check === true;
+  const force = options.force === true;
   const result: SetupResult = {
     client: config.name,
     mcpConfigured: false,
@@ -58,122 +86,142 @@ export function configureClient(
   }
 
   try {
-    // 0. Migrate: remove old obsidian-mcp / obsidian-kb entries
-    const LEGACY_NAMES = ["obsidian-mcp", "obsidian-kb"];
-    if (!options.dryRun && config.configFormat === "json" && existsSync(mcpConfigPath)) {
-      try {
-        let migrated = readJsonConfig(mcpConfigPath);
-        if (migrated) {
-          let anyLegacyRemoved = false;
-          for (const oldName of LEGACY_NAMES) {
-            const result = removeMcpEntry(migrated, config.rootKey, oldName);
-            if (result?.removed) { migrated = result.config; anyLegacyRemoved = true; }
-          }
-          if (anyLegacyRemoved) writeJsonConfig(mcpConfigPath, migrated);
+    if (config.configFormat === "json" && existsSync(mcpConfigPath)) {
+      const existing = readJsonConfig(mcpConfigPath);
+      if (existing === null) {
+        result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
+        return result;
+      }
+      const { owned, foreign } = legacyEntryNames(existing, config.rootKey);
+      if (foreign.length > 0) result.preserved = foreign.map((name) => `${name} (not superskill-managed)`);
+      if (!readOnly && owned.length > 0) {
+        try {
+          updateJsonConfig(mcpConfigPath, (current) => {
+            let next = current;
+            for (const name of owned) {
+              if (!isManagedLauncher(next[config.rootKey]?.[name])) continue;
+              const { config: cleaned, removed } = removeMcpEntry(next, config.rootKey, name);
+              if (removed) next = cleaned;
+            }
+            return next === current ? null : next;
+          });
+        } catch (e) {
+          console.error(`[setup] legacy entry migration skipped for ${config.name}: ${(e as Error).message}`);
         }
-      } catch { /* migration is best-effort */ }
+      }
     }
 
-    // 1. Configure MCP entry
     if (config.configFormat === "json") {
-      if (options.dryRun) {
-        result.mcpConfigured = true;
-      } else {
-        const existing = readJsonConfig(mcpConfigPath);
-        if (existing === null) {
-          result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
-          return result;
-        }
-        let entry = buildMcpEntry(
-          config.commandType,
-          config.envKey,
-          vaultPath,
-          config.extraFields
-        );
-        if (!existing[config.rootKey]?.superskill && !options.force) {
+      const existing = readJsonConfig(mcpConfigPath);
+      if (existing === null) {
+        result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
+        return result;
+      }
+      const entryFor = (current: Record<string, any>): Record<string, any> => {
+        let entry = buildMcpEntry(config.commandType, config.envKey, vaultPath, config.extraFields);
+        if (!current[config.rootKey]?.superskill && !force) {
           const legacy = legacyMcpEntry(detected);
           if (legacy) entry = { ...legacy, command: entry.command, args: entry.args };
         }
-        const merged = addMcpEntry(
-          existing,
-          config.rootKey,
-          "superskill",
-          entry,
-          options.force
-        );
+        return entry;
+      };
+      if (readOnly) {
+        const merged = addMcpEntry(existing, config.rootKey, "superskill", entryFor(existing), force);
         if (merged.alreadyExists) {
-          result.skipped = "MCP entry already exists";
+          result.skipped = appendSkip(result.skipped, "MCP entry already exists");
         } else {
-          writeJsonConfig(mcpConfigPath, merged.config);
+          result.mcpConfigured = true;
+        }
+      } else {
+        let alreadyExists = false;
+        const written = updateJsonConfig(mcpConfigPath, (current) => {
+          const merged = addMcpEntry(current, config.rootKey, "superskill", entryFor(current), force);
+          alreadyExists = merged.alreadyExists;
+          return merged.alreadyExists ? null : merged.config;
+        });
+        if (alreadyExists || !written) {
+          result.skipped = appendSkip(result.skipped, "MCP entry already exists");
+        } else {
           result.mcpConfigured = true;
         }
       }
     } else {
-      // TOML (Codex)
-      if (options.dryRun) {
+      const content = existsSync(mcpConfigPath)
+        ? readFileSync(mcpConfigPath, "utf-8")
+        : "";
+      const updated = insertTomlBlock(content, buildTomlBlock(vaultPath), force);
+      if (updated === null || updated === content) {
+        result.skipped = appendSkip(result.skipped, "MCP entry already exists");
+      } else if (readOnly) {
         result.mcpConfigured = true;
       } else {
-        const content = existsSync(mcpConfigPath)
-          ? readFileSync(mcpConfigPath, "utf-8")
-          : "";
-        const block = buildTomlBlock(vaultPath);
-        const updated = insertTomlBlock(content, block, options.force);
-        if (updated === null) {
-          result.skipped = "MCP entry already exists";
-        } else {
-          const dir = dirname(mcpConfigPath);
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-          writeFileSync(mcpConfigPath, updated, "utf-8");
-          result.mcpConfigured = true;
-        }
+        const dir = dirname(mcpConfigPath);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        writeFileSync(mcpConfigPath, updated, "utf-8");
+        result.mcpConfigured = true;
       }
     }
 
-    // 2. Configure instruction
     if (config.instructionStrategy === "none") {
       // nothing to do
-    } else if (options.dryRun) {
-      result.instructionConfigured = true;
     } else if (config.instructionStrategy === "markdown-file" && instructionPath) {
-      const status = writeMarkdownInstruction(instructionPath, options.force);
+      const status = readOnly
+        ? planMarkdownInstruction(instructionPath, force)
+        : writeMarkdownInstruction(instructionPath, force);
       result.instructionConfigured = status !== "exists";
       if (status === "exists") {
-        result.skipped = (result.skipped ? result.skipped + "; " : "") + "Instruction already exists";
+        result.skipped = appendSkip(result.skipped, "Instruction already exists");
       }
     } else if (config.instructionStrategy === "mdc-file" && instructionPath) {
-      writeMdcInstruction(instructionPath);
-      result.instructionConfigured = true;
+      const status = readOnly
+        ? planMdcInstruction(instructionPath, force)
+        : writeMdcInstruction(instructionPath, force);
+      result.instructionConfigured = status !== "exists";
+      if (status === "exists") {
+        result.skipped = appendSkip(result.skipped, "Instruction already exists");
+      }
     } else if (config.instructionStrategy === "config-array" && instructionPath) {
-      // OpenCode: add instruction file path to config + write instruction file
-      const configPath = detected.mcpConfigPath;
-      const existing = readJsonConfig(configPath);
+      const existing = readJsonConfig(mcpConfigPath);
       if (existing === null) {
         result.error = (result.error ? result.error + "; " : "") +
-          `Invalid JSON in ${configPath} — skipped instruction config`;
+          `Invalid JSON in ${mcpConfigPath} — skipped instruction config`;
         return result;
       }
-      const instructions: string[] = existing.instructions ?? [];
-      if (!instructions.includes(instructionPath)) {
-        existing.instructions = [...instructions, instructionPath];
-        writeJsonConfig(configPath, existing);
+      const instructions: string[] = Array.isArray(existing.instructions) ? existing.instructions : [];
+      const arrayMissing = !instructions.includes(instructionPath);
+      if (readOnly) {
+        const status = planMarkdownInstruction(instructionPath, force);
+        result.instructionConfigured = arrayMissing || status !== "exists";
+      } else {
+        if (arrayMissing) {
+          updateJsonConfig(mcpConfigPath, (current) => {
+            const list: string[] = Array.isArray(current.instructions) ? current.instructions : [];
+            if (list.includes(instructionPath)) return null;
+            return { ...current, instructions: [...list, instructionPath] };
+          });
+        }
+        const status = writeMarkdownInstruction(instructionPath, force);
+        result.instructionConfigured = arrayMissing || status !== "exists";
       }
-      // Write the instruction file itself
-      const dir = dirname(instructionPath);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(instructionPath, INSTRUCTION_TEXT + "\n", "utf-8");
-      result.instructionConfigured = true;
+      if (!result.instructionConfigured) {
+        result.skipped = appendSkip(result.skipped, "Instruction already exists");
+      }
     }
 
-    if (!options.dryRun) removeLegacySetup(detected);
+    if (!readOnly) {
+      const legacy = removeLegacySetup(detected);
+      if (legacy.preserved.length > 0) {
+        result.preserved = [...(result.preserved ?? []), ...legacy.preserved];
+      }
+    }
 
-    // 3. Install host-native slash commands (/review, /worktree, /superskill)
     if (config.commandPaths) {
-      const slash = installSlashCommands(config, { dryRun: options.dryRun });
+      const slash = installSlashCommands(config, { dryRun: readOnly });
       if (slash.installed.length > 0) {
         result.slashCommandsInstalled = slash.installed;
       }
       if (slash.skipped.length > 0) {
-        result.skipped = (result.skipped ? result.skipped + "; " : "") + `commands kept: ${slash.skipped.join(", ")}`;
+        result.skipped = appendSkip(result.skipped, `commands kept: ${slash.skipped.join(", ")}`);
       }
     }
   } catch (e: unknown) {

@@ -40,6 +40,21 @@ export function simpleStem(word: string): string {
   return word;
 }
 
+export function termsMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  return `${a}e` === b || a === `${b}e`;
+}
+
+export function termsMatchLookup(index: ReadonlyMap<string, readonly string[]>, term: string): string[] {
+  const keys = new Set<string>([term, `${term}e`]);
+  if (term.endsWith("e")) keys.add(term.slice(0, -1));
+  const ids = new Set<string>();
+  for (const key of keys) {
+    for (const id of index.get(key) ?? []) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function normalizeTerms(value: string): string[] {
   const parts = value.toLowerCase().split(TERM_SPLIT);
   const out: string[] = [];

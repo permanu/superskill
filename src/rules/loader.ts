@@ -204,6 +204,11 @@ async function parseRuleFile(
     warnings.push({ path: relPath, message: `lang '${lang}' does not match pack directory '${packDir}'` });
   }
 
+  const stem = relPath.slice(relPath.lastIndexOf("/") + 1).replace(/\.md$/, "");
+  if (id !== `${lang}-${stem}`) {
+    console.warn(`[rules-loader] id '${id}' does not match filename '${stem}.md'`);
+  }
+
   const enforceRaw = asNonEmptyString(data.enforce);
   const enforce = parseEnforce(data.enforce) ?? "review";
   if (enforceRaw !== undefined && parseEnforce(data.enforce) === undefined) {

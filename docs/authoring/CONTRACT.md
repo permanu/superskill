@@ -155,6 +155,7 @@ Targets sum to approximately 265 (rust-skills parity). Adjust per language where
 - Errors: TODO/FIXME/XXX/TBD; bare elision lines (a line whose entire content is `...`); Unicode ellipsis used as an elision; unquoted YAML type traps (`NULL`, `null`, `[[nodiscard]]` as bare values).
 - Warnings (do not block verification): `...` inside comments (`// ...`, `# ...`, `/* ... */`); snippets longer than 25 lines; hedging phrases ("consider / might / often"); "as needed" without a condition.
 - No claim that a linter enforces something unless `enforce: tool` is set with a `tool` id.
+- `enforce: tool|both` is reserved metadata; the router does not act on it — treat it as `review` today.
 - No duplicate rules; near-duplicates are merged or one is deleted.
 - Prefer fewer, sharper rules. A vague rule is worse than no rule.
 

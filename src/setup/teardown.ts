@@ -2,12 +2,15 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js";
-import { readJsonConfig, writeJsonConfig, removeMcpEntry } from "./json-config.js";
+import { readJsonConfig, updateJsonConfig, removeMcpEntry } from "./json-config.js";
 import { removeTomlBlock } from "./toml-config.js";
 import { removeMarkdownInstruction, removeMdcInstruction } from "./instructions.js";
 import { removeSlashCommands } from "./commands.js";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClient } from "./detect.js";
+import { isManagedLauncher } from "./launcher.js";
+
+const MCP_NAMES = ["superskill", "obsidian-mcp", "obsidian-kb"];
 
 export function teardownClient(
   detected: DetectedClient,
@@ -21,40 +24,47 @@ export function teardownClient(
   };
 
   try {
-    // 1. Remove MCP entry (current name + legacy names)
-    const MCP_NAMES = ["superskill", "obsidian-mcp", "obsidian-kb"];
     if (config.configFormat === "json") {
       if (options.dryRun) {
         result.mcpRemoved = true;
       } else if (existsSync(mcpConfigPath)) {
-        let existing = readJsonConfig(mcpConfigPath);
-        if (existing) {
-          let anyRemoved = false;
+        const existing = readJsonConfig(mcpConfigPath);
+        if (existing === null) {
+          result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
+        } else {
+          const root = existing[config.rootKey];
+          const preserved: string[] = [];
           for (const name of MCP_NAMES) {
-            const { config: updated, removed } = removeMcpEntry(existing, config.rootKey, name);
-            if (removed) { existing = updated; anyRemoved = true; }
+            const entry = typeof root === "object" && root !== null
+              ? (root as Record<string, unknown>)[name]
+              : undefined;
+            if (entry !== undefined && !isManagedLauncher(entry)) preserved.push(name);
           }
-          if (anyRemoved) {
-            writeJsonConfig(mcpConfigPath, existing);
-            result.mcpRemoved = true;
-          }
+          if (preserved.length > 0) result.preserved = preserved;
+          const written = updateJsonConfig(mcpConfigPath, (current) => {
+            let next = current;
+            for (const name of MCP_NAMES) {
+              const entry = next[config.rootKey]?.[name];
+              if (entry === undefined || !isManagedLauncher(entry)) continue;
+              const { config: cleaned, removed } = removeMcpEntry(next, config.rootKey, name);
+              if (removed) next = cleaned;
+            }
+            return next === current ? null : next;
+          });
+          result.mcpRemoved = written;
         }
       }
-    } else {
-      // TOML
-      if (options.dryRun) {
+    } else if (options.dryRun) {
+      result.mcpRemoved = true;
+    } else if (existsSync(mcpConfigPath)) {
+      const content = readFileSync(mcpConfigPath, "utf-8");
+      const { content: updated, removed } = removeTomlBlock(content);
+      if (removed) {
+        writeFileSync(mcpConfigPath, updated, "utf-8");
         result.mcpRemoved = true;
-      } else if (existsSync(mcpConfigPath)) {
-        const content = readFileSync(mcpConfigPath, "utf-8");
-        const { content: updated, removed } = removeTomlBlock(content);
-        if (removed) {
-          writeFileSync(mcpConfigPath, updated, "utf-8");
-          result.mcpRemoved = true;
-        }
       }
     }
 
-    // 2. Remove instruction
     if (config.instructionStrategy === "none") {
       // nothing
     } else if (options.dryRun) {
@@ -64,14 +74,19 @@ export function teardownClient(
     } else if (config.instructionStrategy === "mdc-file" && instructionPath) {
       result.instructionRemoved = removeMdcInstruction(instructionPath);
     } else if (config.instructionStrategy === "config-array" && instructionPath) {
-      // OpenCode: remove from instructions array + delete instruction file
       if (existsSync(mcpConfigPath)) {
-        const existing = readJsonConfig(mcpConfigPath) ?? {};
-        const instructions: string[] = existing.instructions ?? [];
-        const filtered = instructions.filter((p) => p !== instructionPath);
-        if (filtered.length !== instructions.length) {
-          existing.instructions = filtered;
-          writeJsonConfig(mcpConfigPath, existing);
+        const existing = readJsonConfig(mcpConfigPath);
+        if (existing === null) {
+          result.error = `Invalid JSON in ${mcpConfigPath} — skipped instruction config`;
+        } else {
+          const instructions: string[] = Array.isArray(existing.instructions) ? existing.instructions : [];
+          if (instructions.includes(instructionPath)) {
+            updateJsonConfig(mcpConfigPath, (current) => {
+              const list: string[] = Array.isArray(current.instructions) ? current.instructions : [];
+              const filtered = list.filter((p) => p !== instructionPath);
+              return filtered.length === list.length ? null : { ...current, instructions: filtered };
+            });
+          }
         }
       }
       if (existsSync(instructionPath)) {
@@ -80,9 +95,13 @@ export function teardownClient(
       result.instructionRemoved = true;
     }
 
-    if (!options.dryRun) removeLegacySetup(detected);
+    if (!options.dryRun) {
+      const legacy = removeLegacySetup(detected);
+      if (legacy.preserved.length > 0) {
+        result.preserved = [...(result.preserved ?? []), ...legacy.preserved];
+      }
+    }
 
-    // 3. Remove host-native slash commands
     if (config.commandPaths) {
       if (options.dryRun) {
         result.slashCommandsRemoved = ["(dry-run)"];

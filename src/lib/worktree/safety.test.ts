@@ -96,6 +96,7 @@ describe("worktree safety", () => {
 
   describe("auditWorktreeSafety", () => {
     it("reports a clean worktree as safe to reclaim", async () => {
+      await run(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
       const verdict = await auditWorktreeSafety(repo);
 
       expect(verdict.worktree).toBe(repo);
@@ -103,7 +104,7 @@ describe("worktree safety", () => {
       expect(verdict.untracked).toBe(false);
       expect(verdict.ignoredFiles).toEqual([]);
       expect(verdict.ignoredTruncated).toBe(false);
-      expect(verdict.unpushedCommits).toBe(1);
+      expect(verdict.unpushedCommits).toBe(0);
       expect(verdict.stashCount).toBe(0);
       expect(verdict.inProgressOps).toEqual([]);
       expect(verdict.locked).toBe(false);
@@ -162,6 +163,7 @@ describe("worktree safety", () => {
       expect(verdict.stashCount).toBe(1);
       expect(verdict.dirty).toBe(false);
       expect(verdict.untracked).toBe(false);
+      expect(verdict.safeToReclaimLocalCaches).toBe(false);
       expect(verdict.reasons.join(" ")).toContain("stashes are repo-global");
     });
 
@@ -172,6 +174,7 @@ describe("worktree safety", () => {
 
       const verdict = await auditWorktreeSafety(repo);
       expect(verdict.unpushedCommits).toBeGreaterThanOrEqual(1);
+      expect(verdict.safeToReclaimLocalCaches).toBe(false);
       expect(verdict.reasons.join(" ")).toContain(`unpushed commits: ${verdict.unpushedCommits}`);
     });
 
@@ -195,7 +198,8 @@ describe("worktree safety", () => {
       expect(verdict.locked).toBe(true);
       expect(verdict.dirty).toBe(false);
       expect(verdict.untracked).toBe(false);
-      expect(verdict.safeToReclaimLocalCaches).toBe(true);
+      expect(verdict.unpushedCommits).toBeGreaterThanOrEqual(1);
+      expect(verdict.safeToReclaimLocalCaches).toBe(false);
       expect(verdict.reasons.join(" ")).toContain("worktree locked: busy");
     });
 

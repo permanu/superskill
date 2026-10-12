@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -90,6 +90,31 @@ describe("recordTelemetryEvent", () => {
     await expect(stat(`${paths.events}.1`)).resolves.toBeTruthy();
     const current = await readFile(paths.events, "utf-8");
     expect(current.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("creates the telemetry dir 0700 and files 0600, including the rotation backup", async () => {
+    const paths = telemetryPaths(home);
+    await writeTelemetrySettings(true, paths);
+    expect(await recordTelemetryEvent(sampleEvent(), paths, 10)).toBe(true);
+    await recordTelemetryEvent(sampleEvent(), paths, 10);
+    expect((await stat(paths.dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(paths.settings)).mode & 0o777).toBe(0o600);
+    expect((await stat(paths.events)).mode & 0o777).toBe(0o600);
+    expect((await stat(`${paths.events}.1`)).mode & 0o777).toBe(0o600);
+  });
+
+  it("tightens pre-existing loose permissions on dir, events, and backup", async () => {
+    const paths = telemetryPaths(home);
+    await mkdir(paths.dir, { recursive: true, mode: 0o755 });
+    await chmod(paths.dir, 0o755);
+    await writeTelemetrySettings(true, paths);
+    await writeFile(paths.events, "", { mode: 0o644 });
+    await chmod(paths.events, 0o644);
+    await recordTelemetryEvent(sampleEvent(), paths, 10);
+    await recordTelemetryEvent(sampleEvent(), paths, 10);
+    expect((await stat(paths.dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(paths.events)).mode & 0o777).toBe(0o600);
+    expect((await stat(`${paths.events}.1`)).mode & 0o777).toBe(0o600);
   });
 
   it("swallows storage failures instead of throwing", async () => {

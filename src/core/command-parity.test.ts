@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import type { Command } from "commander";
 import { createProgram } from "../cli.js";
 import { createRegistry } from "./registry.js";
+import type { MCPToolDefinition } from "./types.js";
 
 /**
  * CLI paths whose name does not mechanically normalize to the MCP tool name.
@@ -46,6 +47,10 @@ const CLI_TO_MCP_OVERRIDES: Record<string, string> = {
   "skill activate": "superskill",
   "skill list": "skill_list_installed",
   snapshot: "snapshot_repo_state",
+  // The CLI verb `list` is the MCP session action `list_active`.
+  "session list": "session",
+  // `gate` exposes its single action through `gate check <target>` and has no action arg.
+  "gate check": "gate",
 };
 
 /**
@@ -56,6 +61,7 @@ const CLI_ONLY_ALLOWLIST: Record<string, string> = {
   onboard: "CLI onboarding; configures local AI clients, no vault command counterpart.",
   setup: "Machine-local client configuration (src/setup); intentionally not an MCP tool.",
   teardown: "Machine-local client deconfiguration (src/setup); intentionally not an MCP tool.",
+  upgrade: "Machine-local client upgrade (src/setup); intentionally not an MCP tool.",
   "worktree bootstrap": "Internal post-checkout hook entry point; never exposed over MCP.",
 };
 
@@ -88,15 +94,28 @@ function collectCliLeafPaths(cmd: Command, prefix = ""): string[] {
  * Resolves a CLI path to an MCP tool name:
  *   1. explicit override, else
  *   2. the full path normalized (graph related -> graph_related), else
- *   3. the top-level group normalized (task add -> task).
+ *   3. the top-level group normalized, but only when the subcommand is one of
+ *      that tool's registered `action` enum values (task add -> task; task foo -> null).
  */
-function resolveMcpToolName(cliPath: string, mcpNames: ReadonlySet<string>): string | null {
+export function resolveMcpToolName(
+  cliPath: string,
+  tools: ReadonlyMap<string, MCPToolDefinition>,
+): string | null {
   const override = CLI_TO_MCP_OVERRIDES[cliPath];
   if (override !== undefined) return override;
-  for (const candidate of [normalize(cliPath), normalize(cliPath.split(" ")[0])]) {
-    if (mcpNames.has(candidate)) return candidate;
-  }
-  return null;
+  const direct = normalize(cliPath);
+  if (tools.has(direct)) return direct;
+  const [group, ...rest] = cliPath.split(" ");
+  if (rest.length === 0) return null;
+  const groupName = normalize(group);
+  const tool = tools.get(groupName);
+  if (!tool) return null;
+  const properties = tool.inputSchema.properties as Record<string, unknown> | undefined;
+  const action = properties?.action as { enum?: unknown[] } | undefined;
+  const actions = Array.isArray(action?.enum)
+    ? action.enum.filter((value): value is string => typeof value === "string")
+    : [];
+  return actions.includes(rest.join(" ")) ? groupName : null;
 }
 
 describe("CLI <-> MCP command parity", () => {
@@ -104,11 +123,12 @@ describe("CLI <-> MCP command parity", () => {
   const registry = createRegistry();
   const toolDefs = registry.getToolDefinitions();
   const mcpNames = new Set(toolDefs.map((def) => def.name));
+  const toolMap = new Map(toolDefs.map((def) => [def.name, def]));
 
   function coveredMcpNames(): Set<string> {
     return new Set(
       cliPaths
-        .map((path) => resolveMcpToolName(path, mcpNames))
+        .map((path) => resolveMcpToolName(path, toolMap))
         .filter((name): name is string => name !== null),
     );
   }
@@ -119,12 +139,22 @@ describe("CLI <-> MCP command parity", () => {
 
   it("maps every CLI command to an MCP tool or a documented CLI-only allowlist entry", () => {
     const undocumented = cliPaths.filter(
-      (path) => resolveMcpToolName(path, mcpNames) === null && !(path in CLI_ONLY_ALLOWLIST),
+      (path) => resolveMcpToolName(path, toolMap) === null && !(path in CLI_ONLY_ALLOWLIST),
     );
     expect(
       undocumented,
       "New CLI-only command(s). Register a matching tool in src/core/registry.ts, or add each path to CLI_ONLY_ALLOWLIST with a reason.",
     ).toEqual([]);
+  });
+
+  it("rejects CLI subcommands that are not registered actions of the group tool", () => {
+    expect(resolveMcpToolName("task frobnicate", toolMap)).toBeNull();
+    expect(resolveMcpToolName("learn ghost", toolMap)).toBeNull();
+    expect(resolveMcpToolName("tickets archive", toolMap)).toBeNull();
+    expect(resolveMcpToolName("task add", toolMap)).toBe("task");
+    expect(resolveMcpToolName("tickets ready", toolMap)).toBe("tickets");
+    expect(resolveMcpToolName("session list", toolMap)).toBe("session");
+    expect(resolveMcpToolName("session frobnicate", toolMap)).toBeNull();
   });
 
   it("exposes every MCP tool through a CLI wrapper or a documented MCP-only allowlist entry", () => {
@@ -143,7 +173,7 @@ describe("CLI <-> MCP command parity", () => {
       expect(reason.trim().length, `CLI_ONLY_ALLOWLIST["${path}"] needs a reason`).toBeGreaterThan(0);
       expect(cliPaths, `allowlisted CLI-only command "${path}" no longer exists — remove it from CLI_ONLY_ALLOWLIST`).toContain(path);
       expect(
-        resolveMcpToolName(path, mcpNames),
+        resolveMcpToolName(path, toolMap),
         `"${path}" now maps to an MCP tool — remove it from CLI_ONLY_ALLOWLIST`,
       ).toBeNull();
     }

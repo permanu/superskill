@@ -305,6 +305,21 @@ describe("taskCommand", () => {
       expect(result.tasks).toHaveLength(1);
       expect(result.tasks![0].assigned_to).toBe("alice");
     });
+
+    it("limits results after existing ordering when limit is provided", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project/tasks"), { recursive: true });
+
+      await taskCommand({ action: "add", title: "P1 Task", priority: "p1", project: "test-project" }, ctx);
+      await taskCommand({ action: "add", title: "P0 Task", priority: "p0", project: "test-project" }, ctx);
+      await taskCommand({ action: "add", title: "P2 Task", priority: "p2", project: "test-project" }, ctx);
+
+      const limited = await taskCommand({ action: "list", project: "test-project", limit: 2 }, ctx);
+      expect(limited.tasks!.map((t) => t.priority)).toEqual(["p0", "p1"]);
+
+      const all = await taskCommand({ action: "list", project: "test-project" }, ctx);
+      expect(all.tasks).toHaveLength(3);
+    });
   });
 
   describe("update task", () => {
@@ -492,6 +507,19 @@ describe("taskCommand", () => {
       expect(result.board).toHaveProperty("blocked");
       expect(result.board).toHaveProperty("done");
       expect(result.board).toHaveProperty("cancelled");
+    });
+
+    it("limits each board column when limit is provided", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project/tasks"), { recursive: true });
+
+      for (const title of ["First", "Second", "Third"]) {
+        await taskCommand({ action: "add", title, project: "test-project" }, ctx);
+      }
+
+      const result = await taskCommand({ action: "board", project: "test-project", limit: 2 }, ctx);
+
+      expect(result.board!["backlog"]).toHaveLength(2);
     });
   });
 

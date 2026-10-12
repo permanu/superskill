@@ -224,6 +224,24 @@ describe("selectPrinciples", () => {
     expect(selected[0]?.reason).toBe("file **/*.sql (1x)");
   });
 
+  it("matches trigger keywords across the trailing-e boundary", () => {
+    const index = buildPrincipleIndex([
+      principle({ id: "principle-cache", triggers: { keywords: ["cache"], files: [], symbols: [] } }),
+    ]);
+    const { selected } = selectPrinciples({ prompt: "fix the caching layer" }, index);
+    expect(selected.map((entry) => entry.id)).toEqual(["principle-cache"]);
+    expect(selected[0]?.reason).toBe("keyword 'caching' (1x)");
+  });
+
+  it("matches apply_when gates across the trailing-e boundary", () => {
+    const index = buildPrincipleIndex([
+      principle({ id: "principle-gate", applyWhen: "Apply when parsing input." }),
+    ]);
+    const { selected } = selectPrinciples({ prompt: "parse the payload" }, index);
+    expect(selected.map((entry) => entry.id)).toEqual(["principle-gate"]);
+    expect(selected[0]?.reason).toBe("apply_when 'parse' (1x)");
+  });
+
   it("counts symbol occurrences", async () => {
     const { principles } = await loadPrinciples(FIXTURE_ROOT);
     const index = buildPrincipleIndex(principles);

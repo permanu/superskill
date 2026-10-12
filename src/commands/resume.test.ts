@@ -131,7 +131,7 @@ created: "2024-01-${String(i).padStart(2, "0")}"
       expect(result.active_sessions.some(s => s.project === "test-project")).toBe(true);
     });
 
-    it("returns empty interrupted_sessions (stale sessions are now deleted, not marked)", async () => {
+    it("returns empty interrupted_sessions when the registry reports none", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
 
       const result = await resumeCommand({
@@ -139,6 +139,34 @@ created: "2024-01-${String(i).padStart(2, "0")}"
       }, ctx);
 
       expect(result.interrupted_sessions).toEqual([]);
+    });
+
+    it("populates interrupted_sessions from the registry, filtered to this project", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+
+      const makeSession = (id: string, project: string) => ({
+        id,
+        tool: "cursor",
+        project,
+        task_summary: `Interrupted ${id}`,
+        files_touched: ["src/file.ts"],
+        started_at: "2024-01-15T10:00:00Z",
+        last_heartbeat: "2024-01-15T11:00:00Z",
+        completed_at: null,
+        status: "active" as const,
+      });
+      const registryStub = {
+        listActive: vi.fn(async () => []),
+        listInterrupted: vi.fn(async () => [makeSession("int-1", "test-project"), makeSession("int-2", "other-project")]),
+      };
+
+      const result = await resumeCommand(
+        { project: "test-project" },
+        createCommandContext(vaultFs, { sessionRegistry: registryStub as any }),
+      );
+
+      expect(result.interrupted_sessions.map((s) => s.id)).toEqual(["int-1"]);
+      expect(result.interrupted_sessions[0].task_summary).toBe("Interrupted int-1");
     });
 
     it("suggests next steps from in-progress tasks", async () => {

@@ -1,11 +1,13 @@
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, platform, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { CLIENT_REGISTRY } from "./clients.js";
-import { writeMarkdownInstruction } from "./instructions.js";
+import { hasManagedInstructionBlock, writeMarkdownInstruction } from "./instructions.js";
 import { installSharedSkill, sharedSkillFile, SKILL_MARKER } from "./skill.js";
-import { MARKER_START_HTML, type Platform } from "./types.js";
+import { upgradeCommand } from "./upgrade.js";
+import type { UpgradeReport } from "./upgrade.js";
+import { currentPlatform } from "./types.js";
 
 function refreshFile(path: string, kind: "skill" | "instruction", home: string): boolean {
   if (!existsSync(path) || !lstatSync(path).isFile()) return false;
@@ -25,7 +27,7 @@ function refreshFile(path: string, kind: "skill" | "instruction", home: string):
     const info = lstatSync(path);
     if (!info.isFile()) return false;
     const original = readFileSync(path, "utf8");
-    if (!original.includes(kind === "skill" ? SKILL_MARKER : MARKER_START_HTML)) return false;
+    if (!(kind === "skill" ? original.includes(SKILL_MARKER) : hasManagedInstructionBlock(original))) return false;
     staging = mkdtempSync(join(tmpdir(), "superskill-refresh-"));
     const stagedFile = kind === "skill" ? sharedSkillFile(staging) : join(staging, "instructions.md");
     mkdirSync(dirname(stagedFile), { recursive: true });
@@ -58,7 +60,7 @@ export function refreshExistingManagedInstallation(homeDir = homedir()): string[
   const targets: Array<{ path: string; kind: "skill" | "instruction" }> = [{ path: sharedSkillFile(homeDir), kind: "skill" }];
   for (const client of CLIENT_REGISTRY) {
     if (client.instructionStrategy !== "markdown-file") continue;
-    const target = client.instructionPaths?.[platform() as Platform];
+    const target = client.instructionPaths?.[currentPlatform()];
     if (target?.startsWith("~/")) targets.push({ path: join(homeDir, target.slice(2)), kind: "instruction" });
   }
   for (const target of targets) {
@@ -69,4 +71,25 @@ export function refreshExistingManagedInstallation(homeDir = homedir()): string[
     }
   }
   return updated;
+}
+
+export interface StartupRefreshResult {
+  refreshed: string[];
+  upgraded: UpgradeReport["clients"];
+}
+
+export async function refreshStartupState(homeDir = homedir()): Promise<StartupRefreshResult> {
+  let refreshed: string[] = [];
+  const upgraded: UpgradeReport["clients"] = [];
+  try {
+    refreshed = refreshExistingManagedInstallation(homeDir);
+  } catch (error) {
+    console.error(`[setup-refresh] Startup refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    upgraded.push(...(await upgradeCommand({})).clients);
+  } catch (error) {
+    console.error(`[setup-upgrade] Startup reconcile failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { refreshed, upgraded };
 }

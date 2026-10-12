@@ -13,6 +13,7 @@ import {
   normalizeFilePath,
   normalizeTerms,
   simpleStem,
+  termsMatchLookup,
 } from "./index-builder.js";
 import type { Enforce } from "./loader.js";
 import type { PlannedPrinciple } from "./plan.js";
@@ -455,14 +456,14 @@ function buildCandidates(
   for (const token of tokenizePrompt(prompt)) {
     for (const term of normalizeTerms(token)) {
       const key = simpleStem(term);
-      for (const principleId of index.keywordIndex.get(key) ?? []) {
+      for (const principleId of termsMatchLookup(index.keywordIndex, key)) {
         const principle = index.byId.get(principleId);
         if (!principle || !eligible(principle)) continue;
         bump(keywordHits, principleId, term);
       }
       const gateKey = gateKeyFromPromptTerm(term);
       if (gateKey === undefined) continue;
-      for (const principleId of index.gateIndex.get(gateKey) ?? []) {
+      for (const principleId of termsMatchLookup(index.gateIndex, gateKey)) {
         const principle = index.byId.get(principleId);
         if (!principle || !eligible(principle)) continue;
         bump(gateHits, principleId, term.replace(/[^a-z0-9]+/g, ""));

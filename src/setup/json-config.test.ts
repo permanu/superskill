@@ -1,65 +1,107 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readJsonConfig, writeJsonConfig, addMcpEntry, removeMcpEntry } from "./json-config.js";
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from "fs";
+import { afterEach, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { readJsonConfig, writeJsonConfig, updateJsonConfig, addMcpEntry, removeMcpEntry } from "./json-config.js";
 
-vi.mock("fs", () => ({
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  existsSync: vi.fn(),
-  copyFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
-}));
-
-const mockRead = vi.mocked(readFileSync);
-const mockWrite = vi.mocked(writeFileSync);
-const mockExists = vi.mocked(existsSync);
-const mockCopy = vi.mocked(copyFileSync);
-const mockMkdir = vi.mocked(mkdirSync);
-
-beforeEach(() => {
-  vi.resetAllMocks();
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+function tempDir(): string {
+  const root = mkdtempSync(join(tmpdir(), "json-config-"));
+  roots.push(root);
+  return root;
+}
 
 describe("readJsonConfig", () => {
   it("returns parsed JSON when file exists", () => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue('{"mcpServers":{}}');
-    expect(readJsonConfig("/path/config.json")).toEqual({ mcpServers: {} });
+    const path = join(tempDir(), "config.json");
+    writeFileSync(path, '{"mcpServers":{}}');
+    expect(readJsonConfig(path)).toEqual({ mcpServers: {} });
   });
 
   it("returns empty object when file does not exist", () => {
-    mockExists.mockReturnValue(false);
-    expect(readJsonConfig("/path/config.json")).toEqual({});
+    expect(readJsonConfig(join(tempDir(), "missing.json"))).toEqual({});
   });
 
   it("returns null when file has invalid JSON", () => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue("not json");
-    expect(readJsonConfig("/path/config.json")).toBeNull();
+    const path = join(tempDir(), "config.json");
+    writeFileSync(path, "not json");
+    expect(readJsonConfig(path)).toBeNull();
   });
 });
 
 describe("writeJsonConfig", () => {
-  it("creates backup before writing", () => {
-    mockExists.mockReturnValue(true);
-    writeJsonConfig("/path/config.json", { key: "value" });
-    expect(mockCopy).toHaveBeenCalledWith(
-      "/path/config.json",
-      "/path/config.json.bak.superskill"
-    );
+  it("creates parent directories and writes formatted JSON without a backup for a new file", () => {
+    const path = join(tempDir(), "nested", "config.json");
+    writeJsonConfig(path, { key: "value" });
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({ key: "value" });
+    expect(existsSync(`${path}.bak.superskill`)).toBe(false);
   });
 
-  it("creates parent directory if missing", () => {
-    mockExists.mockReturnValue(false);
-    writeJsonConfig("/path/to/config.json", { key: "value" });
-    expect(mockMkdir).toHaveBeenCalled();
+  it("rotates the backup only when the content changes", () => {
+    const path = join(tempDir(), "config.json");
+    writeJsonConfig(path, { key: "one" });
+    writeJsonConfig(path, { key: "two" });
+    expect(JSON.parse(readFileSync(`${path}.bak.superskill`, "utf-8"))).toEqual({ key: "one" });
+
+    writeFileSync(path, JSON.stringify({ key: "two" }, null, 2) + "\n");
+    writeJsonConfig(path, { key: "two" });
+    expect(JSON.parse(readFileSync(`${path}.bak.superskill`, "utf-8"))).toEqual({ key: "one" });
   });
 
-  it("writes formatted JSON", () => {
-    mockExists.mockReturnValue(false);
-    writeJsonConfig("/path/config.json", { key: "value" });
-    const written = mockWrite.mock.calls[0][1] as string;
-    expect(JSON.parse(written)).toEqual({ key: "value" });
+  it("refuses to clobber an unparseable config", () => {
+    const path = join(tempDir(), "config.json");
+    writeFileSync(path, "{ broken");
+    expect(() => writeJsonConfig(path, { key: "value" })).toThrow(/Refusing to overwrite unparseable JSON/);
+    expect(readFileSync(path, "utf-8")).toBe("{ broken");
+  });
+});
+
+describe("updateJsonConfig", () => {
+  it("applies the mutation and reports whether it wrote", () => {
+    const path = join(tempDir(), "config.json");
+    expect(updateJsonConfig(path, (config) => ({ ...config, first: true }))).toBe(true);
+    expect(updateJsonConfig(path, () => null)).toBe(false);
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({ first: true });
+  });
+
+  it("survives a second writer between read and rename by retrying the read-modify-write", () => {
+    const path = join(tempDir(), "config.json");
+    writeJsonConfig(path, { initial: true });
+    let secondWriterRan = false;
+
+    const written = updateJsonConfig(path, (config) => {
+      if (!secondWriterRan) {
+        secondWriterRan = true;
+        writeFileSync(path, JSON.stringify({ initial: true, concurrent: true }, null, 2) + "\n");
+      }
+      return { ...config, superskill: { command: "npx" } };
+    });
+
+    expect(written).toBe(true);
+    expect(secondWriterRan).toBe(true);
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
+      initial: true,
+      concurrent: true,
+      superskill: { command: "npx" },
+    });
+  });
+
+  it("gives up with a clear error when the target keeps changing", () => {
+    const path = join(tempDir(), "config.json");
+    writeJsonConfig(path, { initial: true });
+    let counter = 0;
+    expect(() =>
+      updateJsonConfig(path, (config) => {
+        counter += 1;
+        writeFileSync(path, JSON.stringify({ tick: counter }, null, 2) + "\n");
+        return { ...config, superskill: true };
+      })
+    ).toThrow(/kept changing during write/);
+    expect(counter).toBe(3);
   });
 });
 
@@ -107,7 +149,6 @@ describe("removeMcpEntry", () => {
     expect(result.removed).toBe(false);
   });
 });
-
 
 describe("managed launcher upgrades", () => {
   const latest = { command: "npx", args: ["-y", "--prefer-online", "superskill@latest"], env: { VAULT_PATH: "/new" } };

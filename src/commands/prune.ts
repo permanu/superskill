@@ -2,6 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { VaultFS } from "../lib/vault-fs.js";
 import { parseFrontmatter, mergeFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
+import { removeVaultFileFromIndex, upsertVaultFile } from "../lib/knowledge-index.js";
 import { resolveProject } from "../config.js";
 
 export interface RetentionPolicy {
@@ -64,6 +65,7 @@ export async function pruneCommand(
   }
 
   const policy = { ...DEFAULT_POLICY, ...args.policy };
+  validateRetentionPolicy(policy);
   const results: PruneResult[] = [];
   const vaultFs = ctx.vaultFs;
 
@@ -74,16 +76,29 @@ export async function pruneCommand(
       .map((f) => f.replace("projects/", "").replace("/", ""));
 
     for (const slug of projectDirs) {
-      const result = await pruneProject(vaultFs, slug, args.mode, policy);
+      const result = await pruneProject(vaultFs, ctx.vaultPath, slug, args.mode, policy);
       results.push(result);
     }
   } else {
     const projectSlug = await resolveProject(ctx.vaultPath, args.project);
-    const result = await pruneProject(vaultFs, projectSlug, args.mode, policy);
+    const result = await pruneProject(vaultFs, ctx.vaultPath, projectSlug, args.mode, policy);
     results.push(result);
   }
 
   return results;
+}
+
+const RETENTION_FIELDS: Array<keyof RetentionPolicy> = ["sessions", "doneTasks", "learnings", "brainstorms", "adrs"];
+
+function validateRetentionPolicy(policy: RetentionPolicy): void {
+  for (const field of RETENTION_FIELDS) {
+    const days = policy[field];
+    if (typeof days !== "number" || !Number.isFinite(days) || days < 0) {
+      throw new Error(
+        `Invalid retention policy for "${field}": ${String(days)}. Expected a non-negative number of days (0 disables).`
+      );
+    }
+  }
 }
 
 export async function statsCommand(
@@ -99,6 +114,12 @@ export async function statsCommand(
   const adrCount = await countFiles(vaultFs, `${base}/decisions`);
   const brainstormCount = await countFiles(vaultFs, `${base}/brainstorms`);
 
+  const datedFiles: DatedVaultFile[] = [];
+  await collectDatedFiles(vaultFs, `${base}/sessions`, datedFiles);
+  await collectDatedFiles(vaultFs, `${base}/learnings`, datedFiles);
+  await collectDatedFiles(vaultFs, `${base}/decisions`, datedFiles);
+  await collectDatedFiles(vaultFs, `${base}/brainstorms`, datedFiles);
+
   const taskBreakdown = { total: 0, backlog: 0, inProgress: 0, done: 0, cancelled: 0 };
   try {
     const taskFiles = await vaultFs.list(`${base}/tasks`, 1);
@@ -108,6 +129,8 @@ export async function statsCommand(
       try {
         const content = await vaultFs.read(f);
         const { data } = parseFrontmatter(content);
+        const time = frontmatterTime(data);
+        if (time !== null) datedFiles.push({ path: f, time });
         switch (data.status) {
           case "backlog": taskBreakdown.backlog++; break;
           case "in-progress": taskBreakdown.inProgress++; break;
@@ -120,6 +143,11 @@ export async function statsCommand(
 
   const totalFiles = sessionCount + learningCount + adrCount + brainstormCount + taskBreakdown.total;
 
+  const oldest = datedFiles.reduce<DatedVaultFile | null>(
+    (min, entry) => (min === null || entry.time < min.time ? entry : min),
+    null
+  );
+
   return {
     project: projectSlug,
     sessions: sessionCount,
@@ -128,7 +156,7 @@ export async function statsCommand(
     adrs: adrCount,
     brainstorms: brainstormCount,
     totalFiles,
-    oldestFile: null,
+    oldestFile: oldest?.path ?? null,
   };
 }
 
@@ -156,6 +184,7 @@ export async function deprecateCommand(
 
 async function pruneProject(
   vaultFs: VaultFS,
+  vaultPath: string,
   projectSlug: string,
   mode: "dry-run" | "archive" | "delete",
   policy: RetentionPolicy
@@ -179,11 +208,23 @@ async function pruneProject(
   const archiveBase = `projects/${projectSlug}/_archive`;
 
   if (policy.sessions > 0) {
-    await pruneByAge(vaultFs, `${base}/sessions`, `${archiveBase}/sessions`, policy.sessions, mode, result);
+    await pruneByAge(vaultFs, vaultPath, `${base}/sessions`, `${archiveBase}/sessions`, policy.sessions, mode, result, "sessions_scanned");
   }
 
   if (policy.doneTasks > 0) {
-    await pruneByStatus(vaultFs, `${base}/tasks`, `${archiveBase}/tasks`, ["done", "cancelled"], policy.doneTasks, mode, result, "tasks_scanned");
+    await pruneByStatus(vaultFs, vaultPath, `${base}/tasks`, `${archiveBase}/tasks`, ["done", "cancelled"], policy.doneTasks, mode, result, "tasks_scanned");
+  }
+
+  if (policy.learnings > 0) {
+    await pruneByAge(vaultFs, vaultPath, `${base}/learnings`, `${archiveBase}/learnings`, policy.learnings, mode, result, "learnings_scanned");
+  }
+
+  if (policy.brainstorms > 0) {
+    await pruneByAge(vaultFs, vaultPath, `${base}/brainstorms`, `${archiveBase}/brainstorms`, policy.brainstorms, mode, result);
+  }
+
+  if (policy.adrs > 0) {
+    await pruneByAge(vaultFs, vaultPath, `${base}/decisions`, `${archiveBase}/decisions`, policy.adrs, mode, result);
   }
 
   result.stats.total_archived = result.archived.length;
@@ -195,11 +236,13 @@ async function pruneProject(
 
 async function pruneByAge(
   vaultFs: VaultFS,
+  vaultPath: string,
   dir: string,
   archiveDir: string,
   maxAgeDays: number,
   mode: "dry-run" | "archive" | "delete",
-  result: PruneResult
+  result: PruneResult,
+  scanCounter?: keyof PruneResult["stats"]
 ): Promise<void> {
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   let files: string[];
@@ -211,7 +254,7 @@ async function pruneByAge(
 
   for (const file of files) {
     if (!file.endsWith(".md")) continue;
-    result.stats.sessions_scanned++;
+    if (scanCounter) (result.stats[scanCounter] as number)++;
 
     try {
       const content = await vaultFs.read(file);
@@ -229,13 +272,15 @@ async function pruneByAge(
         const archivePath = file.replace(dir, archiveDir);
         await vaultFs.move(file, archivePath);
         result.archived.push({ from: file, to: archivePath });
+        await reindexMovedFile(vaultFs, vaultPath, file, archivePath);
       } else {
         await vaultFs.delete(file);
         result.deleted.push(file);
+        removePrunedFileFromIndex(vaultPath, file);
       }
     } catch (e: unknown) {
       if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-        console.error(`[prune] Skipping unreadable session file: ${file}:`, e instanceof Error ? e.message : e);
+        console.error(`[prune] Skipping unreadable file: ${file}:`, e instanceof Error ? e.message : e);
       }
     }
   }
@@ -243,6 +288,7 @@ async function pruneByAge(
 
 async function pruneByStatus(
   vaultFs: VaultFS,
+  vaultPath: string,
   dir: string,
   archiveDir: string,
   statuses: string[],
@@ -281,15 +327,64 @@ async function pruneByStatus(
         const archivePath = file.replace(dir, archiveDir);
         await vaultFs.move(file, archivePath);
         result.archived.push({ from: file, to: archivePath });
+        await reindexMovedFile(vaultFs, vaultPath, file, archivePath);
       } else {
         await vaultFs.delete(file);
         result.deleted.push(file);
+        removePrunedFileFromIndex(vaultPath, file);
       }
     } catch (e: unknown) {
       if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
         console.error(`[prune] Skipping unreadable task file: ${file}:`, e instanceof Error ? e.message : e);
       }
     }
+  }
+}
+
+function removePrunedFileFromIndex(vaultPath: string, file: string): void {
+  try {
+    removeVaultFileFromIndex(vaultPath, file);
+  } catch (e: unknown) {
+    console.error(`[prune] Index removal skipped for ${file}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+async function reindexMovedFile(vaultFs: VaultFS, vaultPath: string, from: string, to: string): Promise<void> {
+  removePrunedFileFromIndex(vaultPath, from);
+  try {
+    const content = await vaultFs.read(to);
+    upsertVaultFile(vaultPath, to, content);
+  } catch (e: unknown) {
+    console.error(`[prune] Index upsert skipped for ${to}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+interface DatedVaultFile {
+  path: string;
+  time: number;
+}
+
+function frontmatterTime(data: Record<string, unknown>): number | null {
+  const dateStr = (data.completed_at ?? data.updated ?? data.created) as string | undefined;
+  if (typeof dateStr !== "string") return null;
+  const time = new Date(dateStr).getTime();
+  return isNaN(time) ? null : time;
+}
+
+async function collectDatedFiles(vaultFs: VaultFS, dir: string, out: DatedVaultFile[]): Promise<void> {
+  let files: string[];
+  try {
+    files = await vaultFs.list(dir, 1);
+  } catch {
+    return;
+  }
+  for (const file of files) {
+    if (!file.endsWith(".md")) continue;
+    try {
+      const { data } = parseFrontmatter(await vaultFs.read(file));
+      const time = frontmatterTime(data);
+      if (time !== null) out.push({ path: file, time });
+    } catch { /* skip unreadable */ }
   }
 }
 

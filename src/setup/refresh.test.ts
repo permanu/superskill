@@ -5,10 +5,10 @@ import { dirname, join } from "node:path";
 import { refreshExistingManagedInstallation } from "./refresh.js";
 import * as instructions from "./instructions.js";
 import { sharedSkillFile, SKILL_MARKER, skillContent } from "./skill.js";
-import { INSTRUCTION_TEXT, MARKER_END_HTML, MARKER_START_HTML, PREVIOUS_INSTRUCTION_TEXT } from "./types.js";
+import { INSTRUCTION_TEXT, MARKER_BEGIN_HTML, MARKER_END_HTML, MARKER_START_HTML, PREVIOUS_INSTRUCTION_TEXT } from "./types.js";
 
 function write(path: string, text: string): void { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); }
-function marked(text: string): string { return `${MARKER_START_HTML}\n${text}\n${MARKER_END_HTML}`; }
+function marked(text: string, open = MARKER_BEGIN_HTML): string { return `${open}\n${text}\n${MARKER_END_HTML}`; }
 
 describe("managed installation startup refresh", () => {
   let home: string;
@@ -25,7 +25,7 @@ describe("managed installation startup refresh", () => {
     const skill = sharedSkillFile(home);
     const instruction = join(home, ".codex", "AGENTS.md");
     write(skill, `${SKILL_MARKER}\nold shared skill`);
-    write(instruction, `# Custom rules\n\n${marked(PREVIOUS_INSTRUCTION_TEXT)}\n\nKeep my footer.\n`);
+    write(instruction, `# Custom rules\n\n${marked(PREVIOUS_INSTRUCTION_TEXT, MARKER_START_HTML)}\n\nKeep my footer.\n`);
     const stdout = vi.spyOn(process.stdout, "write");
     expect(refreshExistingManagedInstallation(home).sort()).toEqual([skill, instruction].sort());
     expect(readFileSync(skill, "utf8")).toBe(skillContent());

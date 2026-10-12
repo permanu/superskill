@@ -301,7 +301,7 @@ describe("activateSkills rule integration", () => {
     await writeGraph(createGraph(["typescript"]));
 
     const result = await activateSkills(
-      { task: "rename the trait method", files: ["src/lib.rs"] },
+      { task: "check naming style for the trait method", files: ["src/lib.rs"] },
       createMockCtx(projectDir),
       fixtureOptions(),
     );

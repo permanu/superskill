@@ -48,10 +48,13 @@ Verify any time with `superskill doctor`: install vs running MCP servers, vault 
 
 ```bash
 npm install -g superskill@latest
-superskill setup        # refresh slash commands + the shared skill (idempotent)
+superskill upgrade      # reconcile launchers, instructions, legacy aliases
+superskill setup        # or re-run setup for the full install path (idempotent)
 ```
 
-`setup` upgrades recognized generated launchers without `--force`, preserving their existing vault path and extra environment settings. Pinned versions, direct binaries and customized arguments are left unchanged. `--force` explicitly replaces an entry; use it only when that replacement is intended.
+`setup` and `upgrade` upgrade recognized generated launchers without `--force`, preserving their existing vault path and extra environment settings. Pinned versions, direct binaries and customized arguments are left unchanged. `--force` explicitly replaces an entry; use it only when that replacement is intended.
+
+You normally do not need to run either manually: when a host starts the MCP server, SuperSkill reconciles managed launchers, removes its own legacy `obsidian-mcp`/`obsidian-kb` aliases, and upgrades legacy instruction blocks in place. Run `superskill setup --check` to see drift read-only, or `superskill upgrade --dry-run` to preview the automatic reconciliation.
 
 ### Uninstall
 
@@ -66,7 +69,7 @@ npm uninstall -g superskill
 
 `setup` defaults to `npx -y --prefer-online superskill@latest`. Each new MCP process asks npm for fresh metadata and resolves the stable `latest` tag. Publishing a new version under that tag makes it available on the next MCP start; it does not replace an active server or push code into running sessions. Offline/cache behavior may retain a cached version or fail to start; no upgrade is guaranteed without registry access. Explicit pinned versions and direct installed binaries remain manual-update choices. See [npm exec configuration](https://docs.npmjs.com/cli/v11/commands/npm-exec/#prefer-online).
 
-Run setup once to install or migrate the integration. Future MCP starts update server code and atomically refresh the existing SuperSkill-managed shared skill and recognized Markdown instruction blocks. Automatic refresh preserves custom/ambiguous blocks and skips Cursor MDC/OpenCode plain instruction files; maintain those through explicit setup or manually. It does not create missing integrations or change launcher settings. Start a new host session to load refreshed instructions.
+Run setup once to install or migrate the integration. Future MCP starts update server code and atomically refresh the existing SuperSkill-managed shared skill, launchers, owned legacy aliases, and recognized instruction blocks — including Cursor MDC and OpenCode instruction files — upgrading legacy `superskill:start` markers and unmarked legacy files to the current format while preserving user content around them. It does not create missing integrations. Start a new host session to load refreshed instructions.
 
 **Claude Code / Claude Desktop** — `~/.claude.json`, or `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
 
@@ -519,11 +522,13 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 | `task list\|add\|update\|board` | Kanban tasks | `-s, --status`, `--priority p0\|p1\|p2`, `--assigned-to`, `--blocked-by`, `--tags` |
 | `learn add\|list` | Capture/query learnings | `-t, --title`, `-d, --discovery`, `--tags`, `--confidence high\|medium\|low`, `--tag` |
 | `brainstorm <topic>` | Start or continue a brainstorm doc | `-c, --content` |
-| `session register\|heartbeat\|complete\|list` | Multi-agent session registry | `--tool`, `--task`, `--files`, `--summary`, `--outcome`, `--tasks` |
+| `session register\|heartbeat\|complete\|list` | Multi-agent session registry | `--tool`, `--task`, `--files`, `--summary`, `--outcome`, `--tasks`, `--workspace`, `--allow-shared`, `--blocked`, `--partially-completed`, `--verification-run` |
 | `resume` | Recent sessions, blocked work, next steps | `-l, --limit`, `--json` |
 | `stats` | File counts and task breakdown | |
 | `prune` | Archive/delete stale content | `-a, --all`, `-m, --mode dry-run\|archive\|delete`, `--sessions <days>`, `--done-tasks <days>` |
 | `deprecate <path>` | Mark a vault item deprecated | `-r, --reason` |
+
+Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent registering the same workspace gets the holder's tool/task back instead of silently co-tenanting, unless it passes `allow_shared`. Heartbeats refresh the claim and report file overlaps (including `files_touched` updates); sessions that stop heartbeating become `expired` and their worktrees become eligible for the completed-worktree cleanup, which never removes a worktree with a live pid or a completion younger than 60 seconds.
 
 ### Knowledge graph
 
@@ -545,7 +550,7 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 |---|---|---|
 | `skill init` | Detect stack, index the catalog, build `.superskill/graph.json`, update `.gitignore` + `AGENTS.md`/`CLAUDE.md` | `--bridge` |
 | `skill activate [task]` | Load packs for a task | `--skill-id <id>` |
-| `skill install <source>` | Install skills from a GitHub repo | `--select <names>` |
+| `skill install <source>` | Install skills from a GitHub repo; audits must be all-pass unless `--allow-unaudited` | `--select <names>`, `--allow-unaudited` |
 | `skill list` | List installed skills | |
 | `skill remove <name>` | Remove an installed skill | |
 | `skill status` | Graph state: skills, weights, recent sessions | |
@@ -577,7 +582,8 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 
 | Command | Purpose | Common flags |
 |---|---|---|
-| `setup` | Auto-configure detected AI clients | `--all`, `--clients`, `--dry-run`, `--force`, `--vault-path` |
+| `setup` | Auto-configure detected AI clients | `--all`, `--clients`, `--dry-run`, `--check`, `--force`, `--vault-path` |
+| `upgrade` | Reconcile managed launchers, legacy aliases, and instruction blocks (also runs automatically at MCP start) | `--dry-run`, `--json` |
 | `teardown` | Remove SuperSkill configuration | `--clients`, `--dry-run`, `--silent` |
 | `register [path]` | Map a repo to a vault project so commands auto-detect without `-p` (also done by `skill init`) | `-s, --slug <name>` |
 | `doctor` | Health check: install vs running MCP servers, vault, mapping, graph isolation, catalog, toolchains, telemetry, clients | `--json` |
@@ -821,6 +827,8 @@ Details and installation snippets: `docs/harness.md`.
 | `SESSION_TTL_HOURS` | `2` | Session heartbeat TTL (clamped 1–168). |
 | `CHROME_PATH` | macOS Chrome | Browser used by `qa viz`; Chromium/Brave paths are also probed. |
 | `SUPERSKILL_TELEMETRY` | unset | `1`/`0` override for local rule-selection telemetry (also `telemetry enable`). |
+| `SUPERSKILL_MAX_RESPONSE_BYTES` | `65536` | MCP response byte cap; oversized results are truncated with an explicit marker. |
+| `SUPERSKILL_PRETTY` | unset | `1` pretty-prints MCP JSON responses (compact by default). |
 | `SUPERSKILL_CACHE_ROOT` | platform cache dir | Root for shared worktree caches (default `~/Library/Caches/superskill` on macOS, `~/.cache/superskill` on Linux, `%LOCALAPPDATA%\superskill` on Windows). |
 | `SUPERSKILL_WORKTREE_BOOTSTRAP` | unset | `0` makes `worktree bootstrap` a no-op, disabling post-checkout seeding for that process. |
 | `SUPERSKILL_RUST_HARNESS_DIR` | `~/.superskill/cache/rust-harness` | Warm cargo fixture used by the rules compile harness. |
@@ -831,9 +839,9 @@ npm publish is **manual** (`npm publish` on a maintainer machine). CI does not s
 ## Security
 
 - **Vault jail** — paths are rewritten under `projects/<slug>/`; traversal and symlink escapes are rejected; sibling projects are denied. `VAULT_PATH` is bounded to the home directory.
-- **Secret scanner** — `write` blocks secret-like content with `SECRET_REJECTED` before anything is stored.
-- **Audit gate** — skills with a `fail` audit status (gen / socket / snyk) are blocked at load; medium-risk findings surface as warnings. Fail-closed: a blocked skill is not injected.
-- **Prompt-injection scan** — skill content is scanned before injection for override, exfiltration, secrecy, and destructive-command patterns; hard blocks are dropped with a warning.
+- **Secret scanner** — `write` blocks secret-like content with `SECRET_REJECTED` before anything is stored, covering common provider keys (OpenAI, Anthropic, Google, AWS secret access keys), webhooks, and generic tokens. Vault mutations are recorded in a local audit trail (`~/.superskill/audit/vault-writes.jsonl`, path/op/bytes only — never content).
+- **Audit gate** — skill installs are fail-closed: `fail`, `unknown`, and warn-only audits are refused unless you pass `--allow-unaudited`, and non-all-pass installs are marked `.unaudited-superskill` with provenance visible in `skill list`/`skill status`. At activation, explicit failures block loading; unknown/warn audits warn without blocking, so local/native skills remain usable.
+- **Prompt-injection scan** — skill content is scanned before injection for override, exfiltration, secrecy, and destructive-command patterns; hard blocks are dropped with a warning. Installs scan every Markdown file in the skill directory before copying.
 - **MCP rate limit** — write tools are limited to 30 operations per minute per server.
 
 ## Contributing

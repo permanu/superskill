@@ -1,17 +1,23 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, realpath, rename, rmdir, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const operations = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG", "sequencer", "index.lock"];
+const LOCK_STALE_MS = 60_000;
+const RECENT_COMPLETION_MS = 60_000;
 
 export interface CleanupSession {
   id: string;
   status: string;
   workspace_path?: string;
   project?: string | null;
+  completed_at?: string | null;
+  pid?: number;
+  host?: string;
 }
 
 export interface CleanupResult {
@@ -139,28 +145,121 @@ async function restoreMetadata(path: string, archive: string, identity: { dev: n
   }
 }
 
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function lockIsStale(raw: string, mtimeMs: number): boolean {
+  let body: { pid?: unknown; createdAt?: unknown } | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") body = parsed;
+  } catch {
+    body = null;
+  }
+  if (body && Number.isInteger(body.pid) && (body.pid as number) > 0) {
+    return !processAlive(body.pid as number);
+  }
+  const baseline = typeof body?.createdAt === "number" ? body.createdAt : mtimeMs;
+  return Date.now() - baseline > LOCK_STALE_MS;
+}
+
+function lockToken(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return typeof (parsed as { token?: unknown }).token === "string" ? (parsed as { token: string }).token : null;
+  } catch {
+    return null;
+  }
+}
+
+async function removeStaleLock(path: string): Promise<boolean> {
+  let raw: string;
+  try { raw = await readFile(path, "utf-8"); }
+  catch { return false; }
+  let mtimeMs: number;
+  try { mtimeMs = (await lstat(path)).mtimeMs; }
+  catch { return false; }
+  if (!lockIsStale(raw, mtimeMs)) return false;
+  let before;
+  try { before = await lstat(path); }
+  catch { return false; }
+  let current: string;
+  try { current = await readFile(path, "utf-8"); }
+  catch { return false; }
+  if (current !== raw) return false;
+  try {
+    const after = await lstat(path);
+    if (after.ino !== before.ino || after.dev !== before.dev) return false;
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    console.error("[worktree-cleanup] Failed to remove stale cleanup lock:", (error as Error).message);
+    return false;
+  }
+  console.error(`[worktree-cleanup] Recovered stale cleanup lock: ${path}`);
+  return true;
+}
+
+function completedLongEnoughAgo(session: CleanupSession): boolean {
+  if (typeof session.completed_at !== "string") return false;
+  const time = Date.parse(session.completed_at);
+  return !Number.isNaN(time) && Date.now() - time >= RECENT_COMPLETION_MS;
+}
+
+function sessionProcessAlive(session: CleanupSession): boolean {
+  if (typeof session.pid !== "number" || !Number.isInteger(session.pid) || session.pid <= 0) return false;
+  if (session.host !== hostname()) return false;
+  try {
+    process.kill(session.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 async function acquireLock(common: string): Promise<{ owned: () => Promise<boolean>; release: () => Promise<void> }> {
   const path = join(common, "superskill-worktree-cleanup.lock");
   const token = randomUUID();
+  const body = JSON.stringify({ pid: process.pid, createdAt: Date.now(), token });
   const deadline = Date.now() + 1000;
   for (;;) {
     let handle;
     try { handle = await open(path, "wx", 0o600); }
     catch (error: any) {
       if (error.code !== "EEXIST") throw error;
+      if (await removeStaleLock(path)) continue;
       if (Date.now() >= deadline) throw new Error(`Cleanup is locked: ${path}`);
-      await new Promise((done) => setTimeout(done, 25));
+      await new Promise((done) => setTimeout(done, Math.min(25, Math.max(1, deadline - Date.now()))));
       continue;
     }
-    try { await handle.writeFile(token); }
-    catch (error) {
-      const original = await handle.stat();
-      const current = await lstat(path);
-      if (original.ino === current.ino && original.dev === current.dev) await unlink(path);
+    try {
+      await handle.writeFile(body);
+    } catch (error) {
+      try {
+        const original = await handle.stat();
+        const current = await lstat(path);
+        if (original.ino === current.ino && original.dev === current.dev) await unlink(path);
+      } catch (cleanupError) {
+        console.error("[worktree-cleanup] Failed to clear an unwritten cleanup lock:", cleanupError);
+      }
+      try { await handle.close(); }
+      catch (closeError) { console.error("[worktree-cleanup] Failed to close a lock handle after a write failure:", closeError); }
       throw error;
-    } finally { await handle.close(); }
+    }
+    try {
+      await handle.close();
+    } catch (error) {
+      console.error("[worktree-cleanup] Failed to close the cleanup lock handle:", error instanceof Error ? error.message : String(error));
+    }
     const owned = async () => {
-      try { return !(await lstat(path)).isSymbolicLink() && await readFile(path, "utf-8") === token; }
+      try { return !(await lstat(path)).isSymbolicLink() && lockToken(await readFile(path, "utf-8")) === token; }
       catch (error: any) { if (error.code === "ENOENT") return false; throw error; }
     };
     return { owned, release: async () => { if (await owned()) await unlink(path); } };
@@ -180,12 +279,16 @@ export async function cleanupCompletedWorktrees(
     lock = await acquireLock(common);
     const records = await worktrees(cwd);
     const primary = records[0] ? await canonical(records[0].path) : null;
-    const owned = new Set<string>();
+    const completedByPath = new Map<string, CleanupSession[]>();
     const active = new Set<string>();
     for (const session of sessions) {
       if (!session.workspace_path) continue;
       const path = await canonical(session.workspace_path);
-      if (session.status === "completed") owned.add(path);
+      if (session.status === "completed") {
+        const owners = completedByPath.get(path);
+        if (owners) owners.push(session);
+        else completedByPath.set(path, [session]);
+      }
       if (session.status !== "completed" || session.id === options.currentSessionId) active.add(path);
     }
     const deadline = Date.now() + 30000;
@@ -198,10 +301,15 @@ export async function cleanupCompletedWorktrees(
         if (Date.now() >= deadline) reason = "cleanup time budget reached; retry later";
         else if (path === current) reason = "current worktree; switch to main and retry cleanup";
         else if (path === primary || record.branch === "refs/heads/main" || record.bare) reason = "primary or main worktree is protected";
-        else if (!owned.has(path)) reason = "no completed-session workspace provenance";
+        else if (!completedByPath.has(path)) reason = "no completed-session workspace provenance";
         else if (active.has(path)) reason = "workspace belongs to an active or current session";
         else if (record.locked || record.prunable) reason = "worktree is locked or prunable";
-        else reason = await proof(path, common);
+        else {
+          const owners = completedByPath.get(path)!;
+          if (!owners.every(completedLongEnoughAgo)) reason = "owning session completed less than 60s ago; retry later";
+          else if (owners.some(sessionProcessAlive)) reason = "owning session process is still running on this host";
+          else reason = await proof(path, common);
+        }
         if (reason) { result.kept.push({ path, reason }); continue; }
         const refreshed = (await worktrees(cwd)).find((item) => resolve(item.path) === resolve(record.path));
         if (!refreshed || refreshed.locked || refreshed.prunable || refreshed.bare || refreshed.branch === "refs/heads/main" || await canonical(record.path) !== path) {

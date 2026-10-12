@@ -54,7 +54,7 @@ export class CommandRegistry {
   private registrations = new Map<string, CommandRegistration>();
 
   register<TArgs, TResult>(name: string, registration: CommandRegistration<TArgs, TResult>): void {
-    if (name === "session" || name === "superskill" || name === "graph_traverse" || name === "knowledge_viz" || name.startsWith("worktree_")) {
+    if (name === "session" || name === "superskill" || name === "graph_traverse" || name === "knowledge_viz" || name === "impact" || name === "claims" || name.startsWith("worktree_")) {
       const properties = registration.toolDef.inputSchema.properties as Record<string, unknown>;
       properties.workspace_path = { type: "string", description: "Absolute thread workspace directory; must map to this project. Omit only when the server cwd is the thread workspace." };
     }
@@ -99,11 +99,60 @@ const tier = (v: unknown): "auto" | "consent" | "both" | undefined => {
   return value === "auto" || value === "consent" || value === "both" ? value : undefined;
 };
 
+const listLimit = (raw: Record<string, unknown>, actions: readonly string[]): number | undefined => {
+  if (typeof raw.action !== "string" || !actions.includes(raw.action)) return undefined;
+  const requested = n(raw.limit);
+  if (requested === undefined || !Number.isFinite(requested)) return 50;
+  return Math.min(Math.max(Math.floor(requested), 0), 500);
+};
+
+export const DEFAULT_RESPONSE_MAX_BYTES = 65536;
+export const DEFAULT_READ_MAX_BYTES = 65536;
+export const READ_MAX_BYTES_CAP = 10 * 1024 * 1024;
+const RESPONSE_TRUNCATION_MARKER = (bytes: number) => `\n…[truncated; full size ${bytes} bytes]`;
+
+export function maxResponseBytes(): number {
+  const raw = process.env.SUPERSKILL_MAX_RESPONSE_BYTES;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_RESPONSE_MAX_BYTES;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RESPONSE_MAX_BYTES;
+}
+
+export function serializeToolResult(value: unknown): string {
+  return JSON.stringify(value, null, process.env.SUPERSKILL_PRETTY === "1" ? 2 : undefined) ?? "null";
+}
+
+export function resolveReadMaxBytes(value: unknown): number {
+  const parsed = n(value);
+  if (parsed === undefined || !Number.isFinite(parsed) || parsed <= 0) return DEFAULT_READ_MAX_BYTES;
+  return Math.min(Math.floor(parsed), READ_MAX_BYTES_CAP);
+}
+
+function utf8Head(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  let end = maxBytes;
+  while (end > 0 && ((bytes[end] ?? 0) & 0b1100_0000) === 0b1000_0000) end -= 1;
+  return bytes.subarray(0, end).toString("utf8");
+}
+
+export function capResponseBytes(text: string, maxBytes: number): string {
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) return text;
+  return `${utf8Head(text, maxBytes)}${RESPONSE_TRUNCATION_MARKER(bytes)}`;
+}
+
+export function boundReadContent(content: string, maxBytes: unknown): string {
+  return capResponseBytes(content, resolveReadMaxBytes(maxBytes));
+}
+
 export function createRegistry(): CommandRegistry {
   const r = new CommandRegistry();
 
   r.register("read", {
-    handler: readCommand as CommandHandler,
+    handler: (async (args: { path: string; maxBytes: number }, ctx: CommandContext) => {
+      const content = await readCommand({ path: args.path }, ctx);
+      return boundReadContent(content, args.maxBytes);
+    }) as CommandHandler,
     toolDef: {
       name: "read",
       description: "Read a file or directory listing from the AI knowledge vault.",
@@ -112,12 +161,13 @@ export function createRegistry(): CommandRegistry {
         properties: {
           path: { type: "string", description: "Relative path within vault. Use '.' for root." },
           depth: { type: "number", description: "Directory listing depth (default 1)" },
+          max_bytes: { type: "number", description: "Max file bytes to return (default 65536, cap 10485760)" },
         },
         required: ["path"],
       },
       annotations: { readOnlyHint: true },
     },
-    adaptArgs: (raw) => ({ path: raw.path as string, depth: n(raw.depth) }),
+    adaptArgs: (raw) => ({ path: raw.path as string, depth: n(raw.depth), maxBytes: resolveReadMaxBytes(raw.max_bytes) }),
   });
 
   r.register("write", {
@@ -137,13 +187,19 @@ export function createRegistry(): CommandRegistry {
       },
       annotations: { destructiveHint: true },
     },
-    adaptArgs: (raw) => ({
-      path: raw.path as string,
-      content: raw.content as string,
-      mode: s(raw.mode) as "overwrite" | "append" | "prepend" | undefined,
-      frontmatter: typeof raw.frontmatter === "object" && raw.frontmatter !== null
-        ? raw.frontmatter as Record<string, unknown> : undefined,
-    }),
+    adaptArgs: (raw) => {
+      const mode = s(raw.mode);
+      if (mode !== undefined && mode !== "append" && mode !== "prepend" && mode !== "overwrite") {
+        throw new Error(`Invalid write mode "${mode}"; must be one of: append, prepend, overwrite`);
+      }
+      return {
+        path: raw.path as string,
+        content: raw.content as string,
+        mode,
+        frontmatter: typeof raw.frontmatter === "object" && raw.frontmatter !== null
+          ? raw.frontmatter as Record<string, unknown> : undefined,
+      };
+    },
   });
 
   r.register("search", {
@@ -182,6 +238,7 @@ export function createRegistry(): CommandRegistry {
         properties: {
           project: { type: "string", description: "Project slug. If omitted, auto-detected from CWD." },
           detail_level: { type: "string", enum: ["summary", "full"], description: "Detail level (default summary)" },
+          max_tokens: { type: "integer", minimum: 256, maximum: 50000, description: "Estimated content token budget, also passed through in full detail" },
         },
       },
       annotations: { readOnlyHint: true },
@@ -189,6 +246,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       project: s(raw.project),
       detailLevel: s(raw.detail_level) as "summary" | "full" | undefined,
+      maxTokens: n(raw.max_tokens),
     }),
   });
 
@@ -260,6 +318,7 @@ export function createRegistry(): CommandRegistry {
           blocked_by: { type: "array", items: { type: "string" }, description: "Task IDs that block this task" },
           assigned_to: { type: "string", description: "Assignee: claude-code|opencode|codex|human" },
           tags: { type: "array", items: { type: "string" }, description: "Tags" },
+          limit: { type: "number", description: "Max items for list/board (default 50, cap 500)" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
         required: ["action"],
@@ -275,6 +334,7 @@ export function createRegistry(): CommandRegistry {
       blockedBy: a(raw.blocked_by) as string[] | undefined,
       assignedTo: s(raw.assigned_to),
       tags: a(raw.tags) as string[] | undefined,
+      limit: listLimit(raw, ["list", "board"]),
       project: s(raw.project),
     }),
   });
@@ -296,6 +356,7 @@ export function createRegistry(): CommandRegistry {
           source: { type: "string", description: "Source tool" },
           session_id: { type: "string", description: "Session ID that captured this learning" },
           tag: { type: "string", description: "Filter learnings by tag (for list)" },
+          limit: { type: "number", description: "Max items for list (default 50, cap 500)" },
         },
         required: ["action"],
       },
@@ -311,6 +372,7 @@ export function createRegistry(): CommandRegistry {
       source: s(raw.source),
       sessionId: s(raw.session_id),
       tag: s(raw.tag),
+      limit: listLimit(raw, ["list"]),
     }),
   });
 
@@ -358,6 +420,7 @@ export function createRegistry(): CommandRegistry {
           blocked: { type: "array", items: { type: "string" }, description: "Blocking issues (for complete)" },
           verification_run: { type: "string", description: "Verification steps run and results (for complete)" },
           commands_to_resume: { type: "array", items: { type: "string" }, description: "Commands to resume work (for complete)" },
+          allow_shared: { type: "boolean", description: "Allow registering in a workspace already claimed by another active session" },
         },
         required: ["action"],
       },
@@ -377,6 +440,7 @@ export function createRegistry(): CommandRegistry {
       blocked: a(raw.blocked) as string[] | undefined,
       verificationRun: s(raw.verification_run),
       commandsToResume: a(raw.commands_to_resume) as string[] | undefined,
+      allowShared: b(raw.allow_shared),
     }),
   });
 
@@ -441,7 +505,8 @@ export function createRegistry(): CommandRegistry {
     },
     adaptArgs: (raw) => ({
       project: s(raw.project),
-      limit: typeof raw.limit === "number" ? raw.limit : 5,
+      limit: Math.min(Math.max(n(raw.limit) ?? 5, 1), 200),
+      format: s(raw.format),
     }),
   });
 
@@ -590,8 +655,8 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("skill_install", {
-    handler: (async (args: { source: string; select_skills?: string[] }) => {
-      return installSkills(args.source, { selectSkills: args.select_skills });
+    handler: (async (args: { source: string; select_skills?: string[]; allowUnaudited?: boolean }) => {
+      return installSkills(args.source, { selectSkills: args.select_skills, allowUnaudited: args.allowUnaudited });
     }) as CommandHandler,
     toolDef: {
       name: "skill_install",
@@ -601,6 +666,7 @@ export function createRegistry(): CommandRegistry {
         properties: {
           source: { type: "string", description: "GitHub source: owner/repo, github:owner/repo, or full URL" },
           select_skills: { type: "array", items: { type: "string" }, description: "Optional list of skill names to install (installs all if omitted)" },
+          allow_unaudited: { type: "boolean", description: "Allow fail-closed installs from the unaudited GitHub fallback (default false)" },
         },
         required: ["source"],
       },
@@ -609,6 +675,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       source: raw.source as string,
       select_skills: a(raw.select_skills) as string[] | undefined,
+      allowUnaudited: b(raw.allow_unaudited),
     }),
   });
 
@@ -793,7 +860,7 @@ export function createRegistry(): CommandRegistry {
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: false },
     },
     adaptArgs: (raw) => ({ project: s(raw.project) }),
   });
@@ -1088,6 +1155,7 @@ export function createRegistry(): CommandRegistry {
           },
           ticket_id: { type: "string", description: "Ticket id e.g. ticket-001 (required for update)" },
           status: { type: "string", enum: ["backlog", "in-progress", "blocked", "done", "cancelled"], description: "New ticket status (for update)" },
+          limit: { type: "number", description: "Max items for list/board/ready (default 50, cap 500)" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
         required: ["action"],
@@ -1108,6 +1176,7 @@ export function createRegistry(): CommandRegistry {
       }),
       ticketId: s(raw.ticket_id),
       status: s(raw.status) as TicketStatus | undefined,
+      limit: listLimit(raw, ["list", "board", "ready"]),
       project: s(raw.project),
     }),
   });
@@ -1128,6 +1197,7 @@ export function createRegistry(): CommandRegistry {
           commit: { type: "string", description: "Commit the evidence applies to (default: git HEAD of cwd)" },
           ts: { type: "string", description: "ISO timestamp (default: now)" },
           cwd: { type: "string", description: "Directory used for the git HEAD lookup" },
+          limit: { type: "number", description: "Max items for list (default 50, cap 500)" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
         required: ["action", "ticket"],
@@ -1143,6 +1213,7 @@ export function createRegistry(): CommandRegistry {
       commit: s(raw.commit),
       ts: s(raw.ts),
       cwd: s(raw.cwd),
+      limit: listLimit(raw, ["list"]),
       project: s(raw.project),
     }),
   });
@@ -1191,7 +1262,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       target: raw.target as string,
       to: s(raw.to),
-      root: s(raw.root),
+      root: s(raw.workspace_path) ?? s(raw.root),
     }),
   });
 
@@ -1239,7 +1310,7 @@ export function createRegistry(): CommandRegistry {
     },
     adaptArgs: (raw) => ({
       claims: raw.claims,
-      root: s(raw.root),
+      root: s(raw.workspace_path) ?? s(raw.root),
     }),
   });
 
@@ -1448,6 +1519,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          due: { type: "boolean", description: "Only report entries that are due for cleanup" },
           sizes: { type: "boolean", description: "Measure on-disk sizes (slower, more accurate)" },
           categories: {
             type: "array",
@@ -1459,6 +1531,7 @@ export function createRegistry(): CommandRegistry {
       annotations: { readOnlyHint: true },
     },
     adaptArgs: (raw) => ({
+      due: typeof raw.due === "boolean" ? raw.due : undefined,
       sizes: b(raw.sizes),
       categories: a(raw.categories) as string[] | undefined,
     }),

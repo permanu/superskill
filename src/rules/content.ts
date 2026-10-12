@@ -4,7 +4,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import matter from "gray-matter";
 import { estimateTokens } from "../lib/token-estimator.js";
-import { rulesCatalogRoot } from "./loader.js";
+import { loadRules, rulesCatalogRoot } from "./loader.js";
+import type { ParsedRule } from "./loader.js";
 import { principlesCatalogRoot } from "./principles.js";
 
 export interface RuleContent {
@@ -42,22 +43,42 @@ export async function loadRuleContent(
   }
   languages.sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
 
+  let parsedRules: ParsedRule[] | undefined;
+  const readByIndex = async (id: string): Promise<string | undefined> => {
+    if (parsedRules === undefined) {
+      parsedRules = (await loadRules(root)).rules;
+    }
+    const rule = parsedRules.find((candidate) => candidate.id === id);
+    if (rule === undefined) return undefined;
+    try {
+      return await readFile(join(root, rule.path), "utf8");
+    } catch (error) {
+      console.error(`[rules-content] cannot read rule ${id} at ${rule.path}: ${messageOf(error)}`);
+      return undefined;
+    }
+  };
+
   for (const id of new Set(ids)) {
     if (!RULE_ID.test(id)) {
       console.error(`[rules-content] invalid rule id: ${id}`);
       continue;
     }
     const lang = languages.find((candidate) => id.startsWith(`${candidate}-`));
-    if (lang === undefined) {
-      console.error(`[rules-content] no language pack for rule id: ${id}`);
-      continue;
+    let raw: string | undefined;
+    let readError: unknown;
+    if (lang !== undefined) {
+      try {
+        raw = await readFile(join(root, lang, `${id.slice(lang.length + 1)}.md`), "utf8");
+      } catch (error) {
+        readError = error;
+      }
     }
-
-    let raw: string;
-    try {
-      raw = await readFile(join(root, lang, `${id.slice(lang.length + 1)}.md`), "utf8");
-    } catch (error) {
-      console.error(`[rules-content] cannot read rule ${id}: ${messageOf(error)}`);
+    if (raw === undefined) {
+      raw = await readByIndex(id);
+    }
+    if (raw === undefined) {
+      const suffix = readError === undefined ? "" : `: ${messageOf(readError)}`;
+      console.error(`[rules-content] cannot read rule ${id}${suffix}`);
       continue;
     }
 

@@ -1,27 +1,41 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { afterEach, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
+  hasManagedInstructionBlock,
+  planMarkdownInstruction,
+  planMdcInstruction,
   writeMarkdownInstruction,
   removeMarkdownInstruction,
   writeMdcInstruction,
   removeMdcInstruction,
 } from "./instructions.js";
-import { INSTRUCTION_TEXT, PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT } from "./types.js";
+import {
+  INSTRUCTION_TEXT,
+  MARKER_BEGIN_HTML,
+  MARKER_END_HTML,
+  MARKER_START_HTML,
+  PREVIOUS_INSTRUCTION_TEXT,
+  PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT,
+} from "./types.js";
 
-vi.mock("fs", () => ({
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  existsSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  unlinkSync: vi.fn(),
-}));
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
-const mockRead = vi.mocked(readFileSync);
-const mockWrite = vi.mocked(writeFileSync);
-const mockExists = vi.mocked(existsSync);
-const mockUnlink = vi.mocked(unlinkSync);
+function tempFile(name = "AGENTS.md"): string {
+  const root = mkdtempSync(join(tmpdir(), "instructions-"));
+  roots.push(root);
+  return join(root, name);
+}
 
-beforeEach(() => vi.resetAllMocks());
+function marked(text: string, open = MARKER_BEGIN_HTML): string {
+  return `${open}\n${text}\n${MARKER_END_HTML}`;
+}
+
+const previousInstruction = PREVIOUS_INSTRUCTION_TEXT;
 
 describe("INSTRUCTION_TEXT", () => {
   it("states the minimal harness rules", () => {
@@ -41,110 +55,169 @@ describe("INSTRUCTION_TEXT", () => {
   });
 });
 
-const previousInstruction = `SuperSkill knowledge base + rules (MCP server: superskill).
-- Call the \`superskill\` tool with your task before creative work, debugging, or review.
-- No "done" without \`gate check\` evidence.
-- Only verified rules are injected by default.
-- Constitution: catalog/constitution.md in the superskill package (always applies).`;
-
 describe("writeMarkdownInstruction", () => {
   it.each([previousInstruction, PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT])("refreshes a known managed block in place without force", previous => {
-    mockExists.mockReturnValue(true);
+    const path = tempFile();
     const before = "# Personal\n\n\n";
     const after = "\n\n# Keep exactly\n\n";
-    mockRead.mockReturnValue(`${before}<!-- superskill:start -->\n${previous}\n<!-- superskill:end -->${after}`);
-    expect(writeMarkdownInstruction("/path/AGENTS.md")).toBe("appended");
-    expect(mockWrite).toHaveBeenCalledWith("/path/AGENTS.md", `${before}<!-- superskill:start -->\n${INSTRUCTION_TEXT}\n<!-- superskill:end -->${after}`, "utf-8");
+    writeFileSync(path, `${before}${marked(previous)}${after}`);
+    expect(writeMarkdownInstruction(path)).toBe("appended");
+    expect(readFileSync(path, "utf-8")).toBe(`${before}${marked(INSTRUCTION_TEXT)}${after}`);
+  });
+
+  it("upgrades a legacy superskill:start block to the current marker format", () => {
+    const path = tempFile();
+    writeFileSync(path, `# Personal\n\n${marked(previousInstruction, MARKER_START_HTML)}\n`);
+    expect(writeMarkdownInstruction(path)).toBe("appended");
+    const content = readFileSync(path, "utf-8");
+    expect(content).toContain(MARKER_BEGIN_HTML);
+    expect(content).toContain(INSTRUCTION_TEXT);
+    expect(content).toContain("# Personal");
   });
 
   it.each([
-    `<!-- superskill:start -->\n${previousInstruction}\nMy custom instruction\n<!-- superskill:end -->`,
-    `<!-- superskill:start -->\n${previousInstruction}`,
-    `<!-- superskill:start -->\n${previousInstruction}\n<!-- superskill:end -->\n<!-- superskill:start -->\ncustom\n<!-- superskill:end -->`,
-    `<!-- superskill:start -->\n${INSTRUCTION_TEXT}\n<!-- superskill:end -->`,
+    marked(`${previousInstruction}\nMy custom instruction`),
+    `${MARKER_BEGIN_HTML}\n${previousInstruction}`,
+    `${marked(previousInstruction)}\n${marked("custom")}`,
+    marked(INSTRUCTION_TEXT),
   ])("preserves custom, incomplete, duplicate and current blocks", content => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue(content);
-    expect(writeMarkdownInstruction("/path/AGENTS.md")).toBe("exists");
-    expect(mockWrite).not.toHaveBeenCalled();
+    const path = tempFile();
+    writeFileSync(path, content);
+    expect(writeMarkdownInstruction(path)).toBe("exists");
+    expect(readFileSync(path, "utf-8")).toBe(content);
   });
 
-  it("creates new file with markers when file does not exist", () => {
-    mockExists.mockReturnValue(false);
-    const result = writeMarkdownInstruction("/path/CLAUDE.md");
-    expect(result).toBe("created");
-    const written = mockWrite.mock.calls[0][1] as string;
-    expect(written).toContain("<!-- superskill:start -->");
-    expect(written).toContain("<!-- superskill:end -->");
+  it("creates new files with begin/end markers", () => {
+    const path = tempFile("CLAUDE.md");
+    expect(writeMarkdownInstruction(path)).toBe("created");
+    const written = readFileSync(path, "utf-8");
+    expect(written).toContain(MARKER_BEGIN_HTML);
+    expect(written).toContain(MARKER_END_HTML);
     expect(written).toContain("gate check");
     expect(written).toContain("catalog/constitution.md");
   });
 
-  it("appends to existing file", () => {
-    mockExists.mockImplementation((p) => String(p) === "/path/CLAUDE.md");
-    mockRead.mockReturnValue("# Existing content\n");
-    const result = writeMarkdownInstruction("/path/CLAUDE.md");
-    expect(result).toBe("appended");
-    const written = mockWrite.mock.calls[0][1] as string;
+  it("appends to an existing file and preserves user content outside the block", () => {
+    const path = tempFile("CLAUDE.md");
+    writeFileSync(path, "# Existing content\n\nUser notes live here.\n");
+    expect(writeMarkdownInstruction(path)).toBe("appended");
+    const written = readFileSync(path, "utf-8");
     expect(written).toContain("# Existing content");
-    expect(written).toContain("<!-- superskill:start -->");
+    expect(written).toContain("User notes live here.");
+    expect(written).toContain(MARKER_BEGIN_HTML);
+
+    expect(writeMarkdownInstruction(path)).toBe("exists");
+    expect(readFileSync(path, "utf-8")).toBe(written);
   });
 
-  it("returns 'exists' when markers already present", () => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue("<!-- superskill:start -->\nstuff\n<!-- superskill:end -->\n");
-    expect(writeMarkdownInstruction("/path/CLAUDE.md")).toBe("exists");
-    expect(mockWrite).not.toHaveBeenCalled();
+  it("returns 'exists' for an unknown managed block without writing", () => {
+    const path = tempFile("CLAUDE.md");
+    const content = marked("stuff");
+    writeFileSync(path, content);
+    expect(writeMarkdownInstruction(path)).toBe("exists");
+    expect(readFileSync(path, "utf-8")).toBe(content);
+    expect(hasManagedInstructionBlock(content)).toBe(true);
+  });
+});
+
+describe("planMarkdownInstruction", () => {
+  it("reports what would happen without touching the file", () => {
+    const missing = tempFile("missing.md");
+    expect(planMarkdownInstruction(missing)).toBe("created");
+    expect(existsSync(missing)).toBe(false);
+
+    const current = tempFile("current.md");
+    writeFileSync(current, marked(INSTRUCTION_TEXT));
+    expect(planMarkdownInstruction(current)).toBe("exists");
+    expect(readFileSync(current, "utf-8")).toBe(marked(INSTRUCTION_TEXT));
+
+    const previous = tempFile("previous.md");
+    writeFileSync(previous, marked(previousInstruction));
+    expect(planMarkdownInstruction(previous)).toBe("appended");
+    expect(readFileSync(previous, "utf-8")).toBe(marked(previousInstruction));
   });
 });
 
 describe("removeMarkdownInstruction", () => {
-  it("removes block between markers", () => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue(
-      "# Existing\n\n<!-- superskill:start -->\ninstruction\n<!-- superskill:end -->\n"
-    );
-    expect(removeMarkdownInstruction("/path/CLAUDE.md")).toBe(true);
-    const written = mockWrite.mock.calls[0][1] as string;
+  it("removes a block between begin markers", () => {
+    const path = tempFile();
+    writeFileSync(path, `# Existing\n\n${marked("instruction")}\n`);
+    expect(removeMarkdownInstruction(path)).toBe(true);
+    const written = readFileSync(path, "utf-8");
     expect(written).not.toContain("superskill");
     expect(written).toContain("# Existing");
   });
 
+  it("removes a legacy superskill:start block", () => {
+    const path = tempFile();
+    writeFileSync(path, `# Existing\n\n${marked("instruction", MARKER_START_HTML)}\n`);
+    expect(removeMarkdownInstruction(path)).toBe(true);
+    expect(readFileSync(path, "utf-8")).not.toContain("superskill");
+  });
+
   it("returns false when file does not exist", () => {
-    mockExists.mockReturnValue(false);
-    expect(removeMarkdownInstruction("/path/CLAUDE.md")).toBe(false);
+    expect(removeMarkdownInstruction(tempFile("missing.md"))).toBe(false);
   });
 
   it("returns false when no markers found", () => {
-    mockExists.mockReturnValue(true);
-    mockRead.mockReturnValue("# Just content\n");
-    expect(removeMarkdownInstruction("/path/CLAUDE.md")).toBe(false);
+    const path = tempFile();
+    writeFileSync(path, "# Just content\n");
+    expect(removeMarkdownInstruction(path)).toBe(false);
   });
 });
 
 describe("writeMdcInstruction", () => {
-  it("writes .mdc file with frontmatter", () => {
-    mockExists.mockReturnValue(false);
-    writeMdcInstruction("/path/superskill.mdc");
-    const written = mockWrite.mock.calls[0][1] as string;
+  it("writes .mdc file with frontmatter and markers", () => {
+    const path = tempFile("superskill.mdc");
+    expect(writeMdcInstruction(path)).toBe("created");
+    const written = readFileSync(path, "utf-8");
     expect(written).toContain("description: SuperSkill knowledge base integration");
     expect(written).toContain("alwaysApply: true");
+    expect(written).toContain(MARKER_BEGIN_HTML);
     expect(written).toContain("gate check");
     expect(written).toContain("catalog/constitution.md");
   });
+
+  it("preserves user content outside the marked block", () => {
+    const path = tempFile("superskill.mdc");
+    writeFileSync(path, `---\ndescription: SuperSkill knowledge base integration\nalwaysApply: true\n---\n\n${marked(previousInstruction)}\n\nMy extra user notes.\n`);
+    expect(writeMdcInstruction(path)).toBe("appended");
+    const written = readFileSync(path, "utf-8");
+    expect(written).toContain(marked(INSTRUCTION_TEXT));
+    expect(written).toContain("My extra user notes.");
+    expect(writeMdcInstruction(path)).toBe("exists");
+    expect(readFileSync(path, "utf-8")).toBe(written);
+  });
+
+  it("migrates an unmarked legacy body without losing custom frontmatter", () => {
+    const path = tempFile("superskill.mdc");
+    writeFileSync(path, `---\ndescription: custom\nalwaysApply: false\n---\n\n${INSTRUCTION_TEXT}\n`);
+    expect(writeMdcInstruction(path)).toBe("appended");
+    const written = readFileSync(path, "utf-8");
+    expect(written).toContain("description: custom");
+    expect(written).toContain(marked(INSTRUCTION_TEXT));
+  });
 });
 
-describe("removeMdcInstruction", () => {
+describe("planMdcInstruction and removeMdcInstruction", () => {
+  it("plans without writing", () => {
+    const path = tempFile("superskill.mdc");
+    expect(planMdcInstruction(path)).toBe("created");
+    expect(existsSync(path)).toBe(false);
+
+    writeFileSync(path, "anything");
+    expect(planMdcInstruction(path)).toBe("appended");
+    expect(readFileSync(path, "utf-8")).toBe("anything");
+  });
+
   it("deletes the .mdc file when it exists", () => {
-    mockExists.mockReturnValue(true);
-    const result = removeMdcInstruction("/path/superskill.mdc");
-    expect(result).toBe(true);
-    expect(mockUnlink).toHaveBeenCalledWith("/path/superskill.mdc");
+    const path = tempFile("superskill.mdc");
+    writeFileSync(path, "x");
+    expect(removeMdcInstruction(path)).toBe(true);
+    expect(existsSync(path)).toBe(false);
   });
 
   it("returns false when file does not exist", () => {
-    mockExists.mockReturnValue(false);
-    expect(removeMdcInstruction("/path/superskill.mdc")).toBe(false);
-    expect(mockUnlink).not.toHaveBeenCalled();
+    expect(removeMdcInstruction(tempFile("missing.mdc"))).toBe(false);
   });
 });

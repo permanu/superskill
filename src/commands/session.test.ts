@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, rm } from "fs/promises";
+import { mkdir, rm, realpath } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { sessionCommand } from "./session.js";
@@ -7,6 +7,7 @@ import { SessionRegistryManager } from "../lib/session-registry.js";
 import { VaultFS } from "../lib/vault-fs.js";
 import type { CommandContext } from "../core/types.js";
 import * as lifecycle from "../lib/worktree/lifecycle.js";
+import * as cleanupModule from "../lib/worktree/cleanup.js";
 import * as graphStore from "../lib/graph/store.js";
 import type { Graph, SessionNode } from "../lib/graph/schema.js";
 
@@ -141,6 +142,75 @@ describe("sessionCommand", () => {
         }, ctx)
       ).rejects.toThrow("Tool name required for register");
     });
+
+    it("returns the claim holder when the workspace is already claimed", async () => {
+      const first = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+        taskSummary: "First",
+        workspacePath: vaultRoot,
+      }, ctx);
+
+      const second = await sessionCommand({
+        action: "register",
+        tool: "cursor",
+        project: "test-project",
+        taskSummary: "Second",
+        workspacePath: vaultRoot,
+      }, ctx);
+
+      expect(second.claim).toEqual({
+        granted: false,
+        holder: { session_id: first.session_id, tool: "claude", task_summary: "First" },
+      });
+      expect(second.session_id).not.toBe(first.session_id);
+      expect((await registry.listActive()).map((s) => s.id)).toEqual([first.session_id]);
+    });
+
+    it("registers the explicit workspace path instead of the context workspace", async () => {
+      const explicit = join(vaultRoot, "explicit-workspace");
+      await mkdir(explicit);
+      ctx.workspacePath = vaultRoot;
+
+      const result = await sessionCommand({
+        action: "register",
+        tool: "codex",
+        project: "test-project",
+        workspacePath: explicit,
+      }, ctx);
+
+      expect((await registry.get(result.session_id!))?.workspace_path).toBe(await realpath(explicit));
+    });
+
+    it("passes the registered session id to worktree cleanup outside the registry lock", async () => {
+      const workspace = join(vaultRoot, "cleanup-workspace");
+      await mkdir(workspace);
+      vi.mocked(lifecycle.assessWorktreeLifecycle).mockResolvedValue({
+        status: "available",
+        worktreeCount: 2,
+        currentLinked: false,
+        policyInstalled: true,
+        safety: "not_assessed",
+        nextActions: [],
+      });
+      let lockFreeDuringCleanup = false;
+      const cleanup = vi.spyOn(cleanupModule, "cleanupCompletedWorktrees").mockImplementation(async () => {
+        await registry.listForMaintenance();
+        lockFreeDuringCleanup = true;
+        return { removed: [], kept: [], errors: [] };
+      });
+
+      const result = await sessionCommand({
+        action: "register",
+        tool: "codex",
+        project: "test-project",
+        workspacePath: workspace,
+      }, ctx);
+
+      expect(lockFreeDuringCleanup).toBe(true);
+      expect(cleanup).toHaveBeenCalledWith(workspace, expect.any(Array), { currentSessionId: result.session_id });
+    });
   });
 
   describe("heartbeat", () => {
@@ -156,7 +226,16 @@ describe("sessionCommand", () => {
         sessionId: session_id!,
       }, ctx);
 
-      expect(result).toEqual({});
+      expect(result).toEqual({ conflicts: [] });
+    });
+
+    it("throws for a missing session", async () => {
+      await expect(
+        sessionCommand({
+          action: "heartbeat",
+          sessionId: "missing-session",
+        }, ctx)
+      ).rejects.toThrow("Session not found: missing-session");
     });
 
     it("requires session ID for heartbeat", async () => {
@@ -224,6 +303,50 @@ describe("sessionCommand", () => {
         }, ctx)
       ).rejects.toThrow("Session ID required for complete");
     });
+
+    it("throws for an unknown session", async () => {
+      await expect(
+        sessionCommand({
+          action: "complete",
+          sessionId: "missing-session",
+        }, ctx)
+      ).rejects.toThrow("Session not found: missing-session");
+    });
+
+    it("persists the session note using the context project when args omit it", async () => {
+      const scoped = { ...ctx, projectSlug: "ctx-project" };
+      await mkdir(join(vaultRoot, "projects/ctx-project/sessions"), { recursive: true });
+      const { session_id } = await registry.register("codex", "ctx-project");
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id,
+        outcome: "Done via MCP",
+      }, scoped);
+
+      expect(result.session_note_path).toBeDefined();
+      expect(result.session_note_path).toMatch(/projects\/ctx-project\/sessions\/\d{4}-\d{2}-\d{2}-codex-/);
+      expect(await vaultFs.read(result.session_note_path!)).toContain("Done via MCP");
+    });
+
+    it("backfills the context project when register omits it", async () => {
+      const scoped = { ...ctx, projectSlug: "ctx-project" };
+      const registered = await sessionCommand({ action: "register", tool: "codex" }, scoped);
+      expect((await registry.get(registered.session_id!))?.project).toBe("ctx-project");
+    });
+
+    it("completes legacy unscoped sessions but still refuses cross-project completion", async () => {
+      const scoped = { ...ctx, projectSlug: "ctx-project" };
+      await mkdir(join(vaultRoot, "projects/ctx-project/sessions"), { recursive: true });
+      const legacy = await registry.register("codex", null);
+      const result = await sessionCommand({ action: "complete", sessionId: legacy.session_id, outcome: "legacy done" }, scoped);
+      expect(result.session_note_path).toMatch(/projects\/ctx-project\/sessions\//);
+
+      const other = await registry.register("codex", "other-project");
+      await expect(
+        sessionCommand({ action: "complete", sessionId: other.session_id }, scoped)
+      ).rejects.toThrow("Session belongs to a different project");
+    });
   });
 
   describe("list_active", () => {
@@ -233,6 +356,7 @@ describe("sessionCommand", () => {
         tool: "claude",
         project: "test-project",
         taskSummary: "Task 1",
+        allowShared: true,
       }, ctx);
 
       await sessionCommand({
@@ -240,6 +364,7 @@ describe("sessionCommand", () => {
         tool: "cursor",
         project: "other-project",
         taskSummary: "Task 2",
+        allowShared: true,
       }, ctx);
 
       const result = await sessionCommand({
@@ -255,12 +380,14 @@ describe("sessionCommand", () => {
         action: "register",
         tool: "claude",
         project: "test-project",
+        allowShared: true,
       }, ctx);
 
       await sessionCommand({
         action: "register",
         tool: "cursor",
         project: "test-project",
+        allowShared: true,
       }, ctx);
 
       await sessionCommand({

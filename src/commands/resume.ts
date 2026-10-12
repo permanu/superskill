@@ -72,8 +72,7 @@ export async function resumeCommand(
   const allSessions = await registry.listActive(projectSlug);
   const activeSessions = allSessions.filter((s) => s.status === "active");
 
-  // Stale sessions are now deleted by the registry cleanup — no interrupted sessions to surface
-  const interruptedSessions: Session[] = [];
+  const interruptedSessions = (await registry.listInterrupted()).filter((s) => s.project === projectSlug);
 
   const suggestedNextSteps: string[] = [];
 

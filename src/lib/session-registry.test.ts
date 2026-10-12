@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, readdir, stat, utimes, realpath } from "fs/promises";
+import { mkdir, writeFile as fspWriteFile, rm, readFile as fspReadFile, stat, utimes, realpath, symlink } from "fs/promises";
 import { tmpdir } from "os";
+import { hostname } from "os";
 import { join } from "path";
 import { SessionRegistryManager } from "./session-registry.js";
 
@@ -22,6 +23,18 @@ describe("SessionRegistryManager", () => {
     it("creates session with generated ID", async () => {
       const result = await manager.register("claude-code", "test-project");
       expect(result.session_id).toMatch(/^claude-code-[a-f0-9]{8}$/);
+      expect(result.claim).toEqual({ granted: true });
+    });
+
+    it("records the registering process and a workspace lease", async () => {
+      const workspace = join(await realpath(vaultRoot), "workspace");
+      await mkdir(workspace);
+      const result = await manager.register("opencode", "my-project", "Doing work", ["file1.ts"], workspace);
+      const session = await manager.get(result.session_id);
+      expect(session?.pid).toBe(process.pid);
+      expect(session?.host).toBe(hostname());
+      expect(session?.workspace_path).toBe(workspace);
+      expect(new Date(session!.lease_expires_at!).getTime()).toBeGreaterThan(Date.now());
     });
 
     it("creates session with all fields", async () => {
@@ -51,17 +64,102 @@ describe("SessionRegistryManager", () => {
       expect(result.conflicts).toEqual([]);
     });
 
-    it("cleans stale sessions on register", async () => {
+    it("expires stale sessions on register instead of deleting them", async () => {
       const oldManager = new SessionRegistryManager(vaultRoot, 0);
-      await oldManager.register("claude-code", "proj", "Old session");
-      
+      const stale = await oldManager.register("claude-code", "proj", "Old session");
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      const registry = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+      const entry = registry.sessions.find((s: any) => s.id === stale.session_id);
+      delete entry.pid;
+      delete entry.host;
+      await fspWriteFile(registryPath, JSON.stringify(registry));
+
       await new Promise(r => setTimeout(r, 10));
-      
+
       const newManager = new SessionRegistryManager(vaultRoot, 0.000001);
       await newManager.register("opencode", "proj", "New session");
-      
-      const active = await newManager.listActive();
-      expect(active.every(s => s.status === "active")).toBe(true);
+
+      const expired = await newManager.get(stale.session_id);
+      expect(expired?.status).toBe("expired");
+      expect(expired?.expired_at).toBeDefined();
+      expect((await newManager.listActive()).map(s => s.id)).not.toContain(stale.session_id);
+    });
+
+    it("never expires a session with a live local pid and a fresh heartbeat", async () => {
+      const oldManager = new SessionRegistryManager(vaultRoot, 0);
+      const live = await oldManager.register("claude-code", "proj", "Still running");
+
+      await new Promise(r => setTimeout(r, 10));
+
+      const newManager = new SessionRegistryManager(vaultRoot, 0.000001);
+      await newManager.register("opencode", "proj", "New session");
+
+      expect((await newManager.get(live.session_id))?.status).toBe("active");
+    });
+
+    describe("workspace claims", () => {
+      let workspace: string;
+
+      beforeEach(async () => {
+        workspace = join(await realpath(vaultRoot), "workspace");
+        await mkdir(workspace);
+      });
+
+      it("refuses a second claim without allowShared and reports the holder", async () => {
+        const first = await manager.register("claude-code", "proj", "First task", ["a.ts"], workspace);
+        const second = await manager.register("opencode", "proj", "Second task", ["a.ts"], workspace);
+
+        expect(first.claim).toEqual({ granted: true });
+        expect(second.claim).toEqual({
+          granted: false,
+          holder: { session_id: first.session_id, tool: "claude-code", task_summary: "First task" },
+        });
+        expect(second.conflicts).toHaveLength(1);
+        expect(second.conflicts[0].overlapping_files).toEqual(["a.ts"]);
+        expect((await manager.listActive()).map(s => s.id)).toEqual([first.session_id]);
+      });
+
+      it("grants a shared claim when allowShared is true", async () => {
+        const first = await manager.register("claude-code", "proj", "First task", [], workspace);
+        const second = await manager.register("opencode", "proj", "Second task", [], workspace, true);
+
+        expect(second.claim).toEqual({ granted: true });
+        expect((await manager.listActive()).map(s => s.id)).toEqual([first.session_id, second.session_id]);
+      });
+
+      it("reclaims claims from expired leases", async () => {
+        const first = await manager.register("claude-code", "proj", "First task", [], workspace);
+        const registryPath = join(vaultRoot, "coordination/session-registry.json");
+        const registry = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+        registry.sessions.find((s: any) => s.id === first.session_id).lease_expires_at =
+          new Date(Date.now() - 1000).toISOString();
+        await fspWriteFile(registryPath, JSON.stringify(registry));
+
+        const second = await manager.register("opencode", "proj", "Second task", [], workspace);
+        expect(second.claim).toEqual({ granted: true });
+      });
+
+      it("releases the claim when the holder completes", async () => {
+        const first = await manager.register("claude-code", "proj", "First task", [], workspace);
+        await manager.complete(first.session_id);
+
+        const second = await manager.register("opencode", "proj", "Second task", [], workspace);
+        expect(second.claim).toEqual({ granted: true });
+        expect((await manager.get(first.session_id))?.lease_expires_at).toBeUndefined();
+      });
+
+      it("does not treat expired sessions as claim holders", async () => {
+        const first = await manager.register("claude-code", "proj", "First task", [], workspace);
+        const registryPath = join(vaultRoot, "coordination/session-registry.json");
+        const registry = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+        const entry = registry.sessions.find((s: any) => s.id === first.session_id);
+        entry.status = "expired";
+        entry.expired_at = new Date().toISOString();
+        await fspWriteFile(registryPath, JSON.stringify(registry));
+
+        const second = await manager.register("opencode", "proj", "Second task", [], workspace);
+        expect(second.claim).toEqual({ granted: true });
+      });
     });
 
     it("persists session to registry file", async () => {
@@ -82,12 +180,12 @@ describe("SessionRegistryManager", () => {
       await new Promise(r => setTimeout(r, 10));
       
       const result = await manager.heartbeat(session_id);
-      expect(result).toBe(true);
+      expect(result).toEqual({ found: true, conflicts: [] });
     });
 
-    it("returns false for missing session", async () => {
+    it("returns not found for a missing session", async () => {
       const result = await manager.heartbeat("nonexistent-id");
-      expect(result).toBe(false);
+      expect(result).toEqual({ found: false, conflicts: [] });
     });
 
     it("persists heartbeat to file", async () => {
@@ -101,9 +199,43 @@ describe("SessionRegistryManager", () => {
       const session = parsed.sessions.find((s: any) => s.id === session_id);
       expect(session.last_heartbeat).toBeDefined();
     });
+
+    it("refreshes the workspace lease", async () => {
+      const workspace = join(await realpath(vaultRoot), "workspace");
+      await mkdir(workspace);
+      const { session_id } = await manager.register("claude-code", "proj", null, [], workspace);
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      const registry = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+      registry.sessions[0].lease_expires_at = new Date(Date.now() - 1000).toISOString();
+      await fspWriteFile(registryPath, JSON.stringify(registry));
+
+      await manager.heartbeat(session_id);
+
+      const session = await manager.get(session_id);
+      expect(new Date(session!.lease_expires_at!).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("replaces touched files and reports conflicts", async () => {
+      const first = await manager.register("claude-code", "proj", "First", ["a.ts"]);
+      const second = await manager.register("opencode", "proj", "Second", []);
+
+      const result = await manager.heartbeat(second.session_id, ["a.ts", "b.ts"]);
+
+      expect(result.found).toBe(true);
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0].session_id).toBe(first.session_id);
+      expect(result.conflicts[0].overlapping_files).toEqual(["a.ts"]);
+      expect((await manager.get(second.session_id))?.files_touched).toEqual(["a.ts", "b.ts"]);
+    });
   });
 
   describe("complete", () => {
+    it("reports whether the session was found", async () => {
+      const { session_id } = await manager.register("claude-code", "proj");
+      expect(await manager.complete(session_id)).toEqual({ found: true });
+      expect(await manager.complete("nonexistent-id")).toEqual({ found: false });
+    });
+
     it("marks session as completed", async () => {
       const { session_id } = await manager.register("claude-code", "proj");
       await manager.complete(session_id);
@@ -129,7 +261,7 @@ describe("SessionRegistryManager", () => {
       expect(session.task_summary).toBe("New summary");
     });
 
-    it("removes old completed sessions", async () => {
+    it("removes completed sessions after seven days", async () => {
       const { session_id } = await manager.register("claude-code", "proj");
       await manager.complete(session_id);
       
@@ -138,7 +270,7 @@ describe("SessionRegistryManager", () => {
       let parsed = JSON.parse(raw);
       
       const session = parsed.sessions.find((s: any) => s.id === session_id);
-      session.completed_at = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      session.completed_at = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
       
       await fspWriteFile(registryPath, JSON.stringify(parsed));
       
@@ -148,6 +280,25 @@ describe("SessionRegistryManager", () => {
       parsed = JSON.parse(raw);
       
       expect(parsed.sessions.find((s: any) => s.id === session_id)).toBeUndefined();
+    });
+
+    it("clears completed workspace provenance after a day without dropping the record", async () => {
+      const workspace = join(await realpath(vaultRoot), "workspace");
+      await mkdir(workspace);
+      const { session_id } = await manager.register("codex", "proj", null, [], workspace);
+      await manager.complete(session_id);
+
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      const parsed = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+      parsed.sessions.find((s: any) => s.id === session_id).completed_at =
+        new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      await fspWriteFile(registryPath, JSON.stringify(parsed));
+
+      await manager.register("opencode", "proj");
+
+      const session = await manager.get(session_id);
+      expect(session).not.toBeNull();
+      expect(session?.workspace_path).toBeUndefined();
     });
   });
 
@@ -166,20 +317,27 @@ describe("SessionRegistryManager", () => {
       expect(await manager.listActive()).toEqual([]);
     });
 
-    it("deletes stale sessions and persists the change", async () => {
+    it("expires stale sessions and persists the change", async () => {
       const staleManager = new SessionRegistryManager(vaultRoot, 0.000001);
-      await staleManager.register("claude-code", "proj");
+      const { session_id } = await staleManager.register("claude-code", "proj");
+      const registryPath = join(vaultRoot, "coordination/session-registry.json");
+      const registry = JSON.parse(await fspReadFile(registryPath, "utf-8"));
+      const entry = registry.sessions.find((s: any) => s.id === session_id);
+      delete entry.pid;
+      delete entry.host;
+      await fspWriteFile(registryPath, JSON.stringify(registry));
 
       await new Promise(r => setTimeout(r, 20));
 
       const active = await staleManager.listActive();
       expect(active).toEqual([]);
 
-      const registryPath = join(vaultRoot, "coordination/session-registry.json");
       const raw = await fspReadFile(registryPath, "utf-8");
       const parsed = JSON.parse(raw);
 
-      expect(parsed.sessions).toEqual([]);
+      expect(parsed.sessions).toHaveLength(1);
+      expect(parsed.sessions[0].status).toBe("expired");
+      expect(parsed.sessions[0].expired_at).toBeDefined();
     });
   });
 
@@ -202,11 +360,37 @@ describe("SessionRegistryManager", () => {
       expect(parsed.sessions.length).toBe(5);
     });
 
-    it("leaves abandoned locks intact and reports the recovery path", async () => {
+    it("recovers a stale lock left by a dead process", async () => {
       const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
       await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
-      const content = JSON.stringify({ pid: 999999999, token: "abandoned" });
+      const content = JSON.stringify({ pid: 999999999, createdAt: Date.now() - 120_000, token: "abandoned" });
       await fspWriteFile(lockPath, content);
+
+      const result = await manager.register("claude-code", "proj");
+
+      expect(result.session_id).toBeDefined();
+      await expect(stat(lockPath)).rejects.toThrow();
+    });
+
+    it("recovers an aged lock without an owner pid", async () => {
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
+      await fspWriteFile(lockPath, JSON.stringify({ token: "legacy" }));
+      const old = new Date(Date.now() - 120_000);
+      await utimes(lockPath, old, old);
+
+      const result = await manager.register("claude-code", "proj");
+
+      expect(result.session_id).toBeDefined();
+      await expect(stat(lockPath)).rejects.toThrow();
+    });
+
+    it("does not steal a lock owned by a live pid even when it is old", async () => {
+      const lockPath = join(vaultRoot, "coordination/locks/session-registry.lock");
+      await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
+      const content = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000, token: "live" });
+      await fspWriteFile(lockPath, content);
+
       await expect(manager.register("claude-code", "proj")).rejects.toThrow(lockPath);
       expect(await fspReadFile(lockPath, "utf-8")).toBe(content);
     });
@@ -219,6 +403,9 @@ describe("SessionRegistryManager", () => {
       const held = new Promise<void>((resolve) => { release = resolve; });
       const started = new Promise<void>((resolve) => { entered = resolve; });
       const owner = withLock(async () => {
+        const lock = JSON.parse(await fspReadFile(lockPath, "utf-8"));
+        lock.createdAt = Date.now() - 120_000;
+        await fspWriteFile(lockPath, JSON.stringify(lock));
         const old = new Date(Date.now() - 60_000);
         await utimes(lockPath, old, old);
         entered();
@@ -336,7 +523,7 @@ describe("SessionRegistryManager", () => {
     });
   });
   describe("workspace maintenance provenance", () => {
-    it("retains workspace active and completed sessions across expiry", async () => {
+    it("expires stale actives while keeping evidence and pruning completed provenance", async () => {
       const activePath = join(await realpath(vaultRoot), "active");
       const completedPath = join(await realpath(vaultRoot), "completed");
       await mkdir(activePath);
@@ -347,29 +534,55 @@ describe("SessionRegistryManager", () => {
       await manager.complete(completed.session_id);
       const path = join(vaultRoot, "coordination/session-registry.json");
       const registry = JSON.parse(await fspReadFile(path, "utf-8"));
+      const staleAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
       for (const session of registry.sessions) {
-        session.last_heartbeat = "2000-01-01T00:00:00.000Z";
-        if (session.status === "completed") session.completed_at = session.last_heartbeat;
+        session.last_heartbeat = staleAt;
+        delete session.pid;
+        delete session.host;
+        if (session.status === "completed") session.completed_at = staleAt;
       }
       await fspWriteFile(path, JSON.stringify(registry));
       const before = await fspReadFile(path, "utf-8");
       expect(await manager.listForMaintenance()).toHaveLength(3);
       expect(await fspReadFile(path, "utf-8")).toBe(before);
-      expect((await manager.listActive()).map(s => s.id)).toContain(active.session_id);
-      expect((await manager.listActive()).map(s => s.id)).not.toContain(ordinary.session_id);
+
+      const activeIds = (await manager.listActive()).map(s => s.id);
+      expect(activeIds).not.toContain(active.session_id);
+      expect(activeIds).not.toContain(ordinary.session_id);
+      const expired = await manager.get(active.session_id);
+      expect(expired?.status).toBe("expired");
+      expect(expired?.expired_at).toBeDefined();
+      expect(expired?.workspace_path).toBe(activePath);
+
       await manager.register("other", "proj");
-      expect((await manager.get(completed.session_id))?.workspace_path).toBe(completedPath);
+      const finished = await manager.get(completed.session_id);
+      expect(finished).not.toBeNull();
+      expect(finished?.workspace_path).toBeUndefined();
+
       await manager.acknowledgeWorkspaceRemoval(completedPath);
       await manager.acknowledgeWorkspaceRemoval(activePath);
       expect((await manager.get(active.session_id))?.workspace_path).toBe(activePath);
-      await manager.register("other", "proj");
-      expect(await manager.get(completed.session_id)).toBeNull();
     });
 
-    it("holds the registry lock until maintenance finishes", async () => {
+    it("compares canonical workspace paths when acknowledging removals", async () => {
+      const target = join(await realpath(vaultRoot), "real");
+      await mkdir(target);
+      const alias = join(vaultRoot, "alias");
+      await symlink(target, alias);
+      const { session_id } = await manager.register("codex", "proj", null, [], alias);
+      await manager.complete(session_id);
+      expect((await manager.get(session_id))?.workspace_path).toBe(target);
+
+      await manager.acknowledgeWorkspaceRemoval(alias);
+
+      expect((await manager.get(session_id))?.workspace_path).toBeUndefined();
+    });
+
+    it("runs maintenance callbacks outside the registry lock", async () => {
       const workspace = join(vaultRoot, "workspace");
       await mkdir(workspace);
       const session = await manager.register("codex", "proj", null, [], workspace);
+      await manager.complete(session.session_id);
       let enter!: () => void;
       const entered = new Promise<void>(resolve => { enter = resolve; });
       let release!: () => void;
@@ -386,33 +599,25 @@ describe("SessionRegistryManager", () => {
       const other = new SessionRegistryManager(vaultRoot, 1);
       const registration = other.register("other", "proj").then(() => { registered = true; });
       const beat = other.heartbeat(session.session_id).then(() => { heartbeat = true; });
-      await new Promise(resolve => setTimeout(resolve, 70));
-      expect(registered).toBe(false);
-      expect(heartbeat).toBe(false);
+      await Promise.all([registration, beat]);
+      expect(registered).toBe(true);
+      expect(heartbeat).toBe(true);
       release();
       expect(await maintenance).toBe("done");
-      await Promise.all([registration, beat]);
-      expect(registered && heartbeat).toBe(true);
     });
 
-    it("rejects registration when maintenance removed its previously existing workspace", async () => {
+    it("rejects registration when its workspace no longer exists", async () => {
       const workspace = join(vaultRoot, "workspace");
       await mkdir(workspace);
       let enter!: () => void;
       const entered = new Promise<void>(resolve => { enter = resolve; });
-      let release!: () => void;
-      const gate = new Promise<void>(resolve => { release = resolve; });
       const maintenance = manager.withMaintenanceSessions(async () => {
-        enter();
-        await gate;
         await rm(workspace, { recursive: true });
+        enter();
       });
       await entered;
-      const registration = manager.register("codex", "proj", null, [], workspace);
-      const rejected = expect(registration).rejects.toThrow(/workspace_path/);
-      release();
+      await expect(manager.register("codex", "proj", null, [], workspace)).rejects.toThrow(/workspace_path/);
       await maintenance;
-      await rejected;
       expect(await manager.listForMaintenance()).toEqual([]);
     });
 
@@ -425,6 +630,36 @@ describe("SessionRegistryManager", () => {
         await expect(manager.listForMaintenance()).rejects.toThrow(/registry/i);
         expect(await fspReadFile(path, "utf-8")).toBe(raw);
       }
+    });
+  });
+
+  describe("listInterrupted", () => {
+    it("returns expired sessions and actives with an old heartbeat", async () => {
+      const path = join(vaultRoot, "coordination/session-registry.json");
+      const interrupted = await manager.register("claude-code", "proj", "Hung");
+      const expired = await manager.register("opencode", "proj", "Crashed");
+      const fresh = await manager.register("codex", "proj", "Fresh");
+      const completed = await manager.register("cursor", "proj", "Done");
+      await manager.complete(completed.session_id);
+      const registry = JSON.parse(await fspReadFile(path, "utf-8"));
+      for (const session of registry.sessions) {
+        delete session.pid;
+        delete session.host;
+        if (session.id === interrupted.session_id) {
+          session.last_heartbeat = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        }
+        if (session.id === expired.session_id) {
+          session.last_heartbeat = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        }
+      }
+      await fspWriteFile(path, JSON.stringify(registry));
+
+      const ids = (await manager.listInterrupted()).map(s => s.id);
+      expect(ids).toContain(interrupted.session_id);
+      expect(ids).toContain(expired.session_id);
+      expect(ids).not.toContain(fresh.session_id);
+      expect(ids).not.toContain(completed.session_id);
+      expect((await manager.get(expired.session_id))?.status).toBe("expired");
     });
   });
 

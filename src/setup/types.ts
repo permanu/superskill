@@ -37,6 +37,7 @@ export interface SetupOptions {
   all?: boolean;
   clients?: string[];
   dryRun?: boolean;
+  check?: boolean;
   force?: boolean;
   vaultPath?: string;
 }
@@ -53,6 +54,7 @@ export interface SetupResult {
   instructionConfigured: boolean;
   slashCommandsInstalled?: string[];
   skipped?: string;
+  preserved?: string[];
   error?: string;
 }
 
@@ -61,8 +63,11 @@ export interface TeardownResult {
   mcpRemoved: boolean;
   instructionRemoved: boolean;
   slashCommandsRemoved?: string[];
+  preserved?: string[];
   error?: string;
 }
+
+export type InstructionStatus = "created" | "appended" | "exists";
 
 export const PREVIOUS_INSTRUCTION_TEXT = `SuperSkill knowledge base + rules (MCP server: superskill).
 - Call the \`superskill\` tool with your task before creative work, debugging, or review.
@@ -88,6 +93,7 @@ export const INSTRUCTION_TEXT = `SuperSkill knowledge base + rules (MCP server: 
 - Only verified rules are injected by default.
 - Constitution: catalog/constitution.md in the superskill package (always applies).`;
 
+export const MARKER_BEGIN_HTML = "<!-- superskill:begin -->";
 export const MARKER_START_HTML = "<!-- superskill:start -->";
 export const MARKER_END_HTML = "<!-- superskill:end -->";
 export const MARKER_START_TOML = "# superskill:start";

@@ -8,6 +8,8 @@ import {
   normalizeFilePath,
   normalizeTerms,
   simpleStem,
+  termsMatch,
+  termsMatchLookup,
 } from "./index-builder.js";
 import type { RulesIndex } from "./index-builder.js";
 import type { ParsedRule, Severity } from "./loader.js";
@@ -18,7 +20,7 @@ import { estimateRuleTokens, packBudget } from "./select.js";
 
 export const DEFAULT_BUDGET_TOKENS = 2000;
 
-const SCORE_WEIGHT = { file: 100, keyword: 10, symbol: 1 } as const;
+const SCORE_WEIGHT = { file: 4, keyword: 10, symbol: 1 } as const;
 
 const SEVERITY_RANK: Record<Severity, number> = { must: 0, should: 1, prefer: 2 };
 
@@ -71,6 +73,36 @@ const EXTENSION_LANGS: Record<string, string> = {
 };
 
 const PROMPT_TOKEN = /[a-z0-9][a-z0-9._#+-]*/g;
+
+const PROSE_LANGUAGE_TOKENS: ReadonlySet<string> = new Set(["go", "c"]);
+
+const LANGUAGE_CONTEXT_WORDS: ReadonlySet<string> = new Set([
+  "in",
+  "using",
+  "use",
+  "with",
+  "write",
+  "rewrite",
+  "port",
+  "migrate",
+  "code",
+  "language",
+  "project",
+  "stack",
+  "module",
+  "package",
+  "library",
+  "app",
+  "server",
+  "service",
+  "cli",
+  "sdk",
+  "compiler",
+  "runtime",
+  "version",
+  "repo",
+  "repository",
+]);
 
 const PHASE_KEYWORDS: ReadonlyArray<{ phase: RulePhase; words: readonly string[] }> = [
   { phase: "ship", words: ["deploy", "release", "ship", "publish", "bump", "tag", "version"] },
@@ -154,6 +186,8 @@ interface Candidate {
   rule: ParsedRule;
   matched: string[];
   score: number;
+  keywordTotal: number;
+  symbolTotal: number;
 }
 
 type HitMap = Map<string, Map<string, number>>;
@@ -166,15 +200,37 @@ function normalizeLang(value: string): string | undefined {
   return LANG_ALIASES[value.toLowerCase()];
 }
 
+export function isLanguageWideGlob(glob: string, lang: string): boolean {
+  const normalized = normalizeFilePath(glob);
+  const prefix = "**/*.";
+  if (!normalized.startsWith(prefix)) return false;
+  const ext = normalized.slice(prefix.length).toLowerCase();
+  if (ext.length === 0 || /[*?/]/.test(ext)) return false;
+  return EXTENSION_LANGS[ext] === lang;
+}
+
+function hasLanguageContext(tokens: readonly string[], index: number): boolean {
+  const before = tokens[index - 1];
+  const after = tokens[index + 1];
+  return (
+    (before !== undefined && LANGUAGE_CONTEXT_WORDS.has(before)) ||
+    (after !== undefined && LANGUAGE_CONTEXT_WORDS.has(after))
+  );
+}
+
 function languageScope(stack: readonly string[], prompt: string, files: readonly string[]): Set<string> {
   const scope = new Set<string>();
   for (const item of stack) {
     const lang = normalizeLang(item);
     if (lang !== undefined) scope.add(lang);
   }
-  for (const token of tokenizePrompt(prompt)) {
+  const tokens = tokenizePrompt(prompt);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
     const lang = normalizeLang(token);
-    if (lang !== undefined) scope.add(lang);
+    if (lang === undefined) continue;
+    if (PROSE_LANGUAGE_TOKENS.has(token) && !hasLanguageContext(tokens, i)) continue;
+    scope.add(lang);
   }
   for (const file of files) {
     const base = file.split("/").pop() ?? "";
@@ -188,10 +244,22 @@ function languageScope(stack: readonly string[], prompt: string, files: readonly
 
 export function inferPhase(prompt: string): RulePhase {
   const lower = prompt.toLowerCase();
+  let best: { phase: RulePhase; position: number; length: number } | undefined;
   for (const { phase, patterns } of PHASE_MATCHERS) {
-    if (patterns.some((pattern) => pattern.test(lower))) return phase;
+    for (const pattern of patterns) {
+      const match = pattern.exec(lower);
+      if (match === null) continue;
+      const candidate = { phase, position: match.index, length: match[0].length };
+      if (
+        best === undefined ||
+        candidate.position < best.position ||
+        (candidate.position === best.position && candidate.length > best.length)
+      ) {
+        best = candidate;
+      }
+    }
   }
-  return "explore";
+  return best?.phase ?? "explore";
 }
 
 function bump(hits: HitMap, ruleId: string, term: string, amount = 1): void {
@@ -217,7 +285,7 @@ function buildCandidates(
   const candidateIds = new Set<string>();
   for (const term of promptTerms) {
     if (isProseWord(term)) continue;
-    for (const ruleId of index.keywordIndex.get(term) ?? []) candidateIds.add(ruleId);
+    for (const ruleId of termsMatchLookup(index.keywordIndex, term)) candidateIds.add(ruleId);
   }
   for (const ruleId of candidateIds) {
     const rule = index.byId.get(ruleId);
@@ -227,7 +295,7 @@ function buildCandidates(
       if (terms.length === 0 || terms.every(isProseWord)) continue;
       let count = 0;
       for (let i = 0; i <= promptTerms.length - terms.length; i++) {
-        if (terms.every((term, j) => promptTerms[i + j] === term)) count++;
+        if (terms.every((term, j) => termsMatch(term, promptTerms[i + j]))) count++;
       }
       if (count > 0) bump(keywordHits, ruleId, keyword.toLowerCase(), count);
     }
@@ -251,6 +319,7 @@ function buildCandidates(
     for (const rule of index.rules) {
       if (!eligible(rule)) continue;
       for (const glob of rule.triggers.files) {
+        if (isLanguageWideGlob(glob, rule.lang)) continue;
         let count = 0;
         for (const file of files) {
           if (matchGlob(glob, file)) count += 1;
@@ -267,12 +336,15 @@ function buildCandidates(
     if (!rule) continue;
     const matched: string[] = [];
     let score = 0;
+    let keywordTotal = 0;
+    let symbolTotal = 0;
 
     const keywords = keywordHits.get(id);
     if (keywords) {
       for (const term of [...keywords.keys()].sort()) {
         const count = keywords.get(term)!;
         matched.push(`keyword '${term}' (${count}x)`);
+        keywordTotal += count;
         score += count * SCORE_WEIGHT.keyword;
       }
     }
@@ -289,17 +361,20 @@ function buildCandidates(
       for (const symbol of [...symbols.keys()].sort()) {
         const count = symbols.get(symbol)!;
         matched.push(`symbol '${symbol}' (${count}x)`);
+        symbolTotal += count;
         score += count * SCORE_WEIGHT.symbol;
       }
     }
 
-    candidates.push({ rule, matched, score });
+    candidates.push({ rule, matched, score, keywordTotal, symbolTotal });
   }
 
   candidates.sort((a, b) => {
     const severity = SEVERITY_RANK[a.rule.severity] - SEVERITY_RANK[b.rule.severity];
     if (severity !== 0) return severity;
     if (b.score !== a.score) return b.score - a.score;
+    if (b.keywordTotal !== a.keywordTotal) return b.keywordTotal - a.keywordTotal;
+    if (b.symbolTotal !== a.symbolTotal) return b.symbolTotal - a.symbolTotal;
     return a.rule.id < b.rule.id ? -1 : a.rule.id > b.rule.id ? 1 : 0;
   });
   return candidates;

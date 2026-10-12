@@ -3,7 +3,7 @@ import { assessWorktreeLifecycle, type WorktreeLifecycleAssessment } from "../li
 import { cleanupCompletedWorktrees, type CleanupResult } from "../lib/worktree/cleanup.js";
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
-import { SessionRegistryManager, type Session } from "../lib/session-registry.js";
+import type { ClaimResult, Session } from "../lib/session-registry.js";
 import { serializeFrontmatter, createFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
 import { mutateGraph, findNode } from "../lib/graph/store.js";
 import { endSession } from "../lib/graph/learner.js";
@@ -24,6 +24,8 @@ export async function sessionCommand(
     blocked?: string[];
     verificationRun?: string;
     commandsToResume?: string[];
+    workspacePath?: string;
+    allowShared?: boolean;
   },
   ctx: CommandContext,
 ): Promise<{
@@ -36,47 +38,53 @@ export async function sessionCommand(
     overlapping_files: string[];
     task_summary: string | null;
   }>;
+  claim?: ClaimResult;
   session_note_path?: string;
 }> {
   const registry = ctx.sessionRegistry;
   const vaultFs = ctx.vaultFs;
-  const workspace = ctx.workspacePath ?? process.cwd();
+  const contextWorkspace = ctx.workspacePath ?? process.cwd();
 
   switch (args.action) {
     case "register": {
       if (!args.tool) throw new Error("Tool name required for register");
+      const workspace = args.workspacePath ?? contextWorkspace;
       const result = await registry.register(
         args.tool,
-        args.project ?? null,
+        args.project ?? ctx.projectSlug ?? null,
         args.taskSummary ?? null,
         args.filesTouched ?? [],
         await realpath(workspace),
+        args.allowShared ?? false,
       );
       return {
         session_id: result.session_id,
         conflicts: result.conflicts,
-        worktree: await maintainWorkspace(workspace, "register", ctx),
+        claim: result.claim,
+        worktree: await maintainWorkspace(workspace, "register", ctx, result.session_id),
       };
     }
 
     case "heartbeat": {
       if (!args.sessionId) throw new Error("Session ID required for heartbeat");
-      const found = await registry.heartbeat(args.sessionId);
-      if (!found) throw new Error(`Session not found: ${args.sessionId}`);
-      return {};
+      const result = await registry.heartbeat(args.sessionId, args.filesTouched);
+      if (!result.found) throw new Error(`Session not found: ${args.sessionId}`);
+      return { conflicts: result.conflicts };
     }
 
     case "complete": {
       if (!args.sessionId) throw new Error("Session ID required for complete");
       const existing = await registry.get(args.sessionId);
-      if (existing && ctx.projectSlug != null && existing.project !== ctx.projectSlug) throw new Error("Session belongs to a different project");
-      await registry.complete(args.sessionId, args.taskSummary);
+      if (existing && existing.project != null && ctx.projectSlug != null && existing.project !== ctx.projectSlug) throw new Error("Session belongs to a different project");
+      const completion = await registry.complete(args.sessionId, args.taskSummary);
+      if (!completion.found) throw new Error(`Session not found: ${args.sessionId}`);
 
       let sessionNotePath: string | undefined;
-      if (args.project) {
+      const noteProject = args.project ?? ctx.projectSlug;
+      if (noteProject) {
         sessionNotePath = await persistSessionNote(vaultFs, {
           sessionId: args.sessionId,
-          project: args.project,
+          project: noteProject,
           tool: args.tool ?? existing?.tool ?? extractToolFromId(args.sessionId),
           outcome: args.outcome ?? args.taskSummary ?? "",
           filesTouched: args.filesTouched ?? [],
@@ -90,9 +98,9 @@ export async function sessionCommand(
         });
       }
 
-      if (existing) await settleGraphSession(args, existing.workspace_path ?? workspace);
+      if (existing) await settleGraphSession(args, existing.workspace_path ?? contextWorkspace);
 
-      return { session_note_path: sessionNotePath, worktree: await maintainWorkspace(workspace, "complete", ctx) };
+      return { session_note_path: sessionNotePath, worktree: await maintainWorkspace(contextWorkspace, "complete", ctx, args.sessionId) };
     }
 
     case "list_active": {
@@ -105,12 +113,13 @@ export async function sessionCommand(
   }
 }
 
-async function maintainWorkspace(workspace: string, phase: "register" | "complete", ctx: CommandContext) {
+async function maintainWorkspace(workspace: string, phase: "register" | "complete", ctx: CommandContext, currentSessionId?: string) {
   const assessment = await assessWorktreeLifecycle(workspace, { phase });
   if (assessment.status !== "available") return { ...assessment, workspacePath: workspace };
   let cleanup: CleanupResult;
   try {
-    cleanup = await ctx.sessionRegistry.withMaintenanceSessions((sessions) => cleanupCompletedWorktrees(workspace, sessions));
+    const sessions = await ctx.sessionRegistry.listForMaintenance();
+    cleanup = await cleanupCompletedWorktrees(workspace, sessions, { currentSessionId });
     for (const path of cleanup.removed) await ctx.sessionRegistry.acknowledgeWorkspaceRemoval(path);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

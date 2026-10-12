@@ -3,7 +3,7 @@
 // Operations on .superskill/ use raw fs (not VaultFS) because .superskill/ is
 // project-local, not inside the vault. VaultFS enforces vault-specific security policies.
 
-import { readFile, writeFile, rename, mkdir, appendFile, open, unlink } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, appendFile, open, unlink, stat, type FileHandle } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,6 +17,7 @@ import type {
 } from "./schema.js";
 
 const GRAPH_FILE = ".superskill/graph.json";
+const LOCK_STALE_MS = 60_000;
 
 export function createEmptyGraph(): Graph {
   return { version: GRAPH_SCHEMA_VERSION, nodes: [], edges: [] };
@@ -78,29 +79,150 @@ export async function loadGraph(projectDir: string): Promise<Graph> {
   }
 }
 
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function lockIsStale(raw: string, mtimeMs: number): boolean {
+  let body: { pid?: unknown; createdAt?: unknown } | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") body = parsed;
+  } catch {
+    body = null;
+  }
+  if (body && Number.isInteger(body.pid) && (body.pid as number) > 0) {
+    return !processAlive(body.pid as number);
+  }
+  const baseline = typeof body?.createdAt === "number" ? body.createdAt : mtimeMs;
+  return Date.now() - baseline > LOCK_STALE_MS;
+}
+
+function lockToken(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return typeof (parsed as { token?: unknown }).token === "string" ? (parsed as { token: string }).token : null;
+  } catch {
+    return null;
+  }
+}
+
+async function removeStaleGraphLock(lockPath: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await readFile(lockPath, "utf-8");
+  } catch {
+    return false;
+  }
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await stat(lockPath)).mtimeMs;
+  } catch {
+    return false;
+  }
+  if (!lockIsStale(raw, mtimeMs)) return false;
+  let before;
+  try {
+    before = await stat(lockPath);
+  } catch {
+    return false;
+  }
+  let current: string;
+  try {
+    current = await readFile(lockPath, "utf-8");
+  } catch {
+    return false;
+  }
+  if (current !== raw) return false;
+  try {
+    const after = await stat(lockPath);
+    if (after.ino !== before.ino || after.dev !== before.dev) return false;
+    await unlink(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    console.error("[graph-store] failed to remove stale graph lock:", (error as Error).message);
+    return false;
+  }
+  console.error(`[graph-store] recovered stale graph lock: ${lockPath}`);
+  return true;
+}
+
 async function withGraphLock<T>(projectDir: string, action: () => Promise<T>, timeoutMs = 5000): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("Invalid graph lock timeout");
   const dir = join(projectDir, ".superskill");
   await mkdir(dir, { recursive: true });
   const lockPath = join(dir, "graph.lock");
+  const token = randomUUID();
+  const body = JSON.stringify({ pid: process.pid, createdAt: Date.now(), token });
   const deadline = Date.now() + timeoutMs;
-  let handle;
+  let handle: FileHandle | undefined;
   while (!handle) {
     try {
       handle = await open(lockPath, "wx", 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await removeStaleGraphLock(lockPath)) continue;
       if (Date.now() >= deadline) throw new Error(`Timed out acquiring graph lock: ${lockPath}`);
-      await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(25, Math.max(1, deadline - Date.now()))));
     }
   }
   try {
-    await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+    await handle.writeFile(body);
+  } catch (error) {
+    await discardFailedLock(handle, lockPath);
+    throw error;
+  }
+  try {
+    await handle.close();
+  } catch (error) {
+    console.error("[graph-store] failed to close graph lock handle:", (error as Error).message);
+  }
+  try {
     return await action();
   } finally {
-    await handle.close();
-    await unlink(lockPath);
+    await releaseGraphLock(lockPath, token);
   }
+}
+
+async function discardFailedLock(handle: FileHandle, lockPath: string): Promise<void> {
+  let identity;
+  try {
+    identity = await handle.stat();
+  } catch {
+    identity = undefined;
+  }
+  try {
+    await handle.close();
+  } catch (error) {
+    console.error("[graph-store] failed to close a lock handle after a write failure:", (error as Error).message);
+  }
+  if (!identity) return;
+  try {
+    const current = await stat(lockPath);
+    if (current.ino === identity.ino && current.dev === identity.dev) await unlink(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("[graph-store] failed to clean an unwritten lock:", (error as Error).message);
+    }
+  }
+}
+
+async function releaseGraphLock(lockPath: string, token: string): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readFile(lockPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (lockToken(raw) !== token) return;
+  await unlink(lockPath);
 }
 
 async function persistGraph(projectDir: string, graph: Graph): Promise<void> {
@@ -123,6 +245,17 @@ export async function writeGraph(projectDir: string, graph: Graph): Promise<void
   await withGraphLock(projectDir, () => persistGraph(projectDir, graph));
 }
 
+async function quarantineCorruptGraph(projectDir: string, error: unknown): Promise<void> {
+  const path = join(projectDir, GRAPH_FILE);
+  const quarantine = `${path}.corrupt-${Date.now()}`;
+  try {
+    await rename(path, quarantine);
+    console.error(`[graph-store] quarantined corrupt graph to ${quarantine}: ${error instanceof Error ? error.message : String(error)}`);
+  } catch (renameError) {
+    console.error("[graph-store] failed to quarantine corrupt graph:", (renameError as Error).message);
+  }
+}
+
 export async function mutateGraph(
   projectDir: string,
   mutate: (graph: Graph) => Graph | Promise<Graph>,
@@ -137,8 +270,12 @@ export async function mutateGraph(
       }
       graph = migrateGraph(parsed);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      graph = createEmptyGraph();
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        graph = createEmptyGraph();
+      } else {
+        await quarantineCorruptGraph(projectDir, error);
+        graph = createEmptyGraph();
+      }
     }
     const updated = await mutate(graph);
     await persistGraph(projectDir, updated);

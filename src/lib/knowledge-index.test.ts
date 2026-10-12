@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, writeFile, readFile, rm, rename, utimes, symlink } from "node:fs/promises";
+import { mkdir, writeFile, rm, rename, utimes, symlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import {
   rebuildProjectIndex,
   ensureProjectIndex,
   upsertVaultFile,
+  removeVaultFileFromIndex,
 } from "./knowledge-index.js";
 
 describe("extractKnowledgeLinks", () => {
@@ -94,6 +96,36 @@ describe("KnowledgeIndex", () => {
     index.upsert({ path: "projects/p/path.md", title: "Path", type: "note", body: "src/lib/auth.ts authorize_payment foo@bar", related: [] });
     expect(index.search("src/lib/auth.ts")).toHaveLength(1);
     expect(index.search("foo@bar")).toHaveLength(1);
+  });
+
+  it("falls back to OR matching when the AND query is too narrow", () => {
+    index.upsert({ path: "projects/p/partial.md", type: "note", title: "Partial", body: "auth migration guide", related: [] });
+    index.upsert({ path: "projects/p/other.md", type: "note", title: "Other", body: "tenant retry logging", related: [] });
+    expect(index.search("auth migration tenant retry", 10).map((hit) => hit.path)).toEqual(
+      expect.arrayContaining(["projects/p/partial.md", "projects/p/other.md"]),
+    );
+    const hits = index.search("auth migration tenant retry", 10);
+    expect(new Set(hits.map((hit) => hit.path)).size).toBe(hits.length);
+    expect(index.search("auth migration tenant retry", 1)).toHaveLength(1);
+  });
+
+  it("ranks newer notes above older notes with equal bm25", () => {
+    const now = Date.now();
+    const body = "zqxwce shared ranking text";
+    index.upsert({ path: "projects/p/old.md", type: "note", title: "Shared", body, related: [], ts: now - 365 * 86_400_000 });
+    index.upsert({ path: "projects/p/new.md", type: "note", title: "Shared", body, related: [], ts: now });
+    expect(index.search("zqxwce", 10).map((hit) => hit.path)).toEqual(["projects/p/new.md", "projects/p/old.md"]);
+  });
+
+  it("closes the least recently used handle once the cache exceeds 32 databases", () => {
+    const opened: KnowledgeIndex[] = [];
+    try {
+      for (let i = 0; i < 33; i++) opened.push(KnowledgeIndex.open(join(dir, `lru-${i}.sqlite`)));
+      expect(() => opened[0].noteDocs()).toThrow();
+      expect(opened[32].noteDocs()).toEqual([]);
+    } finally {
+      for (const idx of opened) idx.close();
+    }
   });
 
   it("ranks stemmed FTS matches (authorize ~ authorization)", () => {
@@ -186,8 +218,7 @@ describe("index freshness", () => {
     await writeFile(join(project, "z.md"), "# Oldtarget");
     const index = ensureProjectIndex(vault, slug);
     const original = index.graphDump();
-    const stampPath = `${indexPathFor(vault, slug)}.stamp`;
-    const stamp = await readFile(stampPath, "utf8");
+    const stamps = index.fileStamps();
     const connection = new DatabaseSync(indexPathFor(vault, slug));
     connection.exec(`CREATE TRIGGER fail_rebuild BEFORE INSERT ON notes WHEN new.title = 'Rejectneedle' BEGIN SELECT RAISE(ABORT, 'forced rebuild failure'); END`);
     await writeFile(join(project, "a.md"), "# Replacementneedle");
@@ -197,7 +228,8 @@ describe("index freshness", () => {
       expect(index.graphDump()).toEqual(original);
       expect(index.search("Originalneedle")).toHaveLength(1);
       expect(index.search("Replacementneedle")).toEqual([]);
-      expect(await readFile(stampPath, "utf8")).toBe(stamp);
+      expect(index.filesCount()).toBe(2);
+      expect(index.fileStamps()).toEqual(stamps);
       connection.exec("DROP TRIGGER fail_rebuild");
       expect(rebuildProjectIndex(vault, slug).notes).toBe(2);
       expect(index.search("Replacementneedle")).toHaveLength(1);
@@ -250,6 +282,87 @@ describe("index freshness", () => {
 
     const idx = ensureProjectIndex(vault, slug);
     expect(JSON.stringify(idx.graphDump())).toContain("c.md");
+    expect(idx.filesCount()).toBe(2);
     idx.close();
+  });
+
+  it("does not re-parse untouched files during incremental ensure", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "untouched.md"), "# Untouchedneedle\n\noriginal body");
+    await writeFile(join(project, "changed.md"), "# Changedneedle\n\nfirst body");
+    const first = ensureProjectIndex(vault, slug);
+    expect(first.filesCount()).toBe(2);
+    first.close();
+
+    const connection = new DatabaseSync(indexPathFor(vault, slug));
+    connection.exec(`UPDATE notes SET body = 'vandalized marker body' WHERE path = 'projects/${slug}/untouched.md'`);
+    connection.close();
+
+    await writeFile(join(project, "changed.md"), "# Changedneedle\n\nsecond body with more text");
+
+    const second = ensureProjectIndex(vault, slug);
+    try {
+      expect(second.search("vandalized").map((hit) => hit.path)).toEqual([`projects/${slug}/untouched.md`]);
+      expect(second.noteDocs().find((doc) => doc.id === `projects/${slug}/untouched.md`)?.body).toContain("vandalized");
+      expect(second.search("Changedneedle").map((hit) => hit.path)).toEqual([`projects/${slug}/changed.md`]);
+    } finally {
+      second.close();
+    }
+  });
+
+  it("drops removed files from notes, edges and the files table", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "keep.md"), "# Keepneedle\n\n[[gone]]");
+    await writeFile(join(project, "gone.md"), "# Goneneedle\n\ndoomed");
+    ensureProjectIndex(vault, slug).close();
+    await rm(join(project, "gone.md"));
+    const idx = ensureProjectIndex(vault, slug);
+    try {
+      expect(idx.search("Goneneedle")).toEqual([]);
+      expect(idx.filesCount()).toBe(1);
+      expect(idx.incoming(`projects/${slug}/gone.md`)).toEqual([]);
+      expect(idx.outgoing(`projects/${slug}/keep.md`)).toEqual([]);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("does one full rebuild for a legacy stamped index and removes the stamp", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "legacy.md"), "# Legacyneedle");
+    const stampPath = `${indexPathFor(vault, slug)}.stamp`;
+    await writeFile(stampPath, "legacy-fingerprint");
+    const idx = ensureProjectIndex(vault, slug);
+    try {
+      expect(idx.search("Legacyneedle")).toHaveLength(1);
+      expect(idx.filesCount()).toBe(1);
+      expect(existsSync(stampPath)).toBe(false);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("removes a deleted note, its file row and its edges via removeVaultFileFromIndex", async () => {
+    const project = join(vault, "projects", slug);
+    await writeFile(join(project, "keep.md"), "---\nrelated:\n  - gone.md\n---\n\n# Keepneedle");
+    await writeFile(join(project, "gone.md"), "# Goneneedle");
+    const idx = ensureProjectIndex(vault, slug);
+    expect(idx.outgoing(`projects/${slug}/keep.md`)).toContain(`projects/${slug}/gone.md`);
+    idx.close();
+    await rm(join(project, "gone.md"));
+    removeVaultFileFromIndex(vault, `projects/${slug}/gone.md`);
+    const next = ensureProjectIndex(vault, slug);
+    try {
+      expect(next.search("Goneneedle")).toEqual([]);
+      expect(next.incoming(`projects/${slug}/gone.md`)).toEqual([]);
+      expect(next.outgoing(`projects/${slug}/keep.md`)).toEqual([]);
+      expect(next.filesCount()).toBe(1);
+    } finally {
+      next.close();
+    }
+  });
+
+  it("ignores non-project paths in removeVaultFileFromIndex", () => {
+    expect(() => removeVaultFileFromIndex(vault, "sessions/2026-01-01.md")).not.toThrow();
   });
 });

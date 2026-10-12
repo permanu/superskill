@@ -95,7 +95,9 @@ export async function hygieneCommand(args: HygieneArgs, ctx: CommandContext): Pr
   ctx.log.debug(
     `[hygiene] running ${probes.length} probe(s) across ${repoPaths.length} repo(s) (sizes=${args.sizes === true})`,
   );
-  return buildHygieneReport({ probes, repoPaths, sizes: args.sizes === true, policy });
+  const report = await buildHygieneReport({ probes, repoPaths, sizes: args.sizes === true, policy });
+  if (args.due !== true) return report;
+  return { ...report, items: report.items.filter((item) => item.due) };
 }
 
 export function renderHygieneReport(report: HygieneReport, opts: { due?: boolean } = {}): string {

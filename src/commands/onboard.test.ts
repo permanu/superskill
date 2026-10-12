@@ -19,12 +19,18 @@ vi.mock("../setup/configure.js", () => ({
   })),
 }));
 
+vi.mock("../lib/skill-installer.js", () => ({
+  listInstalledSkills: vi.fn(async () => []),
+}));
+
 import { onboard } from "./onboard.js";
 import { detectClients } from "../setup/detect.js";
 import { configureClient } from "../setup/configure.js";
+import { listInstalledSkills } from "../lib/skill-installer.js";
 
 const mockedDetectClients = vi.mocked(detectClients);
 const mockedConfigureClient = vi.mocked(configureClient);
+const mockedListInstalledSkills = vi.mocked(listInstalledSkills);
 
 describe("onboard", () => {
   let tmpDir: string;
@@ -32,6 +38,7 @@ describe("onboard", () => {
   beforeEach(() => {
     tmpDir = join(homedir(), `.onboard-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     vi.clearAllMocks();
+    mockedListInstalledSkills.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -52,6 +59,17 @@ describe("onboard", () => {
     expect(Array.isArray(result.configuredClients)).toBe(true);
     expect(Array.isArray(result.errors)).toBe(true);
     expect(typeof result.installedSkills).toBe("number");
+  });
+
+  it("counts installed skills", async () => {
+    mockedListInstalledSkills.mockResolvedValue([
+      { name: "alpha", description: "first", dir: "/skills/alpha" },
+      { name: "beta", description: "second", dir: "/skills/beta" },
+    ]);
+
+    const result = await onboard({ vaultPath: tmpDir });
+
+    expect(result.installedSkills).toBe(2);
   });
 
   it("creates vault directory if missing", async () => {

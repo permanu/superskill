@@ -53,6 +53,7 @@ describe("documented harness contracts", () => {
     expect(entry("windsurf").instructionPaths?.darwin).toBe("~/.codeium/windsurf/memories/global_rules.md");
     expect(entry("continue").mcpConfigPaths.darwin).toBe("~/.continue/mcpServers/superskill.json");
     expect(entry("droid").instructionPaths?.darwin).toBe("~/.factory/AGENTS.md");
+    expect(entry("crush").mcpConfigPaths.win32).toBe("~/.config/crush/crush.json");
   });
 
   it.each([false, true])("rejects unsupported native Aider setup, including dry run=%s", dryRun => {
@@ -83,7 +84,40 @@ describe("documented harness contracts", () => {
     writeFileSync(legacy, "# Personal guidance\n<!-- superskill:start -->\nold guidance\n<!-- superskill:end -->\n");
     expect(configureClient(detected, "/tmp/vault").error).toBeUndefined();
     expect(readFileSync(legacy, "utf8")).toBe("# Personal guidance\n");
-    expect(readFileSync(detected.instructionPath!, "utf8")).toContain("superskill:start");
+    expect(readFileSync(detected.instructionPath!, "utf8")).toContain("superskill:begin");
+  });
+
+  it("reports truthful dry-run drift once setup is complete", () => {
+    const detected = fixture("claude-code");
+    const dry = configureClient(detected, "/tmp/vault", { dryRun: true });
+    expect(dry.mcpConfigured).toBe(true);
+    expect(dry.instructionConfigured).toBe(true);
+    expect(existsSync(detected.mcpConfigPath)).toBe(false);
+
+    configureClient(detected, "/tmp/vault");
+    const check = configureClient(detected, "/tmp/vault", { check: true });
+    expect(check.mcpConfigured).toBe(false);
+    expect(check.instructionConfigured).toBe(false);
+    expect(check.skipped).toContain("already exists");
+  });
+
+  it("preserves a user's own obsidian server while migrating the owned alias", () => {
+    const detected = fixture("claude-code");
+    mkdirSync(dirname(detected.mcpConfigPath), { recursive: true });
+    writeFileSync(
+      detected.mcpConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          "obsidian-mcp": { command: "npx", args: ["-y", "superskill"], env: { VAULT_PATH: "/v" } },
+          "obsidian-kb": { command: "npx", args: ["-y", "obsidian-kb"] },
+        },
+      }),
+    );
+    const result = configureClient(detected, "/tmp/vault");
+    expect(result.preserved).toContain("obsidian-kb (not superskill-managed)");
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf8"));
+    expect(config.mcpServers["obsidian-mcp"]).toBeUndefined();
+    expect(config.mcpServers["obsidian-kb"]).toEqual({ command: "npx", args: ["-y", "obsidian-kb"] });
   });
 
   it("rejects unknown setup client before writing anything", async () => {

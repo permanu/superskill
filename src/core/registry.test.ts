@@ -1,5 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CommandRegistry } from "./registry.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  CommandRegistry,
+  DEFAULT_READ_MAX_BYTES,
+  DEFAULT_RESPONSE_MAX_BYTES,
+  READ_MAX_BYTES_CAP,
+  capResponseBytes,
+  maxResponseBytes,
+  resolveReadMaxBytes,
+  serializeToolResult,
+} from "./registry.js";
 import { VaultError } from "../lib/vault-fs.js";
 import type { CommandContext, CommandHandler, CommandRegistration, MCPToolDefinition } from "./types.js";
 
@@ -217,7 +226,7 @@ describe("createRegistry", () => {
 
     const readReg = registry.get("read");
     const readArgs = readReg!.adaptArgs!({ path: "f.md", depth: 3 });
-    expect(readArgs).toEqual({ path: "f.md", depth: 3 });
+    expect(readArgs).toEqual({ path: "f.md", depth: 3, maxBytes: DEFAULT_READ_MAX_BYTES });
 
     const taskReg = registry.get("task");
     const taskArgs = taskReg!.adaptArgs!({ action: "add", title: "T", blocked_by: ["x"], assigned_to: "a" });
@@ -225,7 +234,7 @@ describe("createRegistry", () => {
 
     const sessionReg = registry.get("session");
     const sessionArgs = sessionReg!.adaptArgs!({ action: "register", tool: "t", task_summary: "s", files_touched: ["a.ts"] });
-    expect(sessionArgs).toEqual({ action: "register", tool: "t", taskSummary: "s", filesTouched: ["a.ts"] });
+    expect(sessionArgs).toEqual({ action: "register", tool: "t", taskSummary: "s", filesTouched: ["a.ts"], allowShared: false });
 
     const learnReg = registry.get("learn");
     const learnArgs = learnReg!.adaptArgs!({ action: "add", title: "L", tags: ["b"], session_id: "s1" });
@@ -245,10 +254,120 @@ describe("createRegistry", () => {
 
     const resumeReg = registry.get("resume");
     const resumeArgs = resumeReg!.adaptArgs!({ project: "p", limit: 3, format: "json" });
-    expect(resumeArgs).toEqual({ project: "p", limit: 3 });
+    expect(resumeArgs).toEqual({ project: "p", limit: 3, format: "json" });
 
     const searchReg = registry.get("search");
     const searchArgs = searchReg!.adaptArgs!({ query: "q", limit: 5, project: "p", path_filter: "dir" });
     expect(searchArgs).toEqual({ query: "q", project: "p", limit: 5, structured: false });
+  });
+});
+
+describe("output bounding", () => {
+  const savedPretty = process.env.SUPERSKILL_PRETTY;
+  const savedMax = process.env.SUPERSKILL_MAX_RESPONSE_BYTES;
+
+  afterEach(() => {
+    if (savedPretty === undefined) delete process.env.SUPERSKILL_PRETTY;
+    else process.env.SUPERSKILL_PRETTY = savedPretty;
+    if (savedMax === undefined) delete process.env.SUPERSKILL_MAX_RESPONSE_BYTES;
+    else process.env.SUPERSKILL_MAX_RESPONSE_BYTES = savedMax;
+  });
+
+  it("serializes compact JSON by default and pretty JSON only with SUPERSKILL_PRETTY=1", () => {
+    delete process.env.SUPERSKILL_PRETTY;
+    expect(serializeToolResult({ a: 1, b: [2] })).toBe('{"a":1,"b":[2]}');
+    process.env.SUPERSKILL_PRETTY = "1";
+    expect(serializeToolResult({ a: 1 })).toBe('{\n  "a": 1\n}');
+  });
+
+  it("returns text up to the cap and truncates beyond it at a UTF-8-safe boundary", () => {
+    expect(capResponseBytes("abcdef", 6)).toBe("abcdef");
+    expect(capResponseBytes("abcdef", 3)).toBe("abc\n…[truncated; full size 6 bytes]");
+    expect(capResponseBytes("aé", 2)).toBe("a\n…[truncated; full size 3 bytes]");
+    expect(capResponseBytes("aé", 2)).not.toContain("\uFFFD");
+  });
+
+  it("reads the global response cap from SUPERSKILL_MAX_RESPONSE_BYTES", () => {
+    delete process.env.SUPERSKILL_MAX_RESPONSE_BYTES;
+    expect(maxResponseBytes()).toBe(DEFAULT_RESPONSE_MAX_BYTES);
+    process.env.SUPERSKILL_MAX_RESPONSE_BYTES = "12";
+    expect(maxResponseBytes()).toBe(12);
+    process.env.SUPERSKILL_MAX_RESPONSE_BYTES = "not-a-number";
+    expect(maxResponseBytes()).toBe(DEFAULT_RESPONSE_MAX_BYTES);
+  });
+
+  it("resolves read max_bytes with the default and the 10MB cap", () => {
+    expect(resolveReadMaxBytes(undefined)).toBe(DEFAULT_READ_MAX_BYTES);
+    expect(resolveReadMaxBytes("not-a-number")).toBe(DEFAULT_READ_MAX_BYTES);
+    expect(resolveReadMaxBytes(READ_MAX_BYTES_CAP * 2)).toBe(READ_MAX_BYTES_CAP);
+    expect(resolveReadMaxBytes(128)).toBe(128);
+  });
+});
+
+describe("read tool bounding", () => {
+  it("documents max_bytes on the read schema", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const properties = createRegistry().get("read")!.toolDef.inputSchema.properties as Record<string, unknown>;
+    expect(properties.max_bytes).toBeDefined();
+  });
+
+  it("truncates vault reads beyond max_bytes with a marker", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const registry = createRegistry();
+    const vaultFs = createMockVaultFs("x".repeat(200));
+    const ctx: CommandContext = { ...createMockContext(), vaultFs };
+
+    const result = (await registry.execute("read", { path: "big.md", max_bytes: 50 }, ctx)) as string;
+    expect(result).toBe(`${"x".repeat(50)}\n…[truncated; full size 200 bytes]`);
+    expect(vaultFs.read).toHaveBeenCalledWith("big.md");
+  });
+});
+
+describe("write tool mode validation", () => {
+  it("rejects unknown modes instead of coercing them silently", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const write = createRegistry().get("write")!;
+    for (const mode of ["delete", "replace", "APPEND", ""]) {
+      expect(() => write.adaptArgs!({ path: "f.md", content: "c", mode })).toThrow(/Invalid write mode/);
+    }
+    const adapted = write.adaptArgs!({ path: "f.md", content: "c" }) as { mode?: string };
+    expect(adapted.mode).toBeUndefined();
+    expect((write.adaptArgs!({ path: "f.md", content: "c", mode: "prepend" }) as { mode?: string }).mode).toBe("prepend");
+  });
+});
+
+describe("workspace_path injection", () => {
+  it("exposes workspace_path on impact and claims and maps it to root", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const registry = createRegistry();
+    for (const name of ["impact", "claims"]) {
+      const properties = registry.get(name)!.toolDef.inputSchema.properties as Record<string, unknown>;
+      expect(properties.workspace_path, name).toBeDefined();
+    }
+    expect(registry.get("impact")!.adaptArgs!({ target: "src/a.ts", workspace_path: "/repo" })).toEqual({
+      target: "src/a.ts",
+      to: undefined,
+      root: "/repo",
+    });
+    expect(registry.get("impact")!.adaptArgs!({ target: "src/a.ts", root: "/fallback" })).toEqual({
+      target: "src/a.ts",
+      to: undefined,
+      root: "/fallback",
+    });
+    expect(registry.get("claims")!.adaptArgs!({ claims: [], workspace_path: "/repo" })).toEqual({
+      claims: [],
+      root: "/repo",
+    });
+  });
+
+  it("passes the new optional flags through their adapters", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const registry = createRegistry();
+    expect(registry.get("session")!.adaptArgs!({ action: "register", allow_shared: true })).toMatchObject({ allowShared: true });
+    expect(registry.get("skill_install")!.adaptArgs!({ source: "o/r", allow_unaudited: true })).toMatchObject({ allowUnaudited: true });
+    expect(registry.get("hygiene_report")!.adaptArgs!({ due: true })).toMatchObject({ due: true });
+    expect(registry.get("project_context")!.adaptArgs!({ detail_level: "full", max_tokens: 1200 })).toMatchObject({ maxTokens: 1200 });
+    expect(registry.get("evidence")!.adaptArgs!({ action: "list", ticket: "ticket-001", ts: "2026-01-01T00:00:00Z" }))
+      .toMatchObject({ ts: "2026-01-01T00:00:00Z" });
   });
 });

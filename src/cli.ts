@@ -545,7 +545,9 @@ export function createProgram(): Command {
     .option("-p, --project <slug>", "Project being worked on")
     .option("--task <summary>", "Task summary")
     .option("--files <paths...>", "Files being touched")
-    .action(async (opts: { tool: string; project?: string; task?: string; files?: string[] }) => {
+    .option("--workspace <dir>", "Absolute workspace directory for the session")
+    .option("--allow-shared", "Allow a workspace already owned by another session")
+    .action(async (opts: { tool: string; project?: string; task?: string; files?: string[]; workspace?: string; allowShared?: boolean }) => {
       try {
         const result = await sessionCommand({
           action: "register",
@@ -553,6 +555,8 @@ export function createProgram(): Command {
           project: opts.project,
           taskSummary: opts.task,
           filesTouched: opts.files,
+          workspacePath: opts.workspace,
+          allowShared: opts.allowShared,
         }, await createScopedCtx());
         console.log(JSON.stringify(result, null, 2));
       } catch (e: unknown) {
@@ -565,9 +569,10 @@ export function createProgram(): Command {
   sessionCmd
     .command("heartbeat <session-id>")
     .description("Update session heartbeat")
-    .action(async (sessionId: string) => {
+    .option("--files <paths...>", "Files being touched")
+    .action(async (sessionId: string, opts: { files?: string[] }) => {
       try {
-        await sessionCommand({ action: "heartbeat", sessionId }, await createScopedCtx());
+        await sessionCommand({ action: "heartbeat", sessionId, filesTouched: opts.files }, await createScopedCtx());
         console.log("Heartbeat updated");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -583,8 +588,11 @@ export function createProgram(): Command {
     .option("--outcome <text>", "Session outcome")
     .option("--files <paths...>", "Files touched during session")
     .option("--tasks <ids...>", "Task IDs completed")
+    .option("--blocked <items...>", "Items that blocked completion")
+    .option("--partially-completed <items...>", "Items partially completed")
+    .option("--verification-run <text>", "Verification command(s) run")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (sessionId: string, opts: { summary?: string; outcome?: string; files?: string[]; tasks?: string[]; project?: string }) => {
+    .action(async (sessionId: string, opts: { summary?: string; outcome?: string; files?: string[]; tasks?: string[]; blocked?: string[]; partiallyCompleted?: string[]; verificationRun?: string; project?: string }) => {
       try {
         const result = await sessionCommand({
           action: "complete",
@@ -593,6 +601,9 @@ export function createProgram(): Command {
           outcome: opts.outcome,
           filesTouched: opts.files,
           tasksCompleted: opts.tasks,
+          blocked: opts.blocked,
+          partiallyCompleted: opts.partiallyCompleted,
+          verificationRun: opts.verificationRun,
           project: opts.project,
         }, await createScopedCtx());
         console.log("Session completed");
@@ -727,7 +738,7 @@ export function createProgram(): Command {
 
   graphCmd
     .command("cross-project <query>")
-    .description("Search across all projects")
+    .description("Project-jailed search; cross-project is denied")
     .option("-l, --limit <number>", "Max results", "20")
     .action(async (query: string, opts: { limit: string }) => {
       try {
@@ -1350,7 +1361,8 @@ export function createProgram(): Command {
     .command("install <source>")
     .description("Install skills from a GitHub repo (e.g. owner/repo or full URL)")
     .option("--select <skills>", "Comma-separated list of skill names to install")
-    .action(async (source: string, opts: { select?: string }) => {
+    .option("--allow-unaudited", "Install skills whose security audit is unavailable or incomplete")
+    .action(async (source: string, opts: { select?: string; allowUnaudited?: boolean }) => {
       try {
         const parsed = parseSource(source);
         if (!parsed) {
@@ -1359,7 +1371,7 @@ export function createProgram(): Command {
         }
         console.log(`Cloning ${parsed.owner}/${parsed.repo}...`);
         const selectSkills = opts.select ? opts.select.split(",").map((s) => s.trim()) : undefined;
-        const result = await installSkills(source, { selectSkills });
+        const result = await installSkills(source, { selectSkills, allowUnaudited: opts.allowUnaudited });
         if (result.blocked.length > 0) {
           console.error(`\nBlocked skills (failed security audit):`);
           for (const b of result.blocked) {
@@ -1752,8 +1764,9 @@ export function createProgram(): Command {
     .option("--output <text>", "Command output (truncated when stored)", "")
     .option("--commit <hash>", "Commit the evidence applies to (default: git HEAD)")
     .option("--cwd <path>", "Directory used for the git HEAD lookup")
+    .option("--ts <iso>", "Override the evidence timestamp (ISO 8601)")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (ticket: string, opts: { command: string; exit: string; output: string; commit?: string; cwd?: string; project?: string }) => {
+    .action(async (ticket: string, opts: { command: string; exit: string; output: string; commit?: string; cwd?: string; ts?: string; project?: string }) => {
       try {
         const exitCode = parseInt(opts.exit, 10);
         if (Number.isNaN(exitCode)) throw new Error("--exit must be a number");
@@ -1765,6 +1778,7 @@ export function createProgram(): Command {
           output: opts.output,
           commit: opts.commit,
           cwd: opts.cwd,
+          ts: opts.ts,
           project: opts.project,
         }, await createScopedCtx());
         console.log(JSON.stringify({ ticket: result.ticket, path: result.path, count: result.count }));
@@ -2381,13 +2395,20 @@ export function createProgram(): Command {
     )
     .action(async (opts: { session?: string; scope?: string; since?: string; count?: string; allProjects?: boolean; project?: string; tool?: string; persist?: boolean; json?: boolean }) => {
       try {
+        let count: number | undefined;
+        if (opts.count !== undefined) {
+          count = parseInt(opts.count, 10);
+          if (Number.isNaN(count) || count < 1) {
+            throw new Error("--count must be a positive integer");
+          }
+        }
         const result = await watchdogCommand(
           {
             action: "dig",
             sessionId: opts.session,
             scope: opts.scope as "session" | "window" | "env" | "all" | undefined,
             since: opts.since,
-            count: opts.count ? Number(opts.count) : undefined,
+            count,
             allProjects: opts.allProjects,
             project: opts.project,
             tool: opts.tool,
@@ -2472,6 +2493,44 @@ export function createProgram(): Command {
         const detected = result.sources.filter((source) => source.root !== null).map((source) => source.id);
         if (detected.length > 0) {
           console.log(`\nTrace sources: ${detected.join(", ")}`);
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // ── upgrade ──────────────────────────────────────────
+  program
+    .command("upgrade")
+    .description("Refresh managed SuperSkill configuration for already-configured AI clients (launcher, instructions, skill)")
+    .option("--dry-run", "Show what would change without writing")
+    .option("--json", "Print the full result as JSON")
+    .addHelpText(
+      "after",
+      "\nExamples:\n  $ superskill upgrade --dry-run\n  $ superskill upgrade --json"
+    )
+    .action(async (opts: { dryRun?: boolean; json?: boolean }) => {
+      try {
+        const { upgradeCommand } = await import("./setup/upgrade.js");
+        const result = await upgradeCommand({ dryRun: opts.dryRun, json: opts.json });
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        if (result.clients.length === 0) {
+          console.log("No clients to upgrade.");
+          return;
+        }
+        for (const client of result.clients) {
+          console.log(`${client.client} [${client.action}]`);
+          if (client.detail) {
+            console.log(`  - ${client.detail}`);
+          }
+          if (client.action === "error") {
+            console.log(`  ! ${client.detail ?? "error"}`);
+          }
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

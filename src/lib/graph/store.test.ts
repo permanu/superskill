@@ -587,13 +587,52 @@ describe("mutateGraph", () => {
     expect(await readFile(lockPath, "utf-8")).toBe("another writer");
   });
 
-  it("refuses to overwrite a corrupt graph", async () => {
+  it("recovers a graph lock left by a dead process", async () => {
+    await mkdir(join(testDir, ".superskill"));
+    const lockPath = join(testDir, ".superskill", "graph.lock");
+    await writeFile(lockPath, JSON.stringify({ pid: 999999999, createdAt: Date.now() - 120_000, token: "abandoned" }));
+
+    const graph = await mutateGraph(testDir, (latest) => addNode(latest, makeSessionNode("recovered", 1)));
+
+    expect(graph.nodes).toHaveLength(1);
+    await expect(readFile(lockPath, "utf-8")).rejects.toThrow();
+  });
+
+  it("does not steal a graph lock owned by a live pid even when it is old", async () => {
+    await mkdir(join(testDir, ".superskill"));
+    const lockPath = join(testDir, ".superskill", "graph.lock");
+    const content = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000, token: "live" });
+    await writeFile(lockPath, content);
+
+    await expect(mutateGraph(testDir, (graph) => graph, { timeoutMs: 20 })).rejects.toThrow("Timed out acquiring graph lock");
+    expect(await readFile(lockPath, "utf-8")).toBe(content);
+  });
+
+  it("quarantines a corrupt graph and continues from an empty graph", async () => {
     await mkdir(join(testDir, ".superskill"));
     const graphPath = join(testDir, ".superskill", "graph.json");
     await writeFile(graphPath, "{corrupt");
-    await expect(mutateGraph(testDir, (graph) => graph)).rejects.toThrow();
-    expect(await readFile(graphPath, "utf-8")).toBe("{corrupt");
-    expect(await readdir(join(testDir, ".superskill"))).toEqual(["graph.json"]);
+
+    const graph = await mutateGraph(testDir, (latest) => addNode(latest, makeSessionNode("after-corruption", 1)));
+
+    const entries = await readdir(join(testDir, ".superskill"));
+    const quarantined = entries.find((entry) => entry.startsWith("graph.json.corrupt-"));
+    expect(quarantined).toBeDefined();
+    expect(await readFile(join(testDir, ".superskill", quarantined!), "utf-8")).toBe("{corrupt");
+    expect(await readFile(graphPath, "utf-8")).toContain("after-corruption");
+    expect(graph.nodes).toHaveLength(1);
+  });
+
+  it("quarantines a structurally invalid graph and recovers", async () => {
+    await mkdir(join(testDir, ".superskill"));
+    const graphPath = join(testDir, ".superskill", "graph.json");
+    await writeFile(graphPath, JSON.stringify({ nodes: "nope" }));
+
+    const graph = await mutateGraph(testDir, (latest) => addNode(latest, makeSessionNode("recovered", 1)));
+
+    const entries = await readdir(join(testDir, ".superskill"));
+    expect(entries.some((entry) => entry.startsWith("graph.json.corrupt-"))).toBe(true);
+    expect(graph.nodes).toHaveLength(1);
   });
 
   it("cleans up the same-directory temporary file when replacement fails", async () => {

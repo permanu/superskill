@@ -56,7 +56,7 @@ describe("setup/teardown integration", () => {
 
     const content = readFileSync(mdPath, "utf-8");
     expect(content).toContain("# Existing content");
-    expect(content).toContain("<!-- superskill:start -->");
+    expect(content).toContain("<!-- superskill:begin -->");
     expect(content).toContain("catalog/constitution.md");
 
     // Idempotent

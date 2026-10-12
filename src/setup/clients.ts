@@ -64,11 +64,7 @@ export const CLIENT_REGISTRY: ClientConfig[] = [
   {
     name: "Crush CLI",
     slug: "crush",
-    mcpConfigPaths: {
-      darwin: "~/.config/crush/crush.json",
-      linux: "~/.config/crush/crush.json",
-      win32: "~/AppData/Local/crush/crush.json",
-    },
+    mcpConfigPaths: home(".config/crush/crush.json"),
     configFormat: "json",
     rootKey: "mcp",
     commandType: "string",

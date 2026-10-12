@@ -302,6 +302,21 @@ describe("learnCommand", () => {
 
       expect(result.learnings).toEqual([]);
     });
+
+    it("limits results after existing ordering when limit is provided", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project/learnings"), { recursive: true });
+
+      for (const title of ["First", "Second", "Third"]) {
+        await learnCommand({ action: "add", title, discovery: "Discovery", project: "test-project" }, ctx);
+      }
+
+      const limited = await learnCommand({ action: "list", project: "test-project", limit: 2 }, ctx);
+      expect(limited.learnings!.map((l) => l.id)).toEqual(["001", "002"]);
+
+      const all = await learnCommand({ action: "list", project: "test-project" }, ctx);
+      expect(all.learnings).toHaveLength(3);
+    });
   });
 
   describe("unknown action", () => {

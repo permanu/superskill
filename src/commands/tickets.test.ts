@@ -207,6 +207,25 @@ describe("ticketsCommand", () => {
         ),
       ).rejects.toThrow('Invalid status "weird"');
     });
+
+    it("limits listed tickets after existing ordering", async () => {
+      await createFrozenSpec(ctx);
+      await ticketsCommand(
+        {
+          action: "create",
+          spec: "001",
+          tickets: [{ title: "One" }, { title: "Two" }, { title: "Three" }],
+          project: "test-project",
+        },
+        ctx,
+      );
+
+      const limited = await ticketsCommand({ action: "list", project: "test-project", limit: 2 }, ctx);
+      expect(limited.tickets!.map((t) => t.id)).toEqual(["ticket-001", "ticket-002"]);
+
+      const all = await ticketsCommand({ action: "list", project: "test-project" }, ctx);
+      expect(all.tickets).toHaveLength(3);
+    });
   });
 
   describe("ready", () => {
@@ -236,6 +255,23 @@ describe("ticketsCommand", () => {
       await ticketsCommand({ action: "update", ticketId: "ticket-002", status: "done", project: "test-project" }, ctx);
       const afterMid = await ticketsCommand({ action: "ready", project: "test-project" }, ctx);
       expect(afterMid.ready!.map((t) => t.id)).toEqual(["ticket-003"]);
+    });
+
+    it("limits ready tickets when limit is provided", async () => {
+      await createFrozenSpec(ctx);
+      await ticketsCommand(
+        {
+          action: "create",
+          spec: "001",
+          tickets: [{ title: "First" }, { title: "Second" }],
+          project: "test-project",
+        },
+        ctx,
+      );
+
+      const result = await ticketsCommand({ action: "ready", project: "test-project", limit: 1 }, ctx);
+
+      expect(result.ready!.map((t) => t.id)).toEqual(["ticket-001"]);
     });
   });
 });

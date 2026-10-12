@@ -28,6 +28,7 @@ export async function learnCommand(
     source?: string;
     sessionId?: string;
     tag?: string;
+    limit?: number;
   },
   ctx: CommandContext,
 ): Promise<{
@@ -82,6 +83,9 @@ export async function learnCommand(
 
       if (args.tag) {
         filtered = filtered.filter((l) => l.tags.includes(args.tag!));
+      }
+      if (args.limit !== undefined) {
+        filtered = filtered.slice(0, args.limit);
       }
 
       return { learnings: filtered };

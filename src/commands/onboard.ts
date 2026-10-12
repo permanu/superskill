@@ -5,6 +5,7 @@ import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 import { detectClients } from "../setup/detect.js";
 import { configureClient } from "../setup/configure.js";
+import { listInstalledSkills } from "../lib/skill-installer.js";
 
 export interface OnboardResult {
   vaultPath: string;
@@ -49,8 +50,7 @@ export async function onboard(options?: {
     }
   }
 
-  // 4. Skill scanning removed — skills are now managed via the knowledge graph
-  let installedSkills = 0;
+  const installedSkills = (await listInstalledSkills()).length;
 
   return {
     vaultPath,

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CommandContext } from "../core/types.js";
-import type { HygieneProbe } from "../lib/hygiene/types.js";
+import type { HygieneItem, HygieneProbe } from "../lib/hygiene/types.js";
 import { collectRepoPaths, hygieneCommand, selectHygieneProbes } from "./hygiene.js";
 
 const temps: string[] = [];
@@ -90,5 +90,28 @@ describe("hygieneCommand", () => {
     expect(report.items).toEqual([]);
     expect(report.totals.itemCount).toBe(0);
     expect(report.totals.byCategory.docker.itemCount).toBe(0);
+  });
+
+  it("filters the report to due items when due is true", async () => {
+    const items: HygieneItem[] = [
+      { id: "due-1", category: "caches", title: "Due cache", path: null, bytes: 10, ageDays: 40, tier: "auto", due: true, reason: "old", plan: "rm -rf", meta: {} },
+      { id: "fresh-1", category: "caches", title: "Fresh cache", path: null, bytes: 20, ageDays: 1, tier: "review", due: false, reason: "recent", plan: null, meta: {} },
+    ];
+    const probe: HygieneProbe = {
+      id: "caches",
+      run: async () => ({ category: "caches", label: "Fake", items, skipped: null }),
+    };
+
+    const filtered = await hygieneCommand(
+      { probes: [probe], repoPaths: ["/tmp/example-repo"], sizes: false, due: true },
+      fakeCtx("/nonexistent-vault"),
+    );
+    expect(filtered.items.map((item) => item.id)).toEqual(["due-1"]);
+
+    const full = await hygieneCommand(
+      { probes: [probe], repoPaths: ["/tmp/example-repo"], sizes: false },
+      fakeCtx("/nonexistent-vault"),
+    );
+    expect(full.items).toHaveLength(2);
   });
 });

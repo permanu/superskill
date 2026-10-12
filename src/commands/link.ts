@@ -9,6 +9,8 @@ export interface LinkResult {
   existing_links: string[];
 }
 
+const UNSAFE_TARGET = /[[\]|#\x00-\x1F\x7F]/;
+
 export async function linkCommand(
   args: {
     source: string;
@@ -19,6 +21,12 @@ export async function linkCommand(
 ): Promise<LinkResult> {
   const { source, target } = args;
   const vaultFs = ctx.vaultFs;
+
+  if (UNSAFE_TARGET.test(target)) {
+    throw new Error(
+      `Invalid link target: "${target}". Targets cannot contain [, ], |, #, newlines, or control characters.`
+    );
+  }
 
   const sourceExists = await vaultFs.exists(source);
   if (!sourceExists) {

@@ -41,6 +41,7 @@ export interface TicketsCommandArgs {
   ticketId?: string;
   status?: TicketStatus;
   project?: string;
+  limit?: number;
 }
 
 export async function ticketsCommand(
@@ -140,21 +141,24 @@ export async function ticketsCommand(
     }
 
     case "list": {
-      return { tickets: await listTickets(ctx.vaultFs, ticketsDir) };
+      const tickets = await listTickets(ctx.vaultFs, ticketsDir);
+      return { tickets: args.limit !== undefined ? tickets.slice(0, args.limit) : tickets };
     }
 
     case "board": {
       const tickets = await listTickets(ctx.vaultFs, ticketsDir);
       const board: Record<string, Ticket[]> = {};
       for (const column of TICKET_COLUMNS) {
-        board[column] = tickets.filter((ticket) => ticket.status === column);
+        const columnTickets = tickets.filter((ticket) => ticket.status === column);
+        board[column] = args.limit !== undefined ? columnTickets.slice(0, args.limit) : columnTickets;
       }
       return { board };
     }
 
     case "ready": {
       const tickets = await listTickets(ctx.vaultFs, ticketsDir);
-      return { ready: readyTickets(tickets) };
+      const ready = readyTickets(tickets);
+      return { ready: args.limit !== undefined ? ready.slice(0, args.limit) : ready };
     }
 
     case "update": {

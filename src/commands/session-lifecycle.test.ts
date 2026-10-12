@@ -53,6 +53,15 @@ it("initializes and routes a linked workspace then cleans it after completion an
   const graph = JSON.parse(await readFile(join(tree, ".superskill", "graph.json"), "utf8"));
   expect(graph.nodes.find((node: { coordinationSessionId?: string }) => node.coordinationSessionId === start.session_id).outcome).toBe("success");
   await git(repo, ["merge", "--ff-only", "worker"]);
+  const registryPath = join(vault, "coordination", "session-registry.json");
+  const registry = JSON.parse(await readFile(registryPath, "utf8"));
+  for (const session of registry.sessions) {
+    if (session.status !== "completed") continue;
+    session.completed_at = new Date(Date.now() - 120_000).toISOString();
+    delete session.pid;
+    delete session.host;
+  }
+  await writeFile(registryPath, JSON.stringify(registry, null, 2));
   const next = await sessionCommand({ action: "register", tool: "codex", project: "fixture" }, mainCtx);
   expect(next.worktree?.cleanup?.removed).toEqual([tree]);
   expect(next.worktree?.cleanup?.archives).toHaveLength(1);
