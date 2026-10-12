@@ -1,7 +1,7 @@
 {
   "name": "superskill",
   "version": "0.13.0",
-  "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs — not a 90k-skill dump",
+  "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, Obsidian-native architecture and code notes, 18-axis review. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",
   "bin": {
@@ -46,7 +46,6 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
-    "test:viz": "npm run build && node tests/knowledge-viz.browser.mjs && node tests/project-viz.browser.mjs",
     "lint": "tsc --noEmit",
     "validate:rules": "node dist/rules/cli.js validate",
     "verify:grammars": "node scripts/verify-grammars.mjs",
@@ -63,7 +62,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.0.0",
-    "playwright-core": "^1.63.0",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

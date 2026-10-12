@@ -19,7 +19,6 @@ import { activateSkills, compactActivationResult, type ActivateArgs } from "../c
 import { statusCommand } from "../commands/skill/status.js";
 import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "../commands/graph.js";
 import { knowledgeRebuildCommand, knowledgeVizCommand } from "../commands/knowledge.js";
-import { qaVizCommand } from "../commands/qa.js";
 import { linkCommand } from "../commands/link.js";
 import { extractCommand } from "../commands/extract.js";
 import { snapshotRepoState, envFactsCommand, credRefsCommand, rollbackCommand } from "../commands/snapshot.js";
@@ -610,7 +609,7 @@ export function createRegistry(): CommandRegistry {
     toolDef: {
       name: "doctor",
       description:
-        "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, QA browser, telemetry, MCP clients.",
+        "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, telemetry, MCP clients.",
       inputSchema: {
         type: "object" as const,
         properties: {},
@@ -837,7 +836,7 @@ export function createRegistry(): CommandRegistry {
     handler: knowledgeVizCommand as CommandHandler,
     toolDef: {
       name: "knowledge_viz",
-      description: "Write knowledge-graph.html (browser) and knowledge-graph.canvas (open in Obsidian). Same edges as the FTS index.",
+      description: "Write architecture notes and code notes (Obsidian-native markdown) and rebuild the project index.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -845,22 +844,6 @@ export function createRegistry(): CommandRegistry {
         },
       },
       annotations: { destructiveHint: false },
-    },
-    adaptArgs: (raw) => ({ project: s(raw.project) }),
-  });
-
-  r.register("qa_viz", {
-    handler: qaVizCommand as CommandHandler,
-    toolDef: {
-      name: "qa_viz",
-      description: "Regenerate the knowledge graph HTML and drive system Chrome to click nodes and read the panel. In-harness QA, not a plugin.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          project: { type: "string", description: "Project slug (auto-detected if omitted)" },
-        },
-      },
-      annotations: { readOnlyHint: false },
     },
     adaptArgs: (raw) => ({ project: s(raw.project) }),
   });
