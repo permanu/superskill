@@ -56,9 +56,6 @@ const CLI_ONLY_ALLOWLIST: Record<string, string> = {
   onboard: "CLI onboarding; configures local AI clients, no vault command counterpart.",
   setup: "Machine-local client configuration (src/setup); intentionally not an MCP tool.",
   teardown: "Machine-local client deconfiguration (src/setup); intentionally not an MCP tool.",
-  "todo list": "Deprecated alias for `task`; kept on the CLI only.",
-  "todo add": "Deprecated alias for `task`; kept on the CLI only.",
-  "todo complete": "Deprecated alias for `task`; kept on the CLI only.",
   "worktree bootstrap": "Internal post-checkout hook entry point; never exposed over MCP.",
 };
 

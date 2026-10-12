@@ -281,7 +281,7 @@ export function detectSessionNoteSignals(trace: SessionTrace): Finding[] {
       title: `Session ended with ${partial.length} item${partial.length === 1 ? "" : "s"} partially complete`,
       detail: partial.slice(0, 3).join(" · ").slice(0, 300),
       evidence: partial.slice(0, 4).map((item) => ({ source: "trace" as const, ref: item })),
-      proposal: `Turn the leftovers into tickets/todos before the next run so they do not get lost or re-done.`,
+      proposal: `Turn the leftovers into tasks/tickets before the next run so they do not get lost or re-done.`,
       tool: trace.ref.tool,
       sessionId: trace.ref.id,
     })];

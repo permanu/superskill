@@ -98,6 +98,7 @@ describe("doctorCommand", () => {
         "graph-sharing",
         "catalog",
         "toolchains",
+        "qa-browser",
         "telemetry",
         "clients",
         "worktree-policy",

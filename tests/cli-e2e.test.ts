@@ -291,53 +291,6 @@ describe("CLI E2E: context + resume", () => {
   });
 });
 
-describe("CLI E2E: todo", () => {
-  let vaultRoot: string;
-  let cleanup: () => Promise<void>;
-
-  afterEach(async () => {
-    await cleanup();
-  });
-
-  test("todo list shows empty todos", async () => {
-    ({ vaultRoot, cleanup } = await setupVault());
-    const r = await runCli(
-      ["todo", "list", "--project", PROJECT],
-      { env: env(vaultRoot) }
-    );
-    expect(r.exitCode).toBe(0);
-  });
-
-  test("todo add adds a todo", async () => {
-    ({ vaultRoot, cleanup } = await setupVault());
-    const r = await runCli(
-      ["todo", "add", "Buy milk", "--project", PROJECT],
-      { env: env(vaultRoot) }
-    );
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Added: Buy milk");
-    const list = await runCli(
-      ["todo", "list", "--project", PROJECT],
-      { env: env(vaultRoot) }
-    );
-    expect(list.stdout).toContain("Buy milk");
-  });
-
-  test("todo complete completes a todo", async () => {
-    ({ vaultRoot, cleanup } = await setupVault());
-    await runCli(
-      ["todo", "add", "Read book", "--project", PROJECT],
-      { env: env(vaultRoot) }
-    );
-    const r = await runCli(
-      ["todo", "complete", "Read book", "--project", PROJECT],
-      { env: env(vaultRoot) }
-    );
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("Completed: Read book");
-  });
-});
-
 describe("CLI E2E: stats + deprecate", () => {
   let vaultRoot: string;
   let cleanup: () => Promise<void>;

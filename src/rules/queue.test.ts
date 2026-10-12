@@ -362,7 +362,7 @@ describe("WorkstreamQueue", () => {
     expect(await readState(workstreamsDir)).toBeNull();
     const repoState = await readState();
     expect(repoState === null || typeof repoState.batches === "object").toBe(true);
-    expect((await loadPlan()).batches.length).toBeGreaterThan(0);
+    expect((await loadPlan(workstreamsDir)).batches.length).toBeGreaterThan(0);
     expect(resolveWorkstreamsDir()).toContain("workstreams");
     expect(defaultWorkstreamsDir()).toContain("workstreams");
     expect(planFile(workstreamsDir).endsWith(join("workstreams", "plan.json"))).toBe(true);

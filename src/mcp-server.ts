@@ -170,7 +170,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => ({
   prompts: [
     {
       name: "inject-project-context",
-      description: "Returns a system prompt fragment with project context, recent decisions, and active todos.",
+      description: "Returns a system prompt fragment with project context, active blockers, open threads, learnings, and the last session.",
       arguments: [
         { name: "project", description: "Project slug (auto-detected if omitted)", required: false },
       ],
@@ -197,7 +197,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
         detail_level: "summary",
       }, ctx) as any;
 
-      let todoSection = "";
+      let blockerSection = "";
       try {
         const tasks = await taskCommand({
           action: "list",
@@ -205,8 +205,17 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
           status: "blocked",
         }, ctx);
         if (tasks.tasks && tasks.tasks.length > 0) {
-          todoSection = "\n\n## Active Blockers\n" +
+          blockerSection = "\n\n## Active Blockers\n" +
             tasks.tasks.map((t) => `- [${t.priority.toUpperCase()}] ${t.title} (${t.id})`).join("\n");
+        }
+      } catch {
+      }
+
+      let threadSection = "";
+      try {
+        if (result.open_threads && result.open_threads.count > 0) {
+          threadSection = `\n\n## Open Threads (${result.open_threads.count})\n` +
+            (result.open_threads.items as string[]).map((item) => `- ${item}`).join("\n");
         }
       } catch {
       }
@@ -228,7 +237,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${todoSection}${learningSection}${sessionSection}\n\n## Worktree Cache\nRun worktree_status to check worktree-cache policy, hook state, and per-worktree safety before installs or builds.`,
+              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${blockerSection}${threadSection}${learningSection}${sessionSection}\n\n## Worktree Cache\nRun worktree_status to check worktree-cache policy, hook state, and per-worktree safety before installs or builds.`,
             },
           },
         ],

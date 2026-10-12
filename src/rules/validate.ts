@@ -3,6 +3,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import matter from "gray-matter";
+import { mapConcurrent } from "../lib/concurrency.js";
 import { compileSnippet } from "./harness/index.js";
 import {
   RULE_ENFORCEMENTS,
@@ -39,6 +40,8 @@ export interface ValidateOptions {
   compile?: boolean;
   knownIds?: ReadonlySet<string>;
 }
+
+const READ_CONCURRENCY = 12;
 
 export interface SnippetCheck {
   section: "bad" | "good";
@@ -538,19 +541,20 @@ async function collectPackIds(dir: string, ids: Set<string>, lang: RuleLanguage)
     if (code !== "ENOENT") console.error(`[rules] cannot scan ${dir}: ${code}`);
     return;
   }
-  for (const file of files) {
+  const collected: string[] = await mapConcurrent(files, READ_CONCURRENCY, async (file) => {
     const fallback = `${lang}-${file.replace(/\.md$/, "")}`;
     try {
       const raw = await readFile(join(dir, file), "utf-8");
       const { data } = matter(raw, {});
       const id = (data as Record<string, unknown> | undefined)?.id;
-      ids.add(isNonEmptyString(id) ? id.trim() : fallback);
+      return isNonEmptyString(id) ? id.trim() : fallback;
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code && code !== "ENOENT") console.error(`[rules] cannot read ${join(dir, file)}: ${code}`);
-      ids.add(fallback);
+      return fallback;
     }
-  }
+  });
+  for (const id of collected) ids.add(id);
 }
 
 async function collectKnownIds(root: string): Promise<Set<string>> {
@@ -699,11 +703,15 @@ export async function validatePack(langDir: string, options: ValidateOptions = {
     knownIds = fromParent.size > 0 ? fromParent : await collectKnownIds(dir);
   }
 
+  const concurrency = options.compile === false ? READ_CONCURRENCY : 1;
+  const results = await mapConcurrent(files, concurrency, (file) =>
+    validateFile(join(dir, file), { compile: options.compile, knownIds }),
+  );
+
   const issues: ValidationIssue[] = [];
   let ruleCount = 0;
   let checkedCount = 0;
-  for (const file of files) {
-    const result = await validateFile(join(dir, file), { compile: options.compile, knownIds });
+  for (const result of results) {
     issues.push(...result.issues);
     ruleCount += 1;
     if (!result.issues.some((entry) => entry.severity === "error")) checkedCount += 1;
@@ -750,8 +758,11 @@ export async function validateAll(root = "catalog/rules", options: ValidateOptio
     .filter((entry) => entry.isDirectory() && isRuleLanguage(entry.name))
     .map((entry) => entry.name)
     .sort();
-  for (const lang of languages) {
-    const report = await validatePack(join(base, lang), { compile: options.compile, knownIds });
+  const languageConcurrency = options.compile === false ? 4 : 1;
+  const reports = await mapConcurrent(languages, languageConcurrency, (lang) =>
+    validatePack(join(base, lang), { compile: options.compile, knownIds }),
+  );
+  for (const report of reports) {
     errors.push(...report.errors);
     warnings.push(...report.warnings);
     ruleCount += report.ruleCount;

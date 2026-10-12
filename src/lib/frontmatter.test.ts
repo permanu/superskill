@@ -200,7 +200,7 @@ describe("validateFrontmatter", () => {
   });
 
   it("accepts all known types", () => {
-    const validTypes = ["context", "adr", "brainstorm", "decision", "todo", "incident", "pattern", "evaluation", "index", "task", "learning", "session", "prd", "vision", "strategy", "roadmap", "rfc", "research", "spec", "competitive-analysis"];
+    const validTypes = ["context", "adr", "brainstorm", "decision", "incident", "pattern", "evaluation", "index", "task", "learning", "session", "prd", "vision", "strategy", "roadmap", "rfc", "research", "spec", "competitive-analysis"];
     for (const type of validTypes) {
       const errors = validateFrontmatter({ type });
       expect(errors).toEqual([]);

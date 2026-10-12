@@ -26,6 +26,19 @@ export function findSystemChrome(): string | null {
   return CHROME_CANDIDATES.find((p) => existsSync(p)) ?? null;
 }
 
+export async function loadChromium(): Promise<typeof import("playwright-core").chromium> {
+  try {
+    return (await import("playwright-core")).chromium;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND") {
+      throw new Error(
+        "Chrome QA/viz requires playwright-core, which is not installed by default. Install it in this project with: npm install playwright-core",
+      );
+    }
+    throw error;
+  }
+}
+
 export async function verifyVizHtml(htmlPath: string): Promise<QaEvidence> {
   if (!existsSync(htmlPath)) {
     throw new Error(`QA: HTML not found: ${htmlPath}`);
@@ -42,7 +55,7 @@ export async function verifyVizHtml(htmlPath: string): Promise<QaEvidence> {
     };
   }
 
-  const { chromium } = await import("playwright-core");
+  const chromium = await loadChromium();
   const browser = await chromium.launch({
     executablePath: chrome,
     headless: true,

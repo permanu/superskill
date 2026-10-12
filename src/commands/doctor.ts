@@ -12,7 +12,8 @@ import type { CommandContext } from "../core/types.js";
 import { detectProject, getGitRoot } from "../lib/project-detector.js";
 import { probeTool } from "../rules/harness/common.js";
 import { rulesCatalogRoot } from "../rules/loader.js";
-import { validateAll } from "../rules/validate.js";
+import { validateCatalogCached } from "../rules/validation-cache.js";
+import { getTimeAgo } from "../lib/time-utils.js";
 import { detectClients } from "../setup/detect.js";
 import { readJsonConfig } from "../setup/json-config.js";
 import type { DetectedClient } from "../setup/types.js";
@@ -73,6 +74,15 @@ function packageVersion(): string {
     return (require("../../package.json") as { version: string }).version;
   } catch {
     return "unknown";
+  }
+}
+
+function playwrightCoreVersion(): string | null {
+  try {
+    const pkg = require("playwright-core/package.json") as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return null;
   }
 }
 
@@ -339,17 +349,19 @@ export async function doctorCommand(
     checks.push(check("catalog", "Rules catalog", "skip", "skipped"));
   } else {
     try {
-      const report = await validateAll(rulesCatalogRoot(), { compile: false });
+      const outcome = await validateCatalogCached(rulesCatalogRoot());
+      const { report } = outcome;
+      const age = outcome.cached ? ` (cached ${getTimeAgo(outcome.checkedAt)})` : "";
       checks.push(
-        report.errors.length > 0
+        report.errorCount > 0
           ? check(
               "catalog",
               "Rules catalog",
               "fail",
-              `${report.ruleCount} rules, ${report.errors.length} error(s), ${report.warnings.length} warning(s)`,
+              `${report.ruleCount} rules, ${report.errorCount} error(s), ${report.warningCount} warning(s)${age}`,
               `run: node ${join(root, "dist/rules/cli.js")} validate`
             )
-          : check("catalog", "Rules catalog", "ok", `${report.ruleCount} rules, 0 errors, ${report.warnings.length} warning(s)`)
+          : check("catalog", "Rules catalog", "ok", `${report.ruleCount} rules, 0 errors, ${report.warningCount} warning(s)${age}`)
       );
     } catch (e) {
       checks.push(check("catalog", "Rules catalog", "warn", `validation failed: ${(e as Error).message}`));
@@ -373,6 +385,19 @@ export async function doctorCommand(
         : check("toolchains", "Compile toolchains", "warn", `missing: ${missing.join(", ")}`, "install these toolchains to make `validate --strict` compile checks meaningful")
     );
   }
+
+  const playwrightVersion = playwrightCoreVersion();
+  checks.push(
+    playwrightVersion !== null
+      ? check("qa-browser", "QA browser", "ok", `playwright-core ${playwrightVersion} (Chrome QA/viz)`)
+      : check(
+          "qa-browser",
+          "QA browser",
+          "skip",
+          "playwright-core not installed — Chrome QA/viz disabled",
+          "install it with: npm install playwright-core",
+        ),
+  );
 
   const telemetryEnabled = await isTelemetryEnabled();
   const { events } = await readTelemetryEvents(telemetryPaths().events);

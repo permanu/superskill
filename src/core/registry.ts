@@ -545,7 +545,7 @@ export function createRegistry(): CommandRegistry {
     toolDef: {
       name: "doctor",
       description:
-        "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, telemetry, MCP clients.",
+        "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, QA browser, telemetry, MCP clients.",
       inputSchema: {
         type: "object" as const,
         properties: {},

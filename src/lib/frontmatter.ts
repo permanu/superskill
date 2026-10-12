@@ -14,7 +14,7 @@ export interface Frontmatter {
 }
 
 const KNOWN_TYPES = [
-  "context", "adr", "brainstorm", "decision", "todo",
+  "context", "adr", "brainstorm", "decision",
   "incident", "pattern", "evaluation", "index",
   "task", "learning", "session", "watchdog",
   "prd", "vision", "strategy", "roadmap", "rfc",

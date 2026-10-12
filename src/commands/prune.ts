@@ -10,7 +10,6 @@ export interface RetentionPolicy {
   learnings: number;
   brainstorms: number;
   adrs: number;
-  todos: number;
 }
 
 const DEFAULT_POLICY: RetentionPolicy = {
@@ -19,7 +18,6 @@ const DEFAULT_POLICY: RetentionPolicy = {
   learnings: 0,
   brainstorms: 0,
   adrs: 0,
-  todos: 0,
 };
 
 const VALID_PRUNE_MODES = new Set(["dry-run", "archive", "delete"]);
@@ -188,10 +186,6 @@ async function pruneProject(
     await pruneByStatus(vaultFs, `${base}/tasks`, `${archiveBase}/tasks`, ["done", "cancelled"], policy.doneTasks, mode, result, "tasks_scanned");
   }
 
-  if (policy.todos > 0) {
-    await pruneTodos(vaultFs, `${base}/todos.md`, policy.todos, mode, result);
-  }
-
   result.stats.total_archived = result.archived.length;
   result.stats.total_deleted = result.deleted.length;
   result.stats.total_deprecated = result.deprecated.length;
@@ -295,41 +289,6 @@ async function pruneByStatus(
       if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
         console.error(`[prune] Skipping unreadable task file: ${file}:`, e instanceof Error ? e.message : e);
       }
-    }
-  }
-}
-
-async function pruneTodos(
-  vaultFs: VaultFS,
-  todoPath: string,
-  _maxAgeDays: number,
-  mode: "dry-run" | "archive" | "delete",
-  result: PruneResult
-): Promise<void> {
-  try {
-    const content = await vaultFs.read(todoPath);
-    const { data, content: body } = parseFrontmatter(content);
-
-    const lines = body.split("\n");
-    const completedLines = lines.filter((l) => l.match(/^- \[x\]/));
-
-    if (completedLines.length === 0) return;
-
-    if (mode === "dry-run") {
-      for (const line of completedLines) {
-        result.deleted.push(`${todoPath}: ${line.trim()}`);
-      }
-    } else {
-      await vaultFs.update(todoPath, (current) => {
-        const { data: latest, content: latestBody } = parseFrontmatter(current);
-        const latestLines = latestBody.split("\n");
-        for (const line of latestLines.filter((line) => /^- \[x\]/.test(line))) result.deleted.push(`${todoPath}: ${line.trim()}`);
-        return serializeFrontmatter(mergeFrontmatter(latest, {}), latestLines.filter((line) => !/^- \[x\]/.test(line)).join("\n"));
-      });
-    }
-  } catch (e: unknown) {
-    if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-      console.error(`[prune] Error reading todos file:`, e instanceof Error ? e.message : e);
     }
   }
 }

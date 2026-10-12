@@ -468,4 +468,95 @@ created: "2024-01-15"
       expect(result.last_session!.completed_at).toBe("2024-01-15");
     });
   });
+
+  describe("open threads", () => {
+    it("derives open threads from recent sessions, newest first, deduped and capped", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+
+      await vaultFs.write(
+        `projects/test-project/context.md`,
+        `---
+type: context
+---
+
+# Context
+`
+      );
+
+      await vaultFs.write(
+        `projects/test-project/sessions/2024-01-10-session-old.md`,
+        `---
+type: session
+outcome: Older
+blocked:
+  - Waiting on upstream fix
+partially_completed:
+  - Old partial item
+---
+`
+      );
+      await vaultFs.write(
+        `projects/test-project/sessions/2024-01-15-session-new.md`,
+        `---
+type: session
+outcome: Newer
+blocked:
+  - Waiting on upstream fix
+  - Deploy blocked on credentials
+partially_completed:
+  - Refactor parser half done
+---
+`
+      );
+      await vaultFs.write(
+        `projects/test-project/sessions/2024-01-16-session-newest.md`,
+        `---
+type: session
+outcome: Newest
+partially_completed:
+  - Docs out of date
+---
+`
+      );
+
+      const result = await contextCommand({ project: "test-project" }, ctx);
+
+      expect(result.open_threads.count).toBe(5);
+      expect(result.open_threads.items).toEqual([
+        "partial: Docs out of date",
+        "blocked: Waiting on upstream fix",
+        "blocked: Deploy blocked on credentials",
+      ]);
+    });
+
+    it("returns an empty slice when sessions record no open work", async () => {
+      await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+
+      await vaultFs.write(
+        `projects/test-project/context.md`,
+        `---
+type: context
+---
+
+# Context
+`
+      );
+      await vaultFs.write(
+        `projects/test-project/sessions/2024-01-15-session-clean.md`,
+        `---
+type: session
+outcome: All done
+blocked: []
+partially_completed: []
+---
+`
+      );
+
+      const result = await contextCommand({ project: "test-project" }, ctx);
+
+      expect(result.open_threads).toEqual({ count: 0, items: [] });
+    });
+  });
 });

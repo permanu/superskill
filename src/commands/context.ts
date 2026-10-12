@@ -13,6 +13,7 @@ export interface ContextResult {
   truncated: boolean;
   learning_count: number;
   last_session: { outcome: string; completed_at: string } | null;
+  open_threads: { count: number; items: string[] };
   stale_context: boolean;
 }
 
@@ -33,6 +34,7 @@ export async function contextCommand(
 
   const learningCount = await countLearnings(vaultFs, projectSlug);
   const lastSession = await getLastSession(vaultFs, projectSlug);
+  const openThreads = await getOpenThreads(vaultFs, projectSlug);
 
   if (!exists) {
     return {
@@ -43,6 +45,7 @@ export async function contextCommand(
       truncated: false,
       learning_count: learningCount,
       last_session: lastSession,
+      open_threads: openThreads,
       stale_context: false,
     };
   }
@@ -73,6 +76,7 @@ export async function contextCommand(
       truncated: false,
       learning_count: learningCount,
       last_session: lastSession,
+      open_threads: openThreads,
       stale_context: staleContext,
     };
   }
@@ -91,6 +95,7 @@ export async function contextCommand(
     truncated,
     learning_count: learningCount,
     last_session: lastSession,
+    open_threads: openThreads,
     stale_context: staleContext,
   };
 }
@@ -169,5 +174,59 @@ async function getLastSession(
       console.error("[context] Error reading last session:", e instanceof Error ? e.message : e);
     }
     return null;
+  }
+}
+
+/**
+ * Open threads are derived from what sessions already record at close
+ * (blocked / partially_completed) — no separate backlog file to maintain.
+ * Newest sessions first; exact-duplicate texts are collapsed.
+ */
+async function getOpenThreads(
+  vaultFs: import("../lib/vault-fs.js").VaultFS,
+  projectSlug: string,
+  limit = 3,
+  window = 5,
+): Promise<{ count: number; items: string[] }> {
+  try {
+    const files = (await vaultFs.list(`projects/${projectSlug}/sessions`, 1))
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .reverse()
+      .slice(0, window);
+
+    const seen = new Set<string>();
+    const items: string[] = [];
+    for (const file of files) {
+      let content: string;
+      try {
+        content = await vaultFs.read(file);
+      } catch (e: unknown) {
+        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+          console.error("[context] Error reading session for open threads:", e instanceof Error ? e.message : e);
+        }
+        continue;
+      }
+      const { data } = parseFrontmatter(content);
+      const entries: Array<[string, unknown]> = [
+        ...(Array.isArray(data.blocked) ? data.blocked.map((value) => ["blocked", value] as [string, unknown]) : []),
+        ...(Array.isArray(data.partially_completed) ? data.partially_completed.map((value) => ["partial", value] as [string, unknown]) : []),
+      ];
+      for (const [kind, value] of entries) {
+        if (typeof value !== "string") continue;
+        const text = value.trim();
+        if (text === "") continue;
+        const key = `${kind}:${text}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(`${kind}: ${text.length > 160 ? `${text.slice(0, 157)}...` : text}`);
+      }
+    }
+    return { count: items.length, items: items.slice(0, limit) };
+  } catch (e: unknown) {
+    if (!(e instanceof Error && "code" in e && (e as any).code === "ENOENT")) {
+      console.error("[context] Error deriving open threads:", e instanceof Error ? e.message : e);
+    }
+    return { count: 0, items: [] };
   }
 }

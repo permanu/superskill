@@ -6,7 +6,6 @@ import { taskCommand } from "../commands/task.js";
 import { learnCommand } from "../commands/learn.js";
 import { decideCommand } from "../commands/decide.js";
 import { brainstormCommand } from "../commands/brainstorm.js";
-import { todoCommand } from "../commands/todo.js";
 import { pruneCommand } from "../commands/prune.js";
 import { contextCommand } from "../commands/context.js";
 import { searchCommand } from "../commands/search.js";
@@ -224,58 +223,6 @@ describe("integration > project artifacts", () => {
 
       expect(content).toContain("REST vs GraphQL");
       expect(content).toContain("Versioning via URL path");
-    });
-  });
-
-  describe("todo", () => {
-    it("add todo then list returns it", async () => {
-      await todoCommand({ action: "add", item: "Write unit tests", project: "my-project" }, ctx);
-
-      const result = await todoCommand({ action: "list", project: "my-project" }, ctx);
-
-      expect(result.todos).toHaveLength(1);
-      expect(result.todos[0].text).toBe("Write unit tests");
-      expect(result.todos[0].completed).toBe(false);
-    });
-
-    it("add multiple todos then complete one", async () => {
-      await todoCommand({ action: "add", item: "Setup CI", project: "my-project" }, ctx);
-      await todoCommand({ action: "add", item: "Deploy staging", project: "my-project" }, ctx);
-      await todoCommand({ action: "add", item: "Write docs", project: "my-project" }, ctx);
-
-      await todoCommand({ action: "complete", item: "Deploy staging", project: "my-project" }, ctx);
-
-      const result = await todoCommand({ action: "list", project: "my-project" }, ctx);
-
-      expect(result.todos).toHaveLength(2);
-      const texts = result.todos.map((t) => t.text);
-      expect(texts).toContain("Setup CI");
-      expect(texts).toContain("Write docs");
-      expect(texts).not.toContain("Deploy staging");
-    });
-
-    it("add todo with high priority then list with blockersOnly returns it", async () => {
-      await todoCommand({ action: "add", item: "Fix critical bug", priority: "high", project: "my-project" }, ctx);
-      await todoCommand({ action: "add", item: "Refactor module", priority: "medium", project: "my-project" }, ctx);
-      await todoCommand({ action: "add", item: "Update readme", priority: "low", project: "my-project" }, ctx);
-
-      const result = await todoCommand({ action: "list", blockersOnly: true, project: "my-project" }, ctx);
-
-      expect(result.todos).toHaveLength(1);
-      expect(result.todos[0].text).toBe("Fix critical bug");
-      expect(result.todos[0].priority).toBe("high");
-    });
-
-    it("add todo then remove it", async () => {
-      await todoCommand({ action: "add", item: "Temporary item", project: "my-project" }, ctx);
-      await todoCommand({ action: "add", item: "Keep this", project: "my-project" }, ctx);
-
-      await todoCommand({ action: "remove", item: "Temporary item", project: "my-project" }, ctx);
-
-      const result = await todoCommand({ action: "list", project: "my-project" }, ctx);
-
-      expect(result.todos).toHaveLength(1);
-      expect(result.todos[0].text).toBe("Keep this");
     });
   });
 

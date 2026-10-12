@@ -522,9 +522,8 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 | `session register\|heartbeat\|complete\|list` | Multi-agent session registry | `--tool`, `--task`, `--files`, `--summary`, `--outcome`, `--tasks` |
 | `resume` | Recent sessions, blocked work, next steps | `-l, --limit`, `--json` |
 | `stats` | File counts and task breakdown | |
-| `prune` | Archive/delete stale content | `-a, --all`, `-m, --mode dry-run\|archive\|delete`, `--sessions <days>`, `--done-tasks <days>`, `--todos <days>` |
+| `prune` | Archive/delete stale content | `-a, --all`, `-m, --mode dry-run\|archive\|delete`, `--sessions <days>`, `--done-tasks <days>` |
 | `deprecate <path>` | Mark a vault item deprecated | `-r, --reason` |
-| `todo …` | **Deprecated** — use `task` | |
 
 ### Knowledge graph
 
@@ -754,7 +753,7 @@ superskill qa viz -p my-project
 
 Architecture and dependencies come from parsed directories and imports. Data types show extracted declarations, not an inferred database schema; call flow shows static relationships, not runtime execution order. Empty sections explain missing evidence. Generation works across supported project languages without model calls or project-specific diagrams. The local HTML embeds source snapshots (up to 1 MB per file); regenerate after source changes. Source snapshots and document bodies containing secret-like patterns are omitted with an explanation. Agent `graph children` responses remain metadata-only, while `graph open` retrieves bounded file or declaration content on demand.
 
-Rules nests the whole rule library (`language → prefix → rule`), and Playbooks opens packs before individual playbooks. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel. `npm run test:viz` checks source traversal, diagrams, keyboard navigation, mobile layout, and the offline fallback.
+Rules nests the whole rule library (`language → prefix → rule`), and Playbooks opens packs before individual playbooks. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel — `playwright-core` is not bundled by default; install it in the project with `npm install playwright-core` when you want QA/viz. `npm run test:viz` checks source traversal, diagrams, keyboard navigation, mobile layout, and the offline fallback.
 
 ### Lazy traversal (agent access)
 

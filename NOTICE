@@ -1,2 +1,10 @@
 SuperSkill
 Copyright 2026 Permanu (Atharva Pandey)
+
+---
+
+Bundled third-party components:
+
+- tree-sitter grammar wasm binaries vendored from tree-sitter-wasms@0.1.13
+  (Unlicense, https://github.com/Gregoor/tree-sitter-wasms). Per-file sha256
+  hashes and source metadata: dist/lib/codegraph/grammars/MANIFEST.json

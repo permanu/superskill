@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Published package no longer ships source maps or `.d.ts` files (`files` exclusions) — smaller tarball; local builds keep both.
+- Tree-sitter grammar wasms are vendored into `dist/lib/codegraph/grammars/` at build time from the `tree-sitter-wasms` devDependency (sha256-verified against `MANIFEST.json`); `tree-sitter-wasms` moved from `dependencies` to `devDependencies`, removing ~49 MB from default installs with no language coverage change.
+- `playwright-core` moved from `dependencies` to `devDependencies`: Chrome QA/viz is now opt-in (`npm install playwright-core`). QA commands fail with install guidance when it is missing, and `doctor` reports QA browser availability.
+- `doctor` validates the rules catalog with bounded-concurrency reads (compile checks stay sequential to avoid toolchain races) and gains `--fast` to skip catalog validation and toolchain probes.
+- `doctor` caches catalog validation keyed by a fingerprint of the rules tree (`~/.superskill/cache/rules-validation.json`); warm runs skip re-parsing ~2,200 files and report the cached age. The explicit `validate` CLI still runs fresh.
+- `project_context` now derives bounded **open threads** (top 3 of `blocked` / `partially_completed`, deduped, from the five most recent sessions) and the MCP context prompt renders them — parked work recorded at session close is visible at session start, with no separate backlog file to maintain.
+
+### Removed
+- The deprecated `todo` command layer: `todo list|add|complete` CLI aliases, `todos.md` retention in `prune` (`--todos` retention flag), and the `todo` frontmatter type. `task` remains the single vault task surface.
+- Committed campaign artifacts: `results.txt`, `validator.json`, and `workstreams/{plan,state}.json`; rules-campaign working state is now gitignored and `workstreams/STATUS.md` moved to `docs/authoring/rules-campaign-status.md`.
+
 ## [0.11.2] - 2026-10-11
 
 ### Fixed

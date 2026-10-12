@@ -11,7 +11,6 @@ import { writeCommand } from "./commands/write.js";
 import { searchCommand } from "./commands/search.js";
 import { contextCommand } from "./commands/context.js";
 import { decideCommand } from "./commands/decide.js";
-import { todoCommand } from "./commands/todo.js";
 import { brainstormCommand } from "./commands/brainstorm.js";
 import { sessionCommand } from "./commands/session.js";
 import { graphRelatedCommand, graphCrossProjectCommand, graphTraverseCommand } from "./commands/graph.js";
@@ -296,79 +295,6 @@ export function createProgram(): Command {
           project: opts.project,
         }, await createScopedCtx());
         console.log(JSON.stringify(result));
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Error: ${msg}`);
-        process.exit(1);
-      }
-    });
-
-  // ── todo (deprecated — use task) ─────────────────────
-  const todoCmd = program
-    .command("todo")
-    .description("[Deprecated — use 'task' instead] Manage project todos");
-
-  todoCmd
-    .command("list")
-    .description("List active todos")
-    .option("-p, --project <slug>", "Project slug")
-    .option("-b, --blockers-only", "Only show high-priority blockers")
-    .action(async (opts: { project?: string; blockersOnly?: boolean }) => {
-      try {
-        const result = await todoCommand({
-          action: "list",
-          project: opts.project,
-          blockersOnly: opts.blockersOnly,
-        }, await createScopedCtx());
-        for (const todo of result.todos) {
-          const marker = todo.completed ? "[x]" : "[ ]";
-          const priority = todo.priority === "high" ? "P0" : todo.priority === "low" ? "P2" : "P1";
-          console.log(`${marker} [${priority}] ${todo.text}`);
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Error: ${msg}`);
-        process.exit(1);
-      }
-    });
-
-  todoCmd
-    .command("add <text>")
-    .description("Add a todo")
-    .option("-p, --project <slug>", "Project slug")
-    .option("--priority <level>", "Priority: high|medium|low", "medium")
-    .action(async (text: string, opts: { project?: string; priority: string }) => {
-      try {
-        const validTodoPriorities = ["high", "medium", "low"] as const;
-        if (!validTodoPriorities.includes(opts.priority as any)) {
-          throw new Error(`--priority must be one of: ${validTodoPriorities.join(", ")}`);
-        }
-        await todoCommand({
-          action: "add",
-          item: text,
-          priority: opts.priority as "high" | "medium" | "low",
-          project: opts.project,
-        }, await createScopedCtx());
-        console.log(`Added: ${text}`);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Error: ${msg}`);
-        process.exit(1);
-      }
-    });
-
-  todoCmd
-    .command("complete <text>")
-    .description("Complete a todo")
-    .option("-p, --project <slug>", "Project slug")
-    .action(async (text: string, opts: { project?: string }) => {
-      try {
-        await todoCommand({
-          action: "complete",
-          item: text,
-          project: opts.project,
-        }, await createScopedCtx());
-        console.log(`Completed: ${text}`);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
@@ -1233,8 +1159,7 @@ export function createProgram(): Command {
     .option("-m, --mode <mode>", "Mode: dry-run|archive|delete", "dry-run")
     .option("--sessions <days>", "Session retention in days", "30")
     .option("--done-tasks <days>", "Done task retention in days", "30")
-    .option("--todos <days>", "Completed todo retention in days (0=keep)", "0")
-    .action(async (opts: { project?: string; all?: boolean; mode: string; sessions: string; doneTasks: string; todos: string }) => {
+    .action(async (opts: { project?: string; all?: boolean; mode: string; sessions: string; doneTasks: string }) => {
       try {
         const validModes = ["dry-run", "archive", "delete"] as const;
         if (!validModes.includes(opts.mode as any)) {
@@ -1243,7 +1168,6 @@ export function createProgram(): Command {
         const policy: Partial<RetentionPolicy> = {
           sessions: parseInt(opts.sessions, 10) || 30,
           doneTasks: parseInt(opts.doneTasks, 10) || 30,
-          todos: parseInt(opts.todos, 10) || 0,
         };
         const results = await pruneCommand({
           project: opts.project,
@@ -2023,12 +1947,17 @@ export function createProgram(): Command {
   program
     .command("doctor")
     .description(
-      "Health check: install vs running MCP servers, vault + mapping, project graph isolation, catalog, toolchains, telemetry, clients"
+      "Health check: install vs running MCP servers, vault + mapping, project graph isolation, catalog, toolchains, QA browser, telemetry, clients"
     )
     .option("--json", "machine-readable output")
-    .action(async (opts: { json?: boolean }) => {
+    .option("--fast", "skip catalog validation and toolchain probes")
+    .action(async (opts: { json?: boolean; fast?: boolean }) => {
       try {
-        const result = await doctorCommand({}, await createCtx());
+        const result = await doctorCommand(
+          {},
+          await createCtx(),
+          opts.fast === true ? { skipCatalog: true, skipToolchains: true } : {},
+        );
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
         } else {
