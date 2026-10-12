@@ -242,10 +242,41 @@ async function persistSessionNote(
     sections.push(`\n## Files Changed\n${opts.filesTouched.map((f) => `- ${f}`).join("\n")}`);
   }
 
+  const relatedLinks = await collectRelatedLinks(vaultFs, opts.project, opts.filesTouched);
+  if (relatedLinks.length > 0) {
+    sections.push(`\n## Related\n${relatedLinks.map((link) => `- ${link}`).join("\n")}`);
+  }
+
   await vaultFs.update(filePath, (current) => {
     const { data } = parseFrontmatter(current);
     const count = data.session_id === opts.sessionId ? Number(data.learnings_captured ?? 0) : 0;
     return serializeFrontmatter({ ...fm, learnings_captured: count }, sections.join("\n"));
   }, { create: true });
   return filePath;
+}
+
+async function collectRelatedLinks(
+  vaultFs: import("../lib/vault-fs.js").VaultFS,
+  project: string,
+  filesTouched: string[],
+): Promise<string[]> {
+  const links = new Set<string>();
+  const contextNote = `projects/${project}/context.md`;
+  if (await relatedTargetExists(vaultFs, contextNote)) links.add(`[[${contextNote}]]`);
+
+  for (const file of [...new Set(filesTouched)].sort()) {
+    const notePath = `projects/${project}/code/${file}.md`;
+    if (await relatedTargetExists(vaultFs, notePath)) links.add(`[[projects/${project}/code/${file}]]`);
+  }
+
+  return [...links].sort().slice(0, 50);
+}
+
+async function relatedTargetExists(vaultFs: import("../lib/vault-fs.js").VaultFS, path: string): Promise<boolean> {
+  try {
+    return await vaultFs.exists(path);
+  } catch (error) {
+    console.error(`[session] related link check failed for ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
