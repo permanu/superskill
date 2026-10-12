@@ -1,0 +1,18 @@
+{
+  "diag:high": {
+    "title": "High-level architecture",
+    "body": "Project structure for sample-app. Top-level directories and files, connected by observed imports. 7 files · typescript, python, go. 0 files with parse errors; 0 skipped.\n\n```mermaid\n%%{init: {\"flowchart\": {\"curve\": \"linear\", \"nodeSpacing\": 40, \"rankSpacing\": 60}}}%%\nflowchart LR\n  accTitle: High-level architecture\n  accDescr: Project structure for sample-app. Top-level directories and files, connected by observed imports. 7 files · typescript, python, go. 0 files with parse errors; 0 skipped.\n  n1[\"go\"]\n  n2[\"py\"]\n  n4[\"web\"] -->|\"1 import\"| n3[\"src\"]\n```"
+  },
+  "diag:low": {
+    "title": "Module dependencies",
+    "body": "Import direction is consumer → dependency. This is structural analysis of the scanned source.\n\n```mermaid\n%%{init: {\"flowchart\": {\"curve\": \"linear\", \"nodeSpacing\": 40, \"rankSpacing\": 60}}}%%\nflowchart LR\n  accTitle: Module dependencies\n  accDescr: Import direction is consumer → dependency. This is structural analysis of the scanned source.\n  n3[\"py\"]\n  n1[\"go\"] -->|\"1 import\"| n2[\"go/helper\"]\n  n4[\"src\"] -->|\"1 import\"| n5[\"src/lib\"]\n  n6[\"web\"] -->|\"1 import\"| n5[\"src/lib\"]\n```"
+  },
+  "diag:erd": {
+    "title": "Data types",
+    "body": "Classes, interfaces and type declarations found in source. These are code types, not a claimed database schema.\n\n```mermaid\n%%{init: {\"flowchart\": {\"curve\": \"linear\", \"nodeSpacing\": 40, \"rankSpacing\": 60}}}%%\nflowchart LR\n  accTitle: Data types\n  accDescr: Classes, interfaces and type declarations found in source. These are code types, not a claimed database schema.\n  n1[\"Config · go/main.go:5\"]\n  n2[\"Thing · py/models.py:1\"]\n  n3[\"Service · py/service.py:4\"]\n  n4[\"Options · src/lib/util.ts:1\"]\n  n5[\"Store · src/lib/util.ts:5\"]\n```"
+  },
+  "diag:flow": {
+    "title": "Call flow",
+    "body": "Static call relationships. Extracted and inferred edges are labeled; this does not establish runtime execution order.\n\n```mermaid\n%%{init: {\"flowchart\": {\"curve\": \"linear\", \"nodeSpacing\": 40, \"rankSpacing\": 60}}}%%\nflowchart LR\n  accTitle: Call flow\n  accDescr: Static call relationships. Extracted and inferred edges are labeled; this does not establish runtime execution order.\n  n2[\"main · go/main.go:9\"]\n  n1[\"app.ts · src/app.ts:1\"] -->|\"calls (inferred)\"| n5[\"start · src/app.ts:3\"]\n  n4[\"run · py/service.py:5\"] -->|\"calls (inferred)\"| n3[\"Thing · py/models.py:1\"]\n  n5[\"start · src/app.ts:3\"] -->|\"calls (inferred)\"| n8[\"helper · src/lib/util.ts:11\"]\n  n5[\"start · src/app.ts:3\"] -->|\"calls (inferred)\"| n6[\"Store · src/lib/util.ts:5\"]\n  n7[\"get · src/lib/util.ts:6\"] -->|\"calls (inferred)\"| n8[\"helper · src/lib/util.ts:11\"]\n  n9[\"boot · web/main.ts:3\"] -->|\"calls (inferred)\"| n8[\"helper · src/lib/util.ts:11\"]\n```"
+  }
+}

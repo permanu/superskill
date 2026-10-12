@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
-import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -60,18 +59,6 @@ import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
-
-function openExternal(target: string): void {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
-  try {
-    const child = spawn(command, args, { stdio: "ignore", detached: true });
-    child.on("error", () => {});
-    child.unref();
-  } catch {
-    // best-effort: the printed path can always be opened by hand
-  }
-}
 
 export function createProgram(): Command {
   const program = new Command();
@@ -658,23 +645,19 @@ export function createProgram(): Command {
       }
     });
 
-  const runViz = async (opts: { project?: string; open?: boolean }) => {
+  const runViz = async (opts: { project?: string }) => {
     try {
       const { knowledgeVizCommand } = await import("./commands/knowledge.js");
       const ctx = await createScopedCtx();
       const result = await knowledgeVizCommand({ project: opts.project }, ctx);
       console.log(JSON.stringify(result, null, 2));
-      const htmlAbs = `${ctx.vaultPath}/${result.html}`;
-      const diagAbs = `${ctx.vaultPath}/${result.diagrams}`;
-      console.log(`\nDiagrams (HLA / LLA / ERD):\n  open "${diagAbs}"`);
-      console.log(`Interactive graph:\n  open "${htmlAbs}"`);
-      console.log(`Obsidian: vault root = ${ctx.vaultPath}, then open ${result.canvas}`);
+      console.log(`\nGenerated notes in ${ctx.vaultPath}:`);
+      for (const note of result.notes) console.log(`  ${note}`);
+      console.log(
+        `\nCode notes: ${result.code_notes.written} written, ${result.code_notes.removed} removed, ${result.code_notes.total} total.`,
+      );
       if (result.kept && result.kept.length > 0) {
         console.log(`\nKept user-edited notes (not regenerated):\n  ${result.kept.join("\n  ")}`);
-      }
-      if (opts.open) {
-        openExternal(htmlAbs);
-        openExternal(diagAbs);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -685,16 +668,14 @@ export function createProgram(): Command {
 
   graphCmd
     .command("viz")
-    .description("Write knowledge-graph.html (browser) and knowledge-graph.canvas (Obsidian)")
+    .description("Write generated architecture and code notes into the vault (Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
-    .option("--open", "Open the generated pages in your browser")
     .action(runViz);
 
   program
     .command("viz")
     .description("Shortcut for `graph viz`")
     .option("-p, --project <slug>", "Project slug")
-    .option("--open", "Open the generated pages in your browser")
     .action(runViz);
 
   program

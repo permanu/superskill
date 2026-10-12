@@ -49,14 +49,21 @@ interface RankedRow {
 }
 
 const WIKILINK_RE = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
+const SOLE_WIKILINK_RE = /^\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$/;
 
 const openDbs = new Map<string, KnowledgeIndex>();
+
+function normalizeRelatedValue(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(SOLE_WIKILINK_RE);
+  return match ? match[1].trim() : trimmed;
+}
 
 export function extractKnowledgeLinks(data: Frontmatter, body: string): string[] {
   const out: string[] = [];
   if (Array.isArray(data.related)) {
     for (const r of data.related) {
-      if (typeof r === "string" && r.trim()) out.push(r.trim());
+      if (typeof r === "string" && r.trim()) out.push(normalizeRelatedValue(r));
     }
   }
   WIKILINK_RE.lastIndex = 0;
@@ -508,17 +515,52 @@ function walkMarkdown(dir: string, acc: string[]): void {
   }
 }
 
-function resolveEdgeTarget(slug: string, raw: string, paths: Set<string>): string {
-  let t = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
-  if (!t.endsWith(".md") && !t.includes(".")) t = `${t}.md`;
-  if (t.startsWith("projects/")) return t;
-  const prefixed = `projects/${slug}/${t}`;
-  if (paths.has(prefixed)) return prefixed;
-  const base = t.split("/").pop()!;
-  for (const p of paths) {
-    if (p.endsWith("/" + base) || p.endsWith("/" + t)) return p;
+function buildBasenameIndex(paths: Iterable<string>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const path of [...paths].sort()) {
+    const base = path.split("/").pop();
+    if (!base) continue;
+    const list = index.get(base);
+    if (list) list.push(path);
+    else index.set(base, [path]);
   }
-  return prefixed;
+  return index;
+}
+
+function resolveEdgeTarget(slug: string, raw: string, paths: Set<string>, basenames: Map<string, string[]>): string {
+  const target = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const prefixed = `projects/${slug}/${target}`;
+  const candidates = target.startsWith("projects/")
+    ? [target, `${target}.md`]
+    : [target, `${target}.md`, prefixed, `${prefixed}.md`];
+  for (const candidate of candidates) {
+    if (paths.has(candidate)) return candidate;
+  }
+  const base = target.split("/").pop() ?? target;
+  const basenameMatch = basenames.get(base) ?? basenames.get(`${base}.md`);
+  if (basenameMatch && basenameMatch.length > 0) return basenameMatch[0];
+  if (target.startsWith("projects/")) return target;
+  return target.includes(".") ? prefixed : `${prefixed}.md`;
+}
+
+function stripFencedCodeBlocks(body: string): string {
+  const lines = body.split("\n");
+  const kept: string[] = [];
+  let fence: string | null = null;
+  for (const line of lines) {
+    const match = line.match(/^\s*(`{3,})/);
+    if (fence === null) {
+      if (match) fence = match[1];
+      else kept.push(line);
+      continue;
+    }
+    if (match && match[1].length >= fence.length) fence = null;
+  }
+  return kept.join("\n");
+}
+
+function indexedBody(type: string, body: string): string {
+  return type === "code" ? stripFencedCodeBlocks(body) : body;
 }
 
 function markdownFiles(projectDir: string): string[] {
@@ -538,13 +580,15 @@ function parseNote(absPath: string, relPath: string, stat: { size: number; mtime
     return null;
   }
   const { data, content } = parseFrontmatter(raw);
+  const type = typeof data.type === "string" ? data.type : "note";
+  const body = indexedBody(type, content);
   return {
     note: {
       path: relPath,
-      type: typeof data.type === "string" ? data.type : "note",
-      title: titleFrom(content, relPath),
-      body: content,
-      related: extractKnowledgeLinks(data, content),
+      type,
+      title: titleFrom(body, relPath),
+      body,
+      related: extractKnowledgeLinks(data, body),
       ts: frontmatterTimestamp(data) ?? stat.mtime_ms,
     },
     stamp: {
@@ -582,8 +626,9 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
     pathSet.add(rel);
   }
 
+  const basenames = buildBasenameIndex(pathSet);
   for (const n of parsed) {
-    n.related = n.related.map((t) => resolveEdgeTarget(safe, t, pathSet));
+    n.related = n.related.map((t) => resolveEdgeTarget(safe, t, pathSet, basenames));
   }
 
   const idx = KnowledgeIndex.openForProject(vaultRoot, safe);
@@ -629,8 +674,9 @@ function syncProjectIndexFiles(vaultRoot: string, slug: string, idx: KnowledgeIn
     stamps.push(entry.stamp);
   }
   const pathSet = new Set(current.keys());
+  const basenames = buildBasenameIndex(pathSet);
   for (const n of parsed) {
-    n.related = n.related.map((t) => resolveEdgeTarget(slug, t, pathSet));
+    n.related = n.related.map((t) => resolveEdgeTarget(slug, t, pathSet, basenames));
   }
   idx.applyFileChanges(parsed, stamps, removed);
 }
@@ -657,16 +703,19 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
   const m = rel.match(/^projects\/([^/]+)\//);
   if (!m) return;
   const slug = m[1];
-  const { data, content: body } = parseFrontmatter(content);
+  const { data, content: rawBody } = parseFrontmatter(content);
+  const type = typeof data.type === "string" ? data.type : "note";
+  const body = indexedBody(type, rawBody);
   const idx = ensureProjectIndex(vaultRoot, slug);
   const paths = new Set(idx.graphDump().nodes.map((n) => n.id));
   paths.add(rel);
-  const related = extractKnowledgeLinks(data, body).map((t) => resolveEdgeTarget(slug, t, paths));
+  const basenames = buildBasenameIndex(paths);
+  const related = extractKnowledgeLinks(data, body).map((t) => resolveEdgeTarget(slug, t, paths, basenames));
   const ts = frontmatterTimestamp(data) ?? statMtimeMs(vaultRoot, rel) ?? Date.now();
   idx.applyFileChanges(
     [{
       path: rel,
-      type: typeof data.type === "string" ? data.type : "note",
+      type,
       title: titleFrom(body, rel),
       body,
       related,
