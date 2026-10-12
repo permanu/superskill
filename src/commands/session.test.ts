@@ -457,6 +457,162 @@ describe("sessionCommand", () => {
       const content = await vaultFs.read(notePath!);
       expect(content).toContain("my-custom-tool");
     });
+
+    it("links the context note and matching code note in a Related section", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+      await vaultFs.write("projects/test-project/context.md", "# Context\n");
+      await vaultFs.write("projects/test-project/code/src/lib/foo.ts.md", "# foo\n");
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: ["src/lib/foo.ts"],
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      expect(content).toContain("## Related");
+      expect(content).toContain("- [[projects/test-project/code/src/lib/foo.ts]]");
+      expect(content).toContain("- [[projects/test-project/context.md]]");
+      expect(content).not.toContain("[[projects/test-project/code/src/lib/foo.ts.md]]");
+      expect(content.indexOf("## Files Changed")).toBeLessThan(content.indexOf("## Related"));
+    });
+
+    it("omits the context link when context.md does not exist", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+      await vaultFs.write("projects/test-project/code/src/index.ts.md", "# index\n");
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: ["src/index.ts"],
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      expect(content).toContain("## Related");
+      expect(content).toContain("- [[projects/test-project/code/src/index.ts]]");
+      expect(content).not.toContain("context.md]]");
+    });
+
+    it("links context.md when it exists even when no code note matches", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+      await vaultFs.write("projects/test-project/context.md", "# Context\n");
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: ["src/missing.ts"],
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      expect(content).toContain("- [[projects/test-project/context.md]]");
+      expect(content).not.toContain("code/src/missing.ts");
+    });
+
+    it("omits the Related section entirely when nothing can be linked", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: ["src/index.ts"],
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      expect(content).not.toContain("## Related");
+      expect(content).not.toContain("[[");
+      expect(content).toContain("## Files Changed\n- src/index.ts");
+    });
+
+    it("dedupes and sorts Related links deterministically", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+      await vaultFs.write("projects/test-project/context.md", "# Context\n");
+      await vaultFs.write("projects/test-project/code/src/b.ts.md", "# b\n");
+      await vaultFs.write("projects/test-project/code/src/a.ts.md", "# a\n");
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: ["src/b.ts", "src/a.ts", "src/b.ts"],
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      const related = content.slice(content.indexOf("## Related")).trim().split("\n");
+      expect(related).toEqual([
+        "## Related",
+        "- [[projects/test-project/code/src/a.ts]]",
+        "- [[projects/test-project/code/src/b.ts]]",
+        "- [[projects/test-project/context.md]]",
+      ]);
+    });
+
+    it("caps Related links at 50", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
+      const files = Array.from({ length: 51 }, (_, index) => `notes/note-${String(index).padStart(3, "0")}.ts`);
+      for (const file of files) {
+        await vaultFs.write(`projects/test-project/code/${file}.md`, "# note\n");
+      }
+
+      const { session_id } = await sessionCommand({
+        action: "register",
+        tool: "claude",
+        project: "test-project",
+      }, ctx);
+
+      const result = await sessionCommand({
+        action: "complete",
+        sessionId: session_id!,
+        project: "test-project",
+        outcome: "Done",
+        filesTouched: files,
+      }, ctx);
+
+      const content = await vaultFs.read(result.session_note_path!);
+      const related = content.slice(content.indexOf("## Related")).trim().split("\n").filter((line) => line.startsWith("- "));
+      expect(related).toHaveLength(50);
+      expect(related).toContain("- [[projects/test-project/code/notes/note-000.ts]]");
+      expect(related).toContain("- [[projects/test-project/code/notes/note-049.ts]]");
+      expect(related).not.toContain("- [[projects/test-project/code/notes/note-050.ts]]");
+    });
   });
 
   describe("unknown action", () => {
