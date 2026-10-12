@@ -22,6 +22,28 @@ describe("extractKnowledgeLinks", () => {
     );
     expect(links).toEqual(expect.arrayContaining(["projects/p/adr.md", "auth", "sessions/2026-01-01"]));
   });
+
+  it("normalizes bracketed property links to bare targets", () => {
+    const links = extractKnowledgeLinks(
+      {
+        related: [
+          "[[projects/p/adr.md]]",
+          "[[auth|Auth note]]",
+          "[[sessions/2026-01-01#Notes]]",
+          "[[code/src/lib/foo.ts|foo]]",
+          "plain-target",
+        ],
+      },
+      "",
+    );
+    expect(links).toEqual([
+      "projects/p/adr.md",
+      "auth",
+      "sessions/2026-01-01",
+      "code/src/lib/foo.ts",
+      "plain-target",
+    ]);
+  });
 });
 
 describe("KnowledgeIndex", () => {
@@ -366,3 +388,101 @@ describe("index freshness", () => {
     expect(() => removeVaultFileFromIndex(vault, "sessions/2026-01-01.md")).not.toThrow();
   });
 });
+
+describe("edge resolution and code-note bodies", () => {
+  const slug = "app";
+  let vault: string;
+
+  function codeNote(file: string, links: string[], source: string): string {
+    return `---\ntype: code\n---\n\n<!-- superskill:generated -->\n\n# code/${file}\n\n${links.map((link) => `- [[${link}]]`).join("\n")}\n\n## Source\n\n\`\`\`ts\n${source}\n\`\`\`\n`;
+  }
+
+  beforeEach(async () => {
+    vault = join(tmpdir(), `ki-code-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const project = join(vault, "projects", slug);
+    await mkdir(join(project, "code", "src", "lib"), { recursive: true });
+    await mkdir(join(project, "notes"), { recursive: true });
+    await writeFile(
+      join(project, "code", "src", "lib", "foo.ts.md"),
+      codeNote("src/lib/foo.ts", ["projects/app/code/src/lib/other.ts"], 'export const fooNeedle = "FOO_SOURCE_TEXT";'),
+    );
+    await writeFile(
+      join(project, "code", "src", "lib", "other.ts.md"),
+      codeNote("src/lib/other.ts", [], 'export const otherNeedle = "OTHER_SOURCE_TEXT";'),
+    );
+    await writeFile(
+      join(project, "notes", "main.md"),
+      "---\ntype: note\n---\n\n# Main\n\n[[projects/app/code/src/lib/foo.ts]]\n[[foo.ts]]\n",
+    );
+    await writeFile(
+      join(project, "notes", "via-property.md"),
+      '---\ntype: note\nrelated:\n  - "[[projects/app/code/src/lib/other.ts]]"\n---\n\n# Via property\n',
+    );
+    await writeFile(
+      join(project, "notes", "basename.md"),
+      "---\ntype: note\n---\n\n# Basename\n\n[[other.ts]]\n",
+    );
+  });
+
+  afterEach(() => rm(vault, { recursive: true, force: true }));
+
+  it("resolves source-extension targets to the generated markdown note", () => {
+    rebuildProjectIndex(vault, slug);
+    const idx = KnowledgeIndex.openForProject(vault, slug);
+    try {
+      const foo = `projects/${slug}/code/src/lib/foo.ts.md`;
+      const other = `projects/${slug}/code/src/lib/other.ts.md`;
+      expect(idx.outgoing(foo)).toEqual([other]);
+      expect(idx.outgoing(`projects/${slug}/notes/via-property.md`)).toEqual([other]);
+      expect(idx.incoming(foo)).toEqual([`projects/${slug}/notes/main.md`]);
+      expect(idx.outgoing(`projects/${slug}/notes/main.md`)).toEqual([foo]);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("falls back to a unique basename", () => {
+    rebuildProjectIndex(vault, slug);
+    const idx = KnowledgeIndex.openForProject(vault, slug);
+    try {
+      expect(idx.outgoing(`projects/${slug}/notes/basename.md`)).toEqual([
+        `projects/${slug}/code/src/lib/other.ts.md`,
+      ]);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("strips fenced source from code note bodies while import edges stay indexed", () => {
+    rebuildProjectIndex(vault, slug);
+    const idx = KnowledgeIndex.openForProject(vault, slug);
+    try {
+      const foo = `projects/${slug}/code/src/lib/foo.ts.md`;
+      expect(idx.search("FOO_SOURCE_TEXT")).toEqual([]);
+      expect(idx.search("OTHER_SOURCE_TEXT")).toEqual([]);
+      expect(idx.search("foo.ts").map((hit) => hit.path)).toContain(foo);
+      const body = idx.noteDocs().find((doc) => doc.id === foo)?.body ?? "";
+      expect(body).not.toContain("FOO_SOURCE_TEXT");
+      expect(body).toContain("## Source");
+      expect(idx.outgoing(foo)).toEqual([`projects/${slug}/code/src/lib/other.ts.md`]);
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("applies the same stripping and resolution through upsertVaultFile", async () => {
+    ensureProjectIndex(vault, slug);
+    const rel = `projects/${slug}/code/src/lib/fresh.ts.md`;
+    const content = codeNote("src/lib/fresh.ts", ["projects/app/code/src/lib/foo.ts"], 'export const freshNeedle = "FRESH_SOURCE_TEXT";');
+    await writeFile(join(vault, rel), content, "utf-8");
+    upsertVaultFile(vault, rel, content);
+    const idx = ensureProjectIndex(vault, slug);
+    try {
+      expect(idx.search("FRESH_SOURCE_TEXT")).toEqual([]);
+      expect(idx.outgoing(rel)).toEqual([`projects/${slug}/code/src/lib/foo.ts.md`]);
+    } finally {
+      idx.close();
+    }
+  });
+});
+

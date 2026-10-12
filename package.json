@@ -46,7 +46,6 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
-    "test:viz": "npm run build && node tests/knowledge-viz.browser.mjs && node tests/project-viz.browser.mjs",
     "lint": "tsc --noEmit",
     "validate:rules": "node dist/rules/cli.js validate",
     "verify:grammars": "node scripts/verify-grammars.mjs",

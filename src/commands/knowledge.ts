@@ -3,7 +3,9 @@
 import type { CommandContext } from "../core/types.js";
 import { VaultError } from "../lib/vault-fs.js";
 import { rebuildProjectIndex } from "../lib/knowledge-index.js";
-import { writeKnowledgeGraphFiles } from "../lib/knowledge-viz.js";
+import { writeKnowledgeGraphFiles, type KnowledgeVizResult } from "../lib/knowledge-viz.js";
+
+export type { KnowledgeVizResult };
 
 function slugOf(args: { project?: string }, ctx: CommandContext): string {
   const slug = args.project ?? ctx.projectSlug ?? undefined;
@@ -28,9 +30,7 @@ export async function knowledgeRebuildCommand(
 export async function knowledgeVizCommand(
   args: { project?: string },
   ctx: CommandContext,
-): Promise<{ html: string; canvas: string; diagrams: string; project: string; nodes: number; edges: number; kept?: string[] }> {
+): Promise<KnowledgeVizResult> {
   const project = slugOf(args, ctx);
-  rebuildProjectIndex(ctx.vaultPath, project);
-  const files = await writeKnowledgeGraphFiles(ctx.vaultPath, project, { codeRoot: ctx.workspacePath ?? process.cwd() });
-  return { ...files, project };
+  return writeKnowledgeGraphFiles(ctx.vaultPath, project, { codeRoot: ctx.workspacePath ?? process.cwd() });
 }

@@ -837,7 +837,7 @@ export function createRegistry(): CommandRegistry {
     handler: knowledgeVizCommand as CommandHandler,
     toolDef: {
       name: "knowledge_viz",
-      description: "Write knowledge-graph.html (browser) and knowledge-graph.canvas (open in Obsidian). Same edges as the FTS index.",
+      description: "Write generated architecture notes and code notes into the vault. Same edges as the FTS index.",
       inputSchema: {
         type: "object" as const,
         properties: {
