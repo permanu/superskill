@@ -59,13 +59,13 @@ New package: need, license, audit. Pin. No install for a one-liner. Skill audits
 Enough to reconstruct authz failures. No secrets in logs. Metrics for the golden signals of this change.
 
 ### 15. Tests / evidence
-One check that fails if the new branch is wrong. No generated theater. UI: harness `qa viz` if HTML changed. Do not approve without a command result.
+One check that fails if the new branch is wrong. No generated theater. UI: regenerate notes with `graph viz` and check they render if the graph changed. Do not approve without a command result.
 
 ### 16. Operability / ship
 Feature flag, config, rollback, migrate. Who gets paged? Fail closed on authz.
 
 ### 17. UI / a11y (if UI)
-Keyboard, labels, contrast, XSS in the new surface. Canvas/HTML: nodes must be clickable (`data-qa`), not canvas-only.
+Keyboard, labels, contrast, XSS in the new surface.
 
 ### 18. HLD / LLD
 Name the owner module in this repo. New pattern with one implementation is a finding. No second framework “for later.”

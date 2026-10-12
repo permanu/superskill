@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Obsidian-native visualization: `graph viz` (shorthand `superskill viz`, MCP `knowledge_viz`) writes four Mermaid architecture notes to `projects/<slug>/architecture/` (`high-level-architecture`, `low-level-architecture`, `data-model-erd`, `dataflow`) and generated code notes to `projects/<slug>/code/<repo-relative path>.md` — frontmatter, symbol list, `[[wikilink]]` imports/imported-by, and the full source in a fenced code block; `--open` deep-links Obsidian to the project context.
+- Session notes emit `[[wikilinks]]` to the project context and to code notes for the files touched.
+- Knowledge index normalizes `[[...]]` related values and `.ts` wikilink targets.
+
+### Changed
+- Code notes are indexed as metadata + edges only — source text does not enter search. Code notes are regenerated on every run; hand-edited architecture notes are preserved.
+
+### Removed
+- The HTML visualization stack (`knowledge-graph.html`, `architecture-diagrams.html`, `knowledge-graph.canvas`, and all CDN/HTML output), the `qa` CLI command, the `qa_viz` MCP tool, and the Chrome/playwright QA harness.
+
 ## [0.13.0] - 2026-10-13
 
 ### Added

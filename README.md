@@ -187,7 +187,7 @@ Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS
 | `security/index` | Tiny always-on. Full `compliance` on audit / OWASP / security bugs |
 | `code/<lang>` | This repo's stack, or the task names a language |
 | `review/architect` | Review / diff / security fix — 18 axes |
-| `pipeline/plan` `tdd` `verify` `investigate` `qa` | Spec, TDD, evidence-before-done, debug, Chrome QA |
+| `pipeline/plan` `tdd` `verify` `investigate` `qa` | Spec, TDD, evidence-before-done, debug, markdown-output QA |
 | `devops/cloud` `devops/sre` | Deploy / SLO / incident — the cloud this repo already uses |
 | `watchdog/dig` `watchdog/fix` | Session review + environment optimization — dig for findings, fix what you approve |
 
@@ -535,14 +535,13 @@ Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent
 | Command | Purpose | Common flags |
 |---|---|---|
 | `graph rebuild` | Rebuild SQLite FTS5 + edges from markdown | |
-| `graph viz` | Write `knowledge-graph.html`, `knowledge-graph.canvas`, `architecture-diagrams.html` | `--open` launches them; shorthand `superskill viz` |
+| `graph viz` | Write Mermaid architecture notes and generated code notes under `projects/<slug>/` | `--open` opens the project in Obsidian; shorthand `superskill viz` |
 | `graph related <path>` | Backlinks and outgoing links | `--hops <n>` |
 | `graph cross-project <query>` | Project-jailed search; cross-project is denied | `-l, --limit` |
 | `graph node <id>` | Metadata + edges for one traversal node | `--json` |
 | `graph children <id>` | One-level lazy descent (vault/rules/skills/code) | `--limit <n>` |
 | `graph resolve <task>` | What would load: paths + byte/token estimates, no content | `--limit <n>` |
 | `graph open <id>` | Content for exactly one node | `--full` |
-| `qa viz` | Regenerate the graph HTML and click through it in system Chrome | |
 
 ### Skills
 
@@ -655,8 +654,7 @@ The MCP server exposes the tools below — the superset of the CLI surface. MCP 
 | `graph_related` | Related notes via the FTS/edges index, jailed to this project. |
 | `graph_cross_project` | Project-jailed search; cross-project is denied. |
 | `knowledge_rebuild` | Rebuild the project's FTS + edges index from markdown. |
-| `knowledge_viz` | Write `knowledge-graph.html` and `knowledge-graph.canvas`. |
-| `qa_viz` | Regenerate the graph HTML and drive system Chrome to verify it. |
+| `knowledge_viz` | Write Mermaid architecture notes and generated code notes for the project. |
 | `snapshot_repo_state` | Snapshot git state (branch, dirty files, last commit) into the vault. |
 | `env_facts` | Store/query stable environment facts (not secrets). |
 | `cred_refs` | Store pointers to where credentials are documented. |
@@ -749,17 +747,25 @@ Derived indexes and routing history, one project scope:
 
 Markdown is the source of truth; `projects/<slug>/.knowledge-index.sqlite` is a derived FTS5 index with an edges table (frontmatter `related` + `[[wikilinks]]`). It is rebuilt on write and by `graph rebuild`. `graph related <path>` reads backlinks/outgoing links from the index (`--hops` for traversal depth).
 
+### Viewing your memory
+
+`graph viz` writes plain Obsidian markdown notes:
+
 ```bash
-superskill graph rebuild -p my-project
-superskill viz --open -p my-project     # shorthand for `graph viz`; --open launches the pages
-superskill qa viz -p my-project
+superskill viz -p my-project             # shorthand for `graph viz`; writes the notes
+superskill viz --open -p my-project      # ... and opens the project in Obsidian
 ```
 
-`graph viz` scans the current repository and writes `projects/<slug>/knowledge-graph.html`, `knowledge-graph.canvas` for Obsidian (vault root = `VAULT_PATH`), and `architecture-diagrams.html`. The three primary views are **Explore · Architecture · Knowledge**. Architecture offers structure, dependencies, types, and call relationships through a view selector; Knowledge groups project notes, playbooks, and rules. Open directories, select a file to read its source snapshot, then explore declarations and their exact source spans. Breadcrumbs return to any parent. Search, type filters, zoom controls, and a searchable fallback support navigation.
+- **Architecture notes** — four Mermaid notes at `projects/<slug>/architecture/`: `high-level-architecture.md`, `low-level-architecture.md`, `data-model-erd.md`, `dataflow.md`.
+- **Code notes** — one note per source file at `projects/<slug>/code/<repo-relative path>.md`: frontmatter, a symbol list, `[[wikilinks]]` for imports and imported-by, and the full source in a fenced code block for syntax highlighting.
 
-Architecture and dependencies come from parsed directories and imports. Data types show extracted declarations, not an inferred database schema; call flow shows static relationships, not runtime execution order. Empty sections explain missing evidence. Generation works across supported project languages without model calls or project-specific diagrams. The local HTML embeds source snapshots (up to 1 MB per file); regenerate after source changes. Source snapshots and document bodies containing secret-like patterns are omitted with an explanation. Agent `graph children` responses remain metadata-only, while `graph open` retrieves bounded file or declaration content on demand.
+Code notes are regenerated on every run and indexed as metadata + edges only, so source text never enters search. Hand-edited architecture notes are preserved; code notes are overwritten with fresh output.
 
-Rules nests the whole rule library (`language → prefix → rule`), and Playbooks opens packs before individual playbooks. Generated notes carry a `<!-- superskill:generated -->` marker, so hand-edited copies are never overwritten (they're listed as `kept`). `qa viz` drives system Chrome via `playwright-core` (in-harness, not a plugin) to click nodes and read the panel — `playwright-core` is not bundled by default; install it in the project with `npm install playwright-core` when you want QA/viz. `npm run test:viz` checks source traversal, diagrams, keyboard navigation, mobile layout, and the offline fallback.
+**In Obsidian:** open the vault root (`VAULT_PATH`, default `~/Vaults/ai`), open the project note, and filter graph view with `path:projects/<slug>` to scope it to the project; backlinks and the local graph walk the `[[wikilinks]]`. `graph viz --open` deep-links Obsidian straight to the project context.
+
+**Without Obsidian:** the notes are plain markdown, and Mermaid renders in any renderer that supports it — Obsidian, GitHub, and VS Code among them.
+
+Session notes take part too: they carry `[[wikilinks]]` to the project context and to code notes for the files touched.
 
 ### Lazy traversal (agent access)
 
@@ -825,7 +831,6 @@ Details and installation snippets: `docs/harness.md`.
 | `VAULT_PATH` | `~/Vaults/ai` | Knowledge vault. Must resolve under `$HOME`. |
 | `MAX_INJECT_TOKENS` | `1500` | Max tokens for context injection (clamped 100–50000). |
 | `SESSION_TTL_HOURS` | `2` | Session heartbeat TTL (clamped 1–168). |
-| `CHROME_PATH` | macOS Chrome | Browser used by `qa viz`; Chromium/Brave paths are also probed. |
 | `SUPERSKILL_TELEMETRY` | unset | `1`/`0` override for local rule-selection telemetry (also `telemetry enable`). |
 | `SUPERSKILL_MAX_RESPONSE_BYTES` | `65536` | MCP response byte cap; oversized results are truncated with an explicit marker. |
 | `SUPERSKILL_PRETTY` | unset | `1` pretty-prints MCP JSON responses (compact by default). |

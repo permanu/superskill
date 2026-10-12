@@ -211,7 +211,7 @@ flowchart LR
 - **Level 0:** one process "SuperSkill", external entities = AI coding agent + user; no stores
   ([Wikipedia](https://en.wikipedia.org/wiki/Data-flow_diagram)).
 - **Level 1 processes:** P1 Rebuild index (init/index), P2 Activate (route + load), P3 Learn (close session/learn),
-  P4 Visualize (viz + canvas) — inside the 3–9 range ([Wikipedia](https://en.wikipedia.org/wiki/Data-flow_diagram)).
+  P4 Visualize (write Mermaid architecture notes + code notes as markdown) — inside the 3–9 range ([Wikipedia](https://en.wikipedia.org/wiki/Data-flow_diagram)).
 - **Stores:** D1 vault markdown (source of truth), D2 SQLite FTS5 + edges (derived index),
   D3 `.superskill/graph.json` (routing graph; 200–500 token target — [design spec](../superpowers/specs/2026-04-23-knowledge-graph-design.md)).
 - **Flow labels name the data:** "note markdown (path, type, title, body)", "FTS5 rows + edges",

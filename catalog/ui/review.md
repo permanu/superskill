@@ -29,4 +29,4 @@ Use for UI diffs and "does this look right" requests. Report findings as `path:l
 ## Verdict
 - Blockers: unusable keyboard path, unreadable contrast, broken layout at a real viewport, misleading copy.
 - Nits: spacing drift, inconsistent radius or shadow, hover-only affordance, copy tone.
-- If HTML or the graph changed, run the repo QA harness (e.g. `qa viz`) and attach what you saw.
+- If the graph changed, regenerate the notes with `graph viz` and confirm they render (Mermaid + code blocks).
