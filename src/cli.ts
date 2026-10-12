@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
+import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readCommand, listCommand } from "./commands/read.js";
 import { writeCommand } from "./commands/write.js";
@@ -59,6 +60,18 @@ import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
+
+function openExternal(target: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+  try {
+    const child = spawn(command, args, { stdio: "ignore", detached: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // best-effort: the printed path can always be opened by hand
+  }
+}
 
 export function createProgram(): Command {
   const program = new Command();
@@ -645,19 +658,25 @@ export function createProgram(): Command {
       }
     });
 
-  const runViz = async (opts: { project?: string }) => {
+  const runViz = async (opts: { project?: string; open?: boolean }) => {
     try {
       const { knowledgeVizCommand } = await import("./commands/knowledge.js");
       const ctx = await createScopedCtx();
       const result = await knowledgeVizCommand({ project: opts.project }, ctx);
       console.log(JSON.stringify(result, null, 2));
-      console.log(`\nGenerated notes in ${ctx.vaultPath}:`);
-      for (const note of result.notes) console.log(`  ${note}`);
-      console.log(
-        `\nCode notes: ${result.code_notes.written} written, ${result.code_notes.removed} removed, ${result.code_notes.total} total.`,
-      );
+      console.log(`\nArchitecture notes:\n  ${result.notes.join("\n  ")}`);
+      console.log(`Code notes: ${result.code_notes.total} (${result.code_notes.written} written, ${result.code_notes.removed} removed)`);
+      console.log(`Obsidian: vault root = ${ctx.vaultPath}, open projects/${result.project}/context.md`);
       if (result.kept && result.kept.length > 0) {
         console.log(`\nKept user-edited notes (not regenerated):\n  ${result.kept.join("\n  ")}`);
+      }
+      if (opts.open) {
+        openExternal(
+          "obsidian://open?vault=" +
+            encodeURIComponent(basename(ctx.vaultPath)) +
+            "&file=" +
+            encodeURIComponent("projects/" + result.project + "/context.md"),
+        );
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -668,35 +687,17 @@ export function createProgram(): Command {
 
   graphCmd
     .command("viz")
-    .description("Write generated architecture and code notes into the vault (Obsidian-native)")
+    .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
+    .option("--open", "Open the project's context.md in Obsidian")
     .action(runViz);
 
   program
     .command("viz")
-    .description("Shortcut for `graph viz`")
+    .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
+    .option("--open", "Open the project's context.md in Obsidian")
     .action(runViz);
-
-  program
-    .command("qa")
-    .description("In-harness browser QA")
-    .command("viz")
-    .description("Generate graph HTML and click through it in system Chrome")
-    .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
-      try {
-        const { qaVizCommand } = await import("./commands/qa.js");
-        const ctx = await createScopedCtx();
-        const result = await qaVizCommand({ project: opts.project }, ctx);
-        console.log(JSON.stringify(result, null, 2));
-        if (!result.qa.ok) process.exitCode = 1;
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`Error: ${msg}`);
-        process.exit(1);
-      }
-    });
 
   graphCmd
     .command("related <path>")
@@ -1942,7 +1943,7 @@ export function createProgram(): Command {
   program
     .command("doctor")
     .description(
-      "Health check: install vs running MCP servers, vault + mapping, project graph isolation, catalog, toolchains, QA browser, telemetry, clients"
+      "Health check: install vs running MCP servers, vault + mapping, project graph isolation, catalog, toolchains, telemetry, clients"
     )
     .option("--json", "machine-readable output")
     .option("--fast", "skip catalog validation and toolchain probes")

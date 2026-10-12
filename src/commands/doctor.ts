@@ -82,15 +82,6 @@ function packageVersion(): string {
   }
 }
 
-function playwrightCoreVersion(): string | null {
-  try {
-    const pkg = require("playwright-core/package.json") as { version?: string };
-    return typeof pkg.version === "string" ? pkg.version : "unknown";
-  } catch {
-    return null;
-  }
-}
-
 export function versionParity(root: string, packageVersion: string): { status: CheckStatus; detail: string } {
   const sources: Array<{ label: string; version: string }> = [
     { label: "package.json", version: packageVersion },
@@ -539,19 +530,6 @@ export async function doctorCommand(
         : check("toolchains", "Compile toolchains", "warn", `missing: ${missing.join(", ")}`, "install these toolchains to make `validate --strict` compile checks meaningful")
     );
   }
-
-  const playwrightVersion = playwrightCoreVersion();
-  checks.push(
-    playwrightVersion !== null
-      ? check("qa-browser", "QA browser", "ok", `playwright-core ${playwrightVersion} (Chrome QA/viz)`)
-      : check(
-          "qa-browser",
-          "QA browser",
-          "skip",
-          "playwright-core not installed — Chrome QA/viz disabled",
-          "install it with: npm install playwright-core",
-        ),
-  );
 
   const telemetryEnabled = await isTelemetryEnabled();
   const { events } = await readTelemetryEvents(telemetryPaths().events);
