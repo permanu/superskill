@@ -1,7 +1,7 @@
 {
   "name": "superskill",
-  "version": "0.11.2",
-  "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs \u2014 not a 90k-skill dump",
+  "version": "0.12.0",
+  "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, 18-axis review, in-harness Chrome QA. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",
   "bin": {
