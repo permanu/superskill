@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - The HTML visualization stack (`knowledge-graph.html`, `architecture-diagrams.html`, `knowledge-graph.canvas`, and all CDN/HTML output), the `qa` CLI command, the `qa_viz` MCP tool, and the Chrome/playwright QA harness.
 
+### Fixed
+- `graph viz --open` falls back to the first architecture note when the project has no `context.md`, and reports the vault path instead of failing silently when Obsidian cannot be launched.
+
 ## [0.13.0] - 2026-10-13
 
 ### Added

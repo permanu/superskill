@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command } from "commander";
-import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -50,6 +49,7 @@ import { watchdogCommand } from "./commands/watchdog.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
+import { openInObsidian, obsidianDeepLink } from "./lib/obsidian.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills, compactActivationResult, type ActivateArgs } from "./commands/skill/activate.js";
@@ -60,18 +60,6 @@ import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
-
-function openExternal(target: string): void {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
-  try {
-    const child = spawn(command, args, { stdio: "ignore", detached: true });
-    child.on("error", () => {});
-    child.unref();
-  } catch {
-    // best-effort: the printed path can always be opened by hand
-  }
-}
 
 export function createProgram(): Command {
   const program = new Command();
@@ -660,23 +648,25 @@ export function createProgram(): Command {
 
   const runViz = async (opts: { project?: string; open?: boolean }) => {
     try {
-      const { knowledgeVizCommand } = await import("./commands/knowledge.js");
+      const { knowledgeVizCommand, resolveVizOpenTarget } = await import("./commands/knowledge.js");
       const ctx = await createScopedCtx();
       const result = await knowledgeVizCommand({ project: opts.project }, ctx);
       console.log(JSON.stringify(result, null, 2));
       console.log(`\nArchitecture notes:\n  ${result.notes.join("\n  ")}`);
       console.log(`Code notes: ${result.code_notes.total} (${result.code_notes.written} written, ${result.code_notes.removed} removed)`);
-      console.log(`Obsidian: vault root = ${ctx.vaultPath}, open projects/${result.project}/context.md`);
+      const openTarget = await resolveVizOpenTarget(ctx.vaultFs, result.project, result.notes);
+      console.log(`Obsidian: vault root = ${ctx.vaultPath}`);
+      console.log(openTarget ? `  open ${openTarget}` : "  no project note yet; open the vault root");
       if (result.kept && result.kept.length > 0) {
         console.log(`\nKept user-edited notes (not regenerated):\n  ${result.kept.join("\n  ")}`);
       }
       if (opts.open) {
-        openExternal(
-          "obsidian://open?vault=" +
-            encodeURIComponent(basename(ctx.vaultPath)) +
-            "&file=" +
-            encodeURIComponent("projects/" + result.project + "/context.md"),
-        );
+        const launched = await openInObsidian(obsidianDeepLink(basename(ctx.vaultPath), openTarget));
+        if (!launched.ok) {
+          console.log(
+            `Could not open Obsidian automatically (${launched.reason ?? "unknown"}). Open the vault manually: ${ctx.vaultPath}`,
+          );
+        }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -689,14 +679,14 @@ export function createProgram(): Command {
     .command("viz")
     .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
-    .option("--open", "Open the project's context.md in Obsidian")
+    .option("--open", "Open the project in Obsidian (prints the path when Obsidian is unavailable)")
     .action(runViz);
 
   program
     .command("viz")
     .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
-    .option("--open", "Open the project's context.md in Obsidian")
+    .option("--open", "Open the project in Obsidian (prints the path when Obsidian is unavailable)")
     .action(runViz);
 
   graphCmd

@@ -761,7 +761,7 @@ superskill viz --open -p my-project      # ... and opens the project in Obsidian
 
 Code notes are regenerated on every run and indexed as metadata + edges only, so source text never enters search. Hand-edited architecture notes are preserved; code notes are overwritten with fresh output.
 
-**In Obsidian:** open the vault root (`VAULT_PATH`, default `~/Vaults/ai`), open the project note, and filter graph view with `path:projects/<slug>` to scope it to the project; backlinks and the local graph walk the `[[wikilinks]]`. `graph viz --open` deep-links Obsidian straight to the project context.
+**In Obsidian:** open the vault root (`VAULT_PATH`, default `~/Vaults/ai`), open the project note, and filter graph view with `path:projects/<slug>` to scope it to the project; backlinks and the local graph walk the `[[wikilinks]]`. `graph viz --open` deep-links Obsidian to the project context note (or to the architecture note when the project has no context yet); if Obsidian is not installed it prints the vault path instead of failing silently.
 
 **Without Obsidian:** the notes are plain markdown, and Mermaid renders in any renderer that supports it — Obsidian, GitHub, and VS Code among them.
 

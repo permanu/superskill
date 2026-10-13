@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandContext } from "../core/types.js";
-import { VaultError } from "../lib/vault-fs.js";
+import { VaultError, type VaultFS } from "../lib/vault-fs.js";
 import { rebuildProjectIndex } from "../lib/knowledge-index.js";
 import { writeKnowledgeGraphFiles, type KnowledgeVizResult } from "../lib/knowledge-viz.js";
 
 export type { KnowledgeVizResult };
+
+export async function resolveVizOpenTarget(
+  vaultFs: VaultFS,
+  project: string,
+  notes: readonly string[],
+): Promise<string | null> {
+  const context = `projects/${project}/context.md`;
+  if (await vaultFs.exists(context)) return context;
+  return notes[0] ?? null;
+}
 
 function slugOf(args: { project?: string }, ctx: CommandContext): string {
   const slug = args.project ?? ctx.projectSlug ?? undefined;
