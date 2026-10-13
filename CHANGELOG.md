@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `graph viz --scope-graph` (shorthand `superskill viz --scope-graph`) writes `path:projects/<slug>` into the vault's `.obsidian/graph.json` so Obsidian's graph view opens scoped to the project.
 
 ### Changed
+- Documentation restructured: the usage manual moved from the README into `docs/` guides with a docs index; the README is now a hub.
 - Code notes are indexed as metadata + edges only — source text does not enter search. Code notes are regenerated on every run; hand-edited architecture notes are preserved.
 - Mermaid diagrams render at natural size (`useMaxWidth: false`) — large diagrams scroll instead of shrinking.
 - `graph viz --open` lands on the project dashboard when there is no `context.md` (context → dashboard → architecture note).
