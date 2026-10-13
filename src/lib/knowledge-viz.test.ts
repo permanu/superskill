@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { codeNoteVaultPath } from "./code-notes.js";
 import { KnowledgeIndex } from "./knowledge-index.js";
 import { GENERATED_MARKER, writeKnowledgeGraphFiles } from "./knowledge-viz.js";
+import { BASE_GENERATED_MARKER } from "./obsidian-bases.js";
 
 const HLA = "projects/p/architecture/high-level-architecture.md";
 const LLA = "projects/p/architecture/low-level-architecture.md";
@@ -73,6 +74,19 @@ describe("writeKnowledgeGraphFiles", { timeout: 15_000 }, () => {
     expect(main).toContain("## Imports\n\n- [[projects/p/code/src/util.ts]]");
     expect(main).toContain("## Source\n\n```ts");
 
+    const dashboard = await readFile(join(vault, "projects", "p", "index.md"), "utf-8");
+    expect(dashboard).toContain("type: index");
+    expect(dashboard).toContain('project: "p"');
+    expect(dashboard).toContain("## Decisions (0)");
+    expect(dashboard).toContain("## Learnings (0)");
+    expect(dashboard).toContain("## Sessions (0)");
+    expect(dashboard).toContain("2 generated code notes");
+
+    const base = await readFile(join(vault, "projects", "p", "views.base"), "utf-8");
+    expect(base.startsWith(`${BASE_GENERATED_MARKER}\n`)).toBe(true);
+    expect(base).toContain('file.inFolder("projects/p/decisions")');
+    expect(base).toContain("limit: 100");
+
     const idx = KnowledgeIndex.openForProject(vault, "p");
     try {
       expect(idx.outgoing(HLA)).toEqual(expect.arrayContaining([LLA, ERD, FLOW]));
@@ -111,6 +125,79 @@ describe("writeKnowledgeGraphFiles", { timeout: 15_000 }, () => {
     expect(existsSync(join(vault, FLOW))).toBe(true);
   });
 
+  it("links architecture, vault records, and code notes from the dashboard", async () => {
+    const { vault, repo } = await fixture();
+    const records: Array<[dir: string, type: string, names: string[]]> = [
+      [
+        "decisions",
+        "decision",
+        Array.from({ length: 12 }, (_, i) => `${String(i + 1).padStart(3, "0")}-decision-${i + 1}`),
+      ],
+      ["learnings", "learning", ["001-learn"]],
+      ["sessions", "session", ["001-session"]],
+    ];
+    for (const [dir, type, names] of records) {
+      await mkdir(join(vault, "projects", "p", dir), { recursive: true });
+      for (const name of names) {
+        await writeFile(
+          join(vault, "projects", "p", dir, `${name}.md`),
+          `---\ntype: ${type}\n---\n\n# ${name}\n`,
+          "utf-8",
+        );
+      }
+    }
+
+    const result = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: repo });
+    expect(result.kept).toEqual([]);
+
+    const dashboard = await readFile(join(vault, "projects", "p", "index.md"), "utf-8");
+    expect(dashboard).toContain(GENERATED_MARKER);
+    expect(dashboard).toContain("\n# p\n");
+    for (const rel of ARCHITECTURE_NOTES) {
+      expect(dashboard).toContain(`- [[${rel.slice(0, -3)}]]`);
+    }
+    expect(dashboard).toContain("## Decisions (12)");
+    expect(dashboard).toContain("- [[projects/p/decisions/012-decision-12]]");
+    expect(dashboard).toContain("- [[projects/p/decisions/003-decision-3]]");
+    expect(dashboard).not.toContain("- [[projects/p/decisions/002-decision-2]]");
+    expect(dashboard).not.toContain("- [[projects/p/decisions/001-decision-1]]");
+    expect(dashboard).toContain("## Learnings (1)");
+    expect(dashboard).toContain("- [[projects/p/learnings/001-learn]]");
+    expect(dashboard).toContain("## Sessions (1)");
+    expect(dashboard).toContain("- [[projects/p/sessions/001-session]]");
+    expect(dashboard).toContain("2 generated code notes");
+
+    const idx = KnowledgeIndex.openForProject(vault, "p");
+    try {
+      expect(idx.outgoing("projects/p/index.md")).toEqual(
+        expect.arrayContaining([...ARCHITECTURE_NOTES, "projects/p/decisions/012-decision-12.md"]),
+      );
+      expect(idx.incoming(HLA)).toContain("projects/p/index.md");
+    } finally {
+      idx.close();
+    }
+  });
+
+  it("keeps user-edited dashboard and Bases views and regenerates marked ones", async () => {
+    const { vault, repo } = await fixture();
+    const dashboardPath = join(vault, "projects", "p", "index.md");
+    const basePath = join(vault, "projects", "p", "views.base");
+    await writeFile(dashboardPath, "# Hand-written dashboard\n", "utf-8");
+    await writeFile(basePath, 'filters:\n  and:\n    - file.inFolder("projects/p")\n', "utf-8");
+
+    const first = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: repo });
+    expect(first.kept).toEqual(["projects/p/index.md", "projects/p/views.base"]);
+    expect(await readFile(dashboardPath, "utf-8")).toBe("# Hand-written dashboard\n");
+    expect(await readFile(basePath, "utf-8")).toBe('filters:\n  and:\n    - file.inFolder("projects/p")\n');
+
+    await writeFile(dashboardPath, `---\ntype: index\n---\n\n${GENERATED_MARKER}\n\nstale dashboard\n`, "utf-8");
+    await writeFile(basePath, `${BASE_GENERATED_MARKER}\nfilters: stale\n`, "utf-8");
+    const second = await writeKnowledgeGraphFiles(vault, "p", { codeRoot: repo });
+    expect(second.kept).toEqual([]);
+    expect(await readFile(dashboardPath, "utf-8")).not.toContain("stale dashboard");
+    expect(await readFile(basePath, "utf-8")).not.toContain("filters: stale");
+  });
+
   it("removes generated code notes for deleted sources and preserves edited ones", async () => {
     const { vault, repo } = await fixture();
     await writeKnowledgeGraphFiles(vault, "p", { codeRoot: repo });
@@ -143,7 +230,7 @@ describe("writeKnowledgeGraphFiles", { timeout: 15_000 }, () => {
     expect(result.project).toBe("p");
   });
 
-  it.each([HLA, LLA, ERD, FLOW, codeNoteVaultPath("p", "src/main.ts")])(
+  it.each([HLA, LLA, ERD, FLOW, "projects/p/index.md", "projects/p/views.base", codeNoteVaultPath("p", "src/main.ts")])(
     "rejects output symlinks into sibling projects: %s",
     async (output) => {
       const { vault, repo } = await fixture();
