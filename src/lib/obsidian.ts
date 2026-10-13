@@ -2,10 +2,16 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface ObsidianLaunch {
+  ok: boolean;
+  reason?: string;
+}
+
+export interface GraphScopeResult {
   ok: boolean;
   reason?: string;
 }
@@ -56,4 +62,36 @@ export async function openInObsidian(url: string): Promise<ObsidianLaunch> {
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
   const ok = await launchUrl(command, args);
   return ok ? { ok: true } : { ok: false, reason: `could not launch ${command}` };
+}
+
+export async function scopeGraphFilter(vaultRoot: string, project: string): Promise<GraphScopeResult> {
+  const graphPath = join(vaultRoot, ".obsidian", "graph.json");
+  if (!existsSync(graphPath)) {
+    return { ok: false, reason: "vault has not been opened in Obsidian yet (no .obsidian/graph.json)" };
+  }
+  let raw: string;
+  try {
+    raw = await readFile(graphPath, "utf8");
+  } catch (e: unknown) {
+    console.error("[obsidian] could not read .obsidian/graph.json:", e);
+    return { ok: false, reason: "could not read .obsidian/graph.json" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: "graph.json is not valid JSON; left unchanged" };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "graph.json is not a JSON object; left unchanged" };
+  }
+  const graph = parsed as Record<string, unknown>;
+  graph.search = `path:projects/${project}`;
+  try {
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+  } catch (e: unknown) {
+    console.error("[obsidian] could not write .obsidian/graph.json:", e);
+    return { ok: false, reason: "could not write .obsidian/graph.json" };
+  }
+  return { ok: true };
 }

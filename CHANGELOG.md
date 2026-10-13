@@ -11,15 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Obsidian-native visualization: `graph viz` (shorthand `superskill viz`, MCP `knowledge_viz`) writes four Mermaid architecture notes to `projects/<slug>/architecture/` (`high-level-architecture`, `low-level-architecture`, `data-model-erd`, `dataflow`) and generated code notes to `projects/<slug>/code/<repo-relative path>.md` — frontmatter, symbol list, `[[wikilink]]` imports/imported-by, and the full source in a fenced code block; `--open` deep-links Obsidian to the project context.
 - Session notes emit `[[wikilinks]]` to the project context and to code notes for the files touched.
 - Knowledge index normalizes `[[...]]` related values and `.ts` wikilink targets.
+- Project dashboard note: `graph viz` writes `projects/<slug>/index.md` with hub links, scoped search/graph hints, the latest decisions/learnings/sessions, and a pointer to the code notes.
+- Bases views file: `graph viz` writes `projects/<slug>/views.base` with live table views (Decisions, Learnings, Sessions, Tasks, All notes) scoped with `file.inFolder(...)` — no global Obsidian config is touched, and deleting the marker line keeps manual edits.
+- `graph viz --scope-graph` (shorthand `superskill viz --scope-graph`) writes `path:projects/<slug>` into the vault's `.obsidian/graph.json` so Obsidian's graph view opens scoped to the project.
 
 ### Changed
 - Code notes are indexed as metadata + edges only — source text does not enter search. Code notes are regenerated on every run; hand-edited architecture notes are preserved.
+- Mermaid diagrams render at natural size (`useMaxWidth: false`) — large diagrams scroll instead of shrinking.
+- `graph viz --open` lands on the project dashboard when there is no `context.md` (context → dashboard → architecture note).
 
 ### Removed
 - The HTML visualization stack (`knowledge-graph.html`, `architecture-diagrams.html`, `knowledge-graph.canvas`, and all CDN/HTML output), the `qa` CLI command, the `qa_viz` MCP tool, and the Chrome/playwright QA harness.
 
 ### Fixed
-- `graph viz --open` falls back to the first architecture note when the project has no `context.md`, and reports the vault path instead of failing silently when Obsidian cannot be launched.
+- `graph viz --open` reports the vault path instead of failing silently when Obsidian cannot be launched.
 
 ## [0.13.0] - 2026-10-13
 
