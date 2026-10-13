@@ -12,7 +12,7 @@ const dirId = (path: string): string => (path === "." ? "root" : `dir:${path}/`)
 const symbolId = (node: CodeNode): string => `symbol:${node.id}`;
 
 const MERMAID_INIT =
-  '%%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 60}}}%%';
+  '%%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 60, "useMaxWidth": false}}}%%';
 
 interface ArchNode {
   id: string;
