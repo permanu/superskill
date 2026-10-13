@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-10-13
 
 ### Added
 - Obsidian-native visualization: `graph viz` (shorthand `superskill viz`, MCP `knowledge_viz`) writes four Mermaid architecture notes to `projects/<slug>/architecture/` (`high-level-architecture`, `low-level-architecture`, `data-model-erd`, `dataflow`) and generated code notes to `projects/<slug>/code/<repo-relative path>.md` — frontmatter, symbol list, `[[wikilink]]` imports/imported-by, and the full source in a fenced code block; `--open` deep-links Obsidian to the project context.
