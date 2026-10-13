@@ -14,6 +14,8 @@ export async function resolveVizOpenTarget(
 ): Promise<string | null> {
   const context = `projects/${project}/context.md`;
   if (await vaultFs.exists(context)) return context;
+  const dashboard = `projects/${project}/index.md`;
+  if (await vaultFs.exists(dashboard)) return dashboard;
   return notes[0] ?? null;
 }
 

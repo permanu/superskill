@@ -34,12 +34,21 @@ describe("resolveVizOpenTarget", () => {
   it("prefers the project context note when it exists", async () => {
     await mkdir(join(vaultRoot, "projects", "p"), { recursive: true });
     await writeFile(join(vaultRoot, "projects", "p", "context.md"), "# Context\n");
+    await writeFile(join(vaultRoot, "projects", "p", "index.md"), "# Dashboard\n");
     await expect(
       resolveVizOpenTarget(vaultFs, "p", ["projects/p/architecture/high-level-architecture.md"]),
     ).resolves.toBe("projects/p/context.md");
   });
 
-  it("falls back to the first generated note when context.md is missing", async () => {
+  it("prefers the generated dashboard when context.md is missing", async () => {
+    await mkdir(join(vaultRoot, "projects", "p"), { recursive: true });
+    await writeFile(join(vaultRoot, "projects", "p", "index.md"), "# Dashboard\n");
+    await expect(
+      resolveVizOpenTarget(vaultFs, "p", ["projects/p/architecture/high-level-architecture.md"]),
+    ).resolves.toBe("projects/p/index.md");
+  });
+
+  it("falls back to the first generated note when context.md and index.md are missing", async () => {
     await expect(
       resolveVizOpenTarget(vaultFs, "p", ["projects/p/architecture/high-level-architecture.md"]),
     ).resolves.toBe("projects/p/architecture/high-level-architecture.md");

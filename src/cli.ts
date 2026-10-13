@@ -49,7 +49,7 @@ import { watchdogCommand } from "./commands/watchdog.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
-import { openInObsidian, obsidianDeepLink } from "./lib/obsidian.js";
+import { openInObsidian, obsidianDeepLink, scopeGraphFilter } from "./lib/obsidian.js";
 import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills, compactActivationResult, type ActivateArgs } from "./commands/skill/activate.js";
@@ -646,7 +646,7 @@ export function createProgram(): Command {
       }
     });
 
-  const runViz = async (opts: { project?: string; open?: boolean }) => {
+  const runViz = async (opts: { project?: string; open?: boolean; scopeGraph?: boolean }) => {
     try {
       const { knowledgeVizCommand, resolveVizOpenTarget } = await import("./commands/knowledge.js");
       const ctx = await createScopedCtx();
@@ -654,6 +654,14 @@ export function createProgram(): Command {
       console.log(JSON.stringify(result, null, 2));
       console.log(`\nArchitecture notes:\n  ${result.notes.join("\n  ")}`);
       console.log(`Code notes: ${result.code_notes.total} (${result.code_notes.written} written, ${result.code_notes.removed} removed)`);
+      if (opts.scopeGraph) {
+        const scoped = await scopeGraphFilter(ctx.vaultPath, result.project);
+        console.log(
+          scoped.ok
+            ? `Obsidian graph scoped to path:projects/${result.project}`
+            : `Graph filter not set: ${scoped.reason}`,
+        );
+      }
       const openTarget = await resolveVizOpenTarget(ctx.vaultFs, result.project, result.notes);
       console.log(`Obsidian: vault root = ${ctx.vaultPath}`);
       console.log(openTarget ? `  open ${openTarget}` : "  no project note yet; open the vault root");
@@ -680,6 +688,7 @@ export function createProgram(): Command {
     .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
     .option("--open", "Open the project in Obsidian (prints the path when Obsidian is unavailable)")
+    .option("--scope-graph", "Scope Obsidian's graph view filter to this project (writes .obsidian/graph.json)")
     .action(runViz);
 
   program
@@ -687,6 +696,7 @@ export function createProgram(): Command {
     .description("Write architecture notes and code notes (markdown, Obsidian-native)")
     .option("-p, --project <slug>", "Project slug")
     .option("--open", "Open the project in Obsidian (prints the path when Obsidian is unavailable)")
+    .option("--scope-graph", "Scope Obsidian's graph view filter to this project (writes .obsidian/graph.json)")
     .action(runViz);
 
   graphCmd
