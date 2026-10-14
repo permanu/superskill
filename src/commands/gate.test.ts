@@ -7,6 +7,8 @@ import { createTestContext } from "../test-helpers.js";
 import { createRegistry } from "../core/registry.js";
 import type { CommandContext } from "../core/types.js";
 import type { VaultFS } from "../lib/vault-fs.js";
+import { parseFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
+import { hashSpec, parseSpec, type AcceptanceInput } from "../lib/gates/spec.js";
 
 async function createFrozenSpec(ctx: CommandContext): Promise<string> {
   const created = await specCommand(
@@ -31,16 +33,21 @@ async function createFrozenSpec(ctx: CommandContext): Promise<string> {
   return created.path!;
 }
 
-async function createTicket(ctx: CommandContext, requiresReview = false): Promise<void> {
-  await ticketsCommand(
+async function createTicket(ctx: CommandContext, requiresReview = false, acceptance: AcceptanceInput[] = [{ text: "tests pass", command: "npm test" }]): Promise<string> {
+  const created = await ticketsCommand(
     {
       action: "create",
       spec: "001",
-      tickets: [{ title: "Implement", acceptance: [{ text: "tests pass", command: "npm test" }], requiresReview }],
+      tickets: [{ title: "Implement", acceptance, requiresReview }],
       project: "test-project",
     },
     ctx,
   );
+  return created.created![0].path;
+}
+
+async function recordEvidence(ctx: CommandContext, command: string, exit = 0, commit = "c1"): Promise<void> {
+  await evidenceCommand({ action: "add", ticket: "ticket-001", command, exit, commit, project: "test-project" }, ctx);
 }
 
 describe("classifyGateTarget", () => {
@@ -138,6 +145,166 @@ describe("gateCommand", () => {
       expect(result.missing).toEqual([]);
     });
 
+    it.each(["echo verified", "npm test -- unrelated", "npm test && npm run lint"])("does not let unrelated successful evidence satisfy required commands: %s", async (command) => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, false, [
+        { text: "tests pass", command: "npm test" },
+        { text: "lint passes", command: "npm run lint" },
+      ]);
+      await recordEvidence(ctx, command);
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toContain('acceptance A1: no evidence for command "npm test"');
+      expect(result.missing).toContain('acceptance A2: no evidence for command "npm run lint"');
+    });
+
+    it("requires evidence for every explicit ticket command, not just one or the latest command", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, false, [
+        { text: "tests pass", command: "npm test" },
+        { text: "lint passes", command: "npm run lint" },
+      ]);
+      await recordEvidence(ctx, "npm test");
+      const incomplete = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(incomplete.pass).toBe(false);
+      expect(incomplete.missing).toEqual(['acceptance A2: no evidence for command "npm run lint"']);
+
+      await recordEvidence(ctx, "npm run lint");
+      await recordEvidence(ctx, "echo additional check");
+      const complete = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(complete.pass).toBe(true);
+      expect(complete.missing).toEqual([]);
+    });
+
+    it("checks each command's commit even when the latest unrelated evidence is at HEAD", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx);
+      await recordEvidence(ctx, "npm test", 0, "old-commit");
+      await recordEvidence(ctx, "echo verified");
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toContain('acceptance A1: evidence for "npm test" is stale: at old-commit, HEAD is c1');
+    });
+
+    it("does not let an older command success mask a newer failure followed by an unrelated success", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx);
+      await recordEvidence(ctx, "npm test");
+      await recordEvidence(ctx, "npm test", 1);
+      await recordEvidence(ctx, "echo verified");
+
+      const failed = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(failed.pass).toBe(false);
+      expect(failed.missing).toContain('acceptance A1: latest evidence for "npm test" exit 1 (expected 0)');
+
+      await recordEvidence(ctx, "npm test");
+      const recovered = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(recovered.pass).toBe(true);
+    });
+
+    it("keeps the latest overall failure blocking even when all required commands previously passed", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx);
+      await recordEvidence(ctx, "npm test");
+      await recordEvidence(ctx, "additional check", 1);
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toEqual(["latest evidence exit 1 (expected 0)"]);
+    });
+
+    it("allows one successful command to support multiple criteria that explicitly name that same command", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, false, [
+        { text: "unit tests pass", command: "npm test" },
+        { text: "integration tests pass", command: " npm test " },
+      ]);
+      await recordEvidence(ctx, " npm test ");
+      expect((await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx)).pass).toBe(true);
+    });
+
+    it("preserves mixed command and free-text manual criteria without treating manual reasons as commands", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, false, [
+        { text: "tests pass", command: "npm test" },
+        { text: "copy matches the design", manual: "Human inspection of the signed-off design" },
+      ]);
+      await recordEvidence(ctx, "npm test");
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(true);
+      expect(result.missing).toEqual([]);
+    });
+
+    it("preserves manual-only review workflows without inventing an executable acceptance command", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, true, [{ text: "copy reviewed", manual: "Design review with human eyes" }]);
+      await recordEvidence(ctx, "review:approved");
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(true);
+      expect(result.missing).toEqual([]);
+    });
+
+    it("cannot treat command and review evidence as current when HEAD cannot be determined", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, true);
+      await recordEvidence(ctx, "npm test");
+      await recordEvidence(ctx, "review:approved");
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", cwd: ctx.vaultPath }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.details.head).toBeNull();
+      expect(result.missing).toContain("could not determine HEAD commit for evidence check");
+      expect(result.missing).toContain("requires review: no passing review evidence at HEAD");
+    });
+
+    it.each([undefined, "", " ", null])("cannot pass without a recorded spec_hash despite valid evidence: %j", async (hash) => {
+      await createFrozenSpec(ctx);
+      const path = await createTicket(ctx);
+      await recordEvidence(ctx, "npm test");
+      await vaultFs.update(path, (current) => {
+        const { data, content } = parseFrontmatter(current);
+        if (hash === undefined) delete data.spec_hash;
+        else data.spec_hash = hash;
+        return serializeFrontmatter(data, content);
+      });
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toEqual(["ticket has no spec_hash"]);
+    });
+
+    it("cannot pass with a changed ticket spec_hash despite valid evidence", async () => {
+      await createFrozenSpec(ctx);
+      const path = await createTicket(ctx);
+      await recordEvidence(ctx, "npm test");
+      await vaultFs.update(path, (current) => {
+        const { data, content } = parseFrontmatter(current);
+        return serializeFrontmatter({ ...data, spec_hash: "0".repeat(64) }, content);
+      });
+
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toEqual(["spec changed since ticket creation (spec_hash mismatch)"]);
+    });
+
+    it("rejects changed spec content even when its own frozen hash was updated to match", async () => {
+      const specPath = await createFrozenSpec(ctx);
+      await createTicket(ctx);
+      await recordEvidence(ctx, "npm test");
+      await vaultFs.update(specPath, (current) => {
+        const { data, content } = parseFrontmatter(current);
+        const body = content.replace("Ship it", "Revised goal");
+        return serializeFrontmatter({ ...data, hash: hashSpec(parseSpec(body)) }, body);
+      });
+
+      expect((await gateCommand({ target: "001", project: "test-project" }, ctx)).pass).toBe(true);
+      const result = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(result.pass).toBe(false);
+      expect(result.missing).toEqual(["spec changed since ticket creation (spec_hash mismatch)"]);
+    });
+
     it("fails when evidence is stale", async () => {
       await createFrozenSpec(ctx);
       await createTicket(ctx);
@@ -182,6 +349,22 @@ describe("gateCommand", () => {
       );
       const withReview = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
       expect(withReview.pass).toBe(true);
+    });
+
+    it("does not reuse an older successful review after a newer failed review", async () => {
+      await createFrozenSpec(ctx);
+      await createTicket(ctx, true);
+      await recordEvidence(ctx, "npm test");
+      await recordEvidence(ctx, "review:approved");
+      await recordEvidence(ctx, "review:changes-requested", 1);
+      await recordEvidence(ctx, "npm test");
+
+      const failed = await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx);
+      expect(failed.pass).toBe(false);
+      expect(failed.missing).toEqual(["requires review: no passing review evidence at HEAD"]);
+
+      await recordEvidence(ctx, "review approved");
+      expect((await gateCommand({ target: "ticket-001", project: "test-project", head: "c1" }, ctx)).pass).toBe(true);
     });
 
     it("fails when the linked spec was modified", async () => {

@@ -3,8 +3,9 @@ import { existsSync } from "fs";
 import { dirname, join } from "path";
 import type { DetectedClient } from "./types.js";
 import { readJsonConfig, removeMcpEntry, updateJsonConfig } from "./json-config.js";
-import { isManagedLauncher } from "./launcher.js";
+import { isManagedLauncher, isOurTool } from "./launcher.js";
 import { removeMarkdownInstruction } from "./instructions.js";
+import { assertSafeSetupPath } from "./file-safety.js";
 
 export interface LegacySetupResult {
   removed: string[];
@@ -42,6 +43,8 @@ export function removeLegacySetup(detected: DetectedClient): LegacySetupResult {
           return removed ? cleaned : null;
         });
         if (written) result.removed.push("legacy superskill entry");
+      } else if (isOurTool(entry)) {
+        result.preserved.push("legacy superskill entry (pinned or customized launcher)");
       } else {
         result.preserved.push("legacy superskill entry (custom command)");
       }
@@ -49,10 +52,14 @@ export function removeLegacySetup(detected: DetectedClient): LegacySetupResult {
   }
 
   if (config.slug === "windsurf" && instructionPath) {
-    removeMarkdownInstruction(join(dirname(instructionPath), "../rules/superskill.md"));
+    const path = join(dirname(instructionPath), "../rules/superskill.md");
+    assertSafeSetupPath(path);
+    removeMarkdownInstruction(path);
   }
   if (config.slug === "droid" && instructionPath) {
-    removeMarkdownInstruction(join(dirname(instructionPath), "CLAUDE.md"));
+    const path = join(dirname(instructionPath), "CLAUDE.md");
+    assertSafeSetupPath(path);
+    removeMarkdownInstruction(path);
   }
 
   return result;

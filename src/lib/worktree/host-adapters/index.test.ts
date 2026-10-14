@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, chmod, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,6 +19,9 @@ import {
   uninstallAdapters,
 } from "./index.js";
 import type { AdapterContext } from "./types.js";
+import { worktreeEnvCommand } from "../../../commands/worktree/env.js";
+import { createCommandContext } from "../../../test-helpers.js";
+import { VaultFS } from "../../vault-fs.js";
 
 const CLI = "/usr/local/bin/superskill-cli";
 const CLAUDE_COMMAND = `${CLI} worktree bootstrap --source session --claude-env`;
@@ -288,7 +291,8 @@ describe("worktree host adapters", () => {
       expect(content).toContain('"shell.env": async (_input, output) => {');
       expect(content).toContain('process.env.SUPERSKILL_CLI ?? "superskill-cli"');
       expect(content).toContain('execFile(cli, ["worktree", "env", "--json"]');
-      expect(content).toContain("Object.assign(env, JSON.parse(stdout))");
+      expect(content).toContain("JSON.parse(stdout)?.json");
+      expect(content).toContain("timeout: ENV_TIMEOUT_MS");
     });
 
     it("defines a default export that satisfies the OpenCode V2 plugin contract", async () => {
@@ -303,7 +307,7 @@ describe("worktree host adapters", () => {
       expect(typeof mod.default.setup).toBe("function");
       expect(typeof mod.default.server).toBe("function");
 
-      type ShellEvent = { env?: Record<string, string> };
+      type ShellEvent = { cwd?: string; env?: Record<string, string> };
       let registered: { name: string; fn: (event: ShellEvent) => Promise<void> } | undefined;
       const stubCtx = {
         shell: {
@@ -316,14 +320,33 @@ describe("worktree host adapters", () => {
       expect(registered?.name).toBe("create.before");
 
       const fakeCli = join(repo, "fake-superskill-cli.sh");
-      await writeFile(fakeCli, '#!/bin/sh\necho \'{"SUPERSKILL_TEST_FLAG":"1"}\'\n');
+      await writeFile(join(repo, "package.json"), '{"name":"plugin-fixture"}\n');
+      const cliResult = await worktreeEnvCommand({ json: true }, createCommandContext(new VaultFS(join(base, "vault")), { workspacePath: repo }));
+      expect(cliResult.json).toHaveProperty("npm_config_cache");
+      await writeFile(fakeCli, `#!${process.execPath}\nconst result = ${JSON.stringify(cliResult)};\nresult.json.SUPERSKILL_TEST_FLAG = "1";\nresult.json.CWD = process.cwd();\nresult.json.ARGV = JSON.stringify(process.argv.slice(2));\nresult.json.INVALID = 42;\nresult.json["invalid-name"] = "bad";\nresult.json.NUL = "\\0";\nprocess.stdout.write(JSON.stringify(result));\n`);
       await chmod(fakeCli, 0o755);
       const previousCli = process.env.SUPERSKILL_CLI;
       try {
         process.env.SUPERSKILL_CLI = fakeCli;
-        const event: ShellEvent = {};
+        const directory = join(repo, "nested");
+        await mkdir(directory);
+        const event: ShellEvent = { cwd: directory, env: { USER_FLAG: "keep" } };
         await registered?.fn(event);
         expect(event.env?.SUPERSKILL_TEST_FLAG).toBe("1");
+        expect(event.env?.npm_config_cache).toBe(cliResult.json.npm_config_cache);
+        expect(event.env?.CWD).toBe(await realpath(directory));
+        expect(JSON.parse(event.env!.ARGV)).toEqual(["worktree", "env", "--json"]);
+        expect(event.env?.USER_FLAG).toBe("keep");
+        expect(event.env).not.toHaveProperty("json");
+        expect(event.env).not.toHaveProperty("worktreeRoot");
+        expect(event.env).not.toHaveProperty("INVALID");
+        expect(event.env).not.toHaveProperty("invalid-name");
+        expect(event.env).not.toHaveProperty("NUL");
+        const server = await (mod.default.server as () => Promise<Record<string, (input: unknown, output: ShellEvent) => Promise<void>>>)();
+        const output: ShellEvent = { env: { USER_FLAG: "keep" } };
+        await server["shell.env"]({ cwd: directory }, output);
+        expect(output.env?.CWD).toBe(await realpath(directory));
+        expect(output.env?.npm_config_cache).toBe(cliResult.json.npm_config_cache);
 
         process.env.SUPERSKILL_CLI = join(repo, "missing-superskill-cli");
         const failing: ShellEvent = {};
@@ -334,6 +357,28 @@ describe("worktree host adapters", () => {
         else process.env.SUPERSKILL_CLI = previousCli;
       }
     });
+
+    it("bounds a hung environment CLI without changing the existing shell environment", async () => {
+      await opencodeAdapter.install(ctxFor(repo));
+      const modulePath = join(repo, ".opencode/plugins/timeout.mjs");
+      await writeFile(modulePath, await readFile(opencodePath(repo), "utf8"));
+      const mod = await import(pathToFileURL(modulePath).href);
+      const hooks = await mod.default.server();
+      const fakeCli = join(repo, "hung-cli");
+      await writeFile(fakeCli, `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+      const previousCli = process.env.SUPERSKILL_CLI;
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        process.env.SUPERSKILL_CLI = fakeCli;
+        const output = { env: { USER_FLAG: "keep" } };
+        await hooks["shell.env"]({ cwd: repo }, output);
+        expect(output.env).toEqual({ USER_FLAG: "keep" });
+        expect(console.error).toHaveBeenCalled();
+      } finally {
+        if (previousCli === undefined) delete process.env.SUPERSKILL_CLI;
+        else process.env.SUPERSKILL_CLI = previousCli;
+      }
+    }, 12000);
 
     it("is idempotent", async () => {
       await opencodeAdapter.install(ctxFor(repo));

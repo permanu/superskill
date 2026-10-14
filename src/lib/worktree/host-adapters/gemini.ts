@@ -2,13 +2,13 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { backupOnce, isSuperskillBootstrapCommand, readJsonSafe, writeJsonAtomic } from "./helpers.js";
+import { isSuperskillBootstrapCommand, quoteCommandPath, readHookConfig, writeJsonAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "gemini";
 
 function bootstrapCommand(ctx: AdapterContext): string {
-  return `${ctx.superskillCli ?? "superskill-cli"} worktree bootstrap --source session`;
+  return `${quoteCommandPath(ctx.superskillCli ?? "superskill-cli")} worktree bootstrap --source session`;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -87,21 +87,22 @@ function result(
 
 async function apply(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, ".gemini", "settings.json");
-  const raw = await readJsonSafe(filePath);
-  const existing = asRecord(raw) ?? {};
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "SessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const existing = loaded.value;
   const next = withBootstrapHook(existing, bootstrapCommand(ctx));
   const changed = !sameJson(existing, next);
   if (changed && !dryRun) {
-    if (raw !== null) await backupOnce(filePath);
-    await writeJsonAtomic(filePath, next);
+    await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
   }
   return result(changed, dryRun, filePath, []);
 }
 
 async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, ".gemini", "settings.json");
-  const raw = await readJsonSafe(filePath);
-  const root = asRecord(raw);
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "SessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const root = loaded.value;
   const hooks = root ? asRecord(root.hooks) : null;
   const existingStart = hooks ? hooks.SessionStart : null;
   if (!root || !hooks || !Array.isArray(existingStart)) {
@@ -111,8 +112,7 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
   if (!removed) return result(false, dryRun, filePath, []);
   const next = { ...root, hooks: { ...hooks, SessionStart: entries } };
   if (!dryRun) {
-    await backupOnce(filePath);
-    await writeJsonAtomic(filePath, next);
+    await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
   }
   return result(true, dryRun, filePath, []);
 }
@@ -120,9 +120,9 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
 export const geminiAdapter: HostAdapter = {
   id: ADAPTER_ID,
   displayName: "Gemini CLI",
-  async detect(): Promise<boolean> {
+  async detect(ctx): Promise<boolean> {
     if (await pathExists(join(homedir(), ".gemini"))) return true;
-    return pathExists(join(process.cwd(), ".gemini"));
+    return pathExists(join(ctx?.repoRoot ?? process.cwd(), ".gemini"));
   },
   plan: (ctx) => apply(ctx, true),
   install: (ctx) => apply(ctx, false),

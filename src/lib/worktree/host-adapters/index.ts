@@ -37,12 +37,12 @@ export function adapterById(id: string): HostAdapter | undefined {
   return ALL_ADAPTERS.find((adapter) => adapter.id === id);
 }
 
-export async function detectAdapters(): Promise<HostAdapter[]> {
+export async function detectAdapters(ctx?: AdapterContext): Promise<HostAdapter[]> {
   const candidates = ALL_ADAPTERS.filter((adapter) => adapter.id !== "generic");
   const outcomes = await Promise.all(
     candidates.map(async (adapter) => {
       try {
-        return (await adapter.detect()) ? adapter : null;
+        return (await adapter.detect(ctx)) ? adapter : null;
       } catch (err) {
         console.error(`${LOG_PREFIX} detect failed for ${adapter.id}: ${String(err)}`);
         return null;
@@ -67,7 +67,7 @@ async function runAdapters(
 ): Promise<AdapterActionResult[]> {
   const targets: Array<HostAdapter | string> = [];
   if (ids === undefined) {
-    targets.push(...(await detectAdapters()));
+    targets.push(...(await detectAdapters(ctx)));
   } else {
     const seen = new Set<string>();
     for (const id of ids) {

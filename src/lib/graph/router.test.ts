@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { Graph } from "./schema.js";
-import { matchTask, getPhaseForTask, rankSkills, alwaysOnSkillIds, packsToLoad } from "./router.js";
+import { matchTask, getPhaseForTask, rankSkills, alwaysOnSkillIds, packsToLoad, routingStack } from "./router.js";
+import { catalogFile, loadCatalog } from "../catalog.js";
 
 function makeProjectNode(stack: string[] = ["ts", "react"]) {
   return {
@@ -42,7 +44,67 @@ function makeGraph(skills: Array<{ id: string; w: number }>, edges: Array<{ to: 
   };
 }
 
+async function currentCatalogGraph(): Promise<Graph> {
+  const catalog = await loadCatalog();
+  return {
+    nodes: [
+      makeProjectNode(["typescript"]),
+      ...catalog.map(skill => ({
+        ...makeSkillNode(skill.id, 0.5),
+        source: "catalog" as const,
+        pack: skill.pack,
+        langs: skill.langs,
+        triggers: skill.triggers,
+        always: skill.always,
+      })),
+    ],
+    edges: [],
+  };
+}
+
 describe("matchTask", () => {
+  it("tokenizes multiword and punctuated triggers like tasks and supports Unicode", () => {
+    const graph: Graph = {
+      nodes: [
+        { ...makeSkillNode("native/english", 0.5), triggers: ["memory leak", "retry-queue"] },
+        { ...makeSkillNode("native/unicode", 0.5), triggers: ["résumé", "数据库"] },
+      ],
+      edges: [],
+    };
+    expect(matchTask("investigate memory-leak", graph)).toContain("native/english");
+    expect(matchTask("retry/queue", graph)).toContain("native/english");
+    expect(matchTask("fix RE\u0301SUME\u0301", graph)).toContain("native/unicode");
+    expect(matchTask("优化 数据库", graph)).toContain("native/unicode");
+  });
+
+  it("keeps stack defaults for empty and stopword-only prompts", () => {
+    const graph = makeGraph([{ id: "native/typescript", w: 0.5 }], [], ["ts"]);
+    expect(matchTask("", graph)).toEqual(["native/typescript"]);
+    expect(matchTask("the is a", graph)).toEqual(["native/typescript"]);
+  });
+
+  it("handles JS aliases consistently with file routing", () => {
+    const graph: Graph = { nodes: [{ ...makeSkillNode("code/typescript", 0.5), pack: "code", langs: ["typescript"], triggers: ["typescript"] }], edges: [] };
+    for (const task of ["js", "javascript", "typescript", "ts"]) {
+      expect(matchTask(task, graph, { phase: "implement" })).toEqual(["code/typescript"]);
+    }
+    expect(routingStack(["js"])).toEqual(routingStack([], ["file.js"]));
+  });
+
+  it("does not keep a stale trigger index after in-place edits", () => {
+    const skill = { ...makeSkillNode("native/test", 0.5), triggers: ["first"] };
+    const graph: Graph = { nodes: [skill], edges: [] };
+    expect(matchTask("first", graph)).toEqual([skill.id]);
+    skill.triggers[0] = "second";
+    expect(matchTask("first", graph)).toEqual([]);
+    expect(matchTask("second", graph)).toEqual([skill.id]);
+  });
+
+  it("ranks non-finite weights with safe finite defaults", () => {
+    const graph = makeGraph([{ id: "native/react-bad", w: NaN }, { id: "native/react-good", w: 0.9 }], [{ to: "native/react-bad", w: Infinity }, { to: "native/react-good", w: 0.9 }]);
+    expect(matchTask("react", graph)[0]).toBe("native/react-good");
+    expect(rankSkills(["native/react-bad", "native/react-good"], graph)[0]).toBe("native/react-good");
+  });
   it("matches task keywords against skill IDs", () => {
     const graph = makeGraph(
       [
@@ -296,20 +358,21 @@ describe("catalog routing", () => {
     expect(always).not.toContain("security/compliance");
   });
 
-  it("always-on optimizer algorithm pack loads", () => {
+  it("keeps algorithm guidance off unrelated always-on tasks", () => {
     const g = catalogGraph();
     g.nodes.push({
       ...makeSkillNode("optimizer/algorithm", 0.9),
       source: "catalog" as const,
       pack: "optimizer" as const,
       always: true,
-      triggers: ["complexity"],
+      triggers: ["complexity", "algorithm", "concurrency"],
     });
     const always = alwaysOnSkillIds(g, "add a login form");
-    expect(always).toContain("optimizer/algorithm");
+    expect(always).not.toContain("optimizer/algorithm");
+    expect(matchTask("implement a concurrency algorithm", g)).toContain("optimizer/algorithm");
   });
 
-  it("always-on delivery pipeline is diagnostic not a forced waterfall", () => {
+  it("keeps orchestration guidance off a README typo", () => {
     const g = catalogGraph();
     g.nodes.push({
       ...makeSkillNode("pipeline/delivery", 0.9),
@@ -318,8 +381,8 @@ describe("catalog routing", () => {
       always: true,
       triggers: ["pipeline"],
     });
-    const always = alwaysOnSkillIds(g, "fix a typo in the readme");
-    expect(always).toContain("pipeline/delivery");
+    const always = alwaysOnSkillIds(g, "fix a typo in README.md", { files: ["README.md"] });
+    expect(always).not.toContain("pipeline/delivery");
   });
 
   it("loads review pack for review tasks", () => {
@@ -327,11 +390,98 @@ describe("catalog routing", () => {
     expect(result).toContain("review/architect");
   });
 
+  it("routes browser QA to UI review and reserves graph QA for generated notes", async () => {
+    const graph = await currentCatalogGraph();
+    const browser = matchTask("QA the UI browser e2e settings flow and click through it", graph, { files: ["src/app.tsx"] });
+    expect(browser).toContain("ui/review");
+    expect(browser).not.toContain("pipeline/qa");
+    expect(browser).not.toContain("ui/foundations");
+    expect(alwaysOnSkillIds(graph, "QA the UI browser e2e settings flow", { files: ["src/app.tsx"] })).not.toContain("ui/foundations");
+
+    const graphNotes = matchTask("run graph viz to verify generated notes", graph);
+    expect(graphNotes).toContain("pipeline/qa");
+    expect(graphNotes).not.toContain("ui/review");
+    expect(matchTask("verify generated graph notes", graph)).toContain("pipeline/qa");
+    expect(matchTask("fix a graph traversal bug", graph)).not.toContain("pipeline/qa");
+    expect(matchTask("explain Graphviz syntax", graph)).not.toContain("pipeline/qa");
+    expect(matchTask("update the note renderer", graph, { files: ["src/lib/code-notes.ts"] })).toContain("pipeline/qa");
+  });
+
+  it("corrects stale broad graph QA triggers without requiring catalog reinitialization", () => {
+    const graph = catalogGraph();
+    graph.nodes.push(
+      { ...makeSkillNode("pipeline/qa", 0.5), source: "catalog" as const, pack: "pipeline" as const, triggers: ["qa", "browser", "e2e", "click", "viz"] },
+      { ...makeSkillNode("ui/review", 0.5), source: "catalog" as const, pack: "ui" as const, triggers: ["design", "review"] },
+    );
+    const result = matchTask("QA the browser e2e settings flow", graph);
+    expect(result).toContain("ui/review");
+    expect(result).not.toContain("pipeline/qa");
+  });
+
+  it("reduces optional always-on guidance for a real README typo", async () => {
+    const graph = await currentCatalogGraph();
+    const task = "fix a typo in README.md";
+    const context = { phase: "implement" as const, files: ["README.md"] };
+    const always = alwaysOnSkillIds(graph, task, context);
+    expect(always).toEqual(expect.arrayContaining(["memory/graph", "pipeline/norms", "security/index"]));
+    expect(always).not.toEqual(expect.arrayContaining([
+      "optimizer/algorithm",
+      "pipeline/systems",
+      "pipeline/delivery",
+      "ui/foundations",
+    ]));
+    expect(matchTask(task, graph, context)).not.toEqual(expect.arrayContaining([
+      "optimizer/algorithm",
+      "pipeline/systems",
+      "pipeline/delivery",
+      "ui/foundations",
+    ]));
+
+    const previousDefaults = ["memory/graph", "security/index", "pipeline/norms", "pipeline/systems", "pipeline/delivery", "optimizer/algorithm"];
+    const tokenEstimate = async (ids: string[]) => {
+      const contents = await Promise.all(ids.map(id => readFile(catalogFile(id), "utf8")));
+      return Math.ceil(contents.join("\n").length / 3.5);
+    };
+    expect(await tokenEstimate(always)).toBeLessThan(await tokenEstimate(previousDefaults));
+  });
+
+  it.each([
+    { task: "redesign the dashboard", files: ["src/components/Dashboard.tsx"], expected: "ui/foundations" },
+    { task: "implement a concurrency algorithm", files: ["src/lib/queue/worker.ts"], expected: "optimizer/algorithm" },
+    { task: "design a distributed service boundary", files: ["src/services/api.ts"], expected: "pipeline/systems" },
+  ])("keeps optional guidance available for $task", async ({ task, files, expected }) => {
+    const graph = await currentCatalogGraph();
+    const context = { files, phase: "implement" as const };
+    expect(alwaysOnSkillIds(graph, task, context)).toContain(expected);
+    expect(matchTask(task, graph, context)).toContain(expected);
+  });
+
+  it("loads presentation guidance only when the user requests it", async () => {
+    const graph = await currentCatalogGraph();
+    expect(matchTask("write a concise review summary", graph, { phase: "review" })).toContain("optimizer/adhd");
+    expect(matchTask("use optimizer/adhd for a terse response", graph, { phase: "review" })).toContain("optimizer/adhd");
+    expect(matchTask("fix a typo in README.md", graph, { phase: "implement" })).not.toContain("optimizer/adhd");
+  });
+
+  it("loads systems guidance when the affected files reveal a service boundary", async () => {
+    const graph = await currentCatalogGraph();
+    expect(alwaysOnSkillIds(graph, "update the handler", { files: ["src/services/api.ts"] })).toContain("pipeline/systems");
+  });
+
+  it("honors an explicit skill request outside its phase-default pack", async () => {
+    const graph = await currentCatalogGraph();
+    expect(matchTask("load optimizer/algorithm", graph, { phase: "review" })).toContain("optimizer/algorithm");
+  });
+
   it("detects UI work and loads the ui pack in every phase", () => {
     for (const phase of ["explore", "implement", "review", "ship"] as const) {
       expect(packsToLoad("make the landing page look better", phase).has("ui")).toBe(true);
     }
     expect(packsToLoad("fix the flaky retry queue worker", "implement").has("ui")).toBe(false);
+    for (const task of ["run browser e2e tests", "click through the flow", "QA a visual page"]) {
+      expect(packsToLoad(task, "review").has("ui")).toBe(true);
+    }
+    expect(packsToLoad("fix a typo", "implement", ["src/components/Button.tsx"]).has("ui")).toBe(true);
   });
 
   it("detects vibecoder UI phrasing across phases", () => {

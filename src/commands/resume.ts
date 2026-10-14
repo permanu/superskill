@@ -32,9 +32,12 @@ export async function resumeCommand(
 ): Promise<ResumeContext> {
   const vaultFs = ctx.vaultFs;
   const registry = ctx.sessionRegistry;
-  const projectSlug = await resolveProject(ctx.vaultPath, args.project);
+  if (ctx.projectSlug === null) throw new Error("Resume requires a resolved project context");
+  if (ctx.projectSlug && args.project !== undefined && args.project !== ctx.projectSlug) throw new Error("Resume belongs to a different project");
+  const projectSlug = await resolveProject(ctx.vaultPath, args.project ?? ctx.projectSlug);
 
   const limit = args.limit ?? 5;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Resume limit must be an integer between 1 and 100");
 
   const lastSessions: ResumeContext["last_sessions"] = [];
   try {
@@ -46,16 +49,16 @@ export async function resumeCommand(
         const content = await vaultFs.read(file);
         const { data } = parseFrontmatter(content);
         lastSessions.push({
-          tool: (data.tool as string) ?? "unknown",
-          outcome: (data.outcome as string) ?? "",
-          completed_at: (data.completed_at as string) ?? (data.created as string) ?? "",
-          files_touched: Array.isArray(data.files_touched) ? data.files_touched as string[] : [],
-          tasks_completed: Array.isArray(data.tasks_completed) ? data.tasks_completed as string[] : [],
-          completed: Array.isArray(data.completed) ? data.completed as string[] : [],
-          partially_completed: Array.isArray(data.partially_completed) ? data.partially_completed as string[] : [],
-          blocked: Array.isArray(data.blocked) ? data.blocked as string[] : [],
+          tool: typeof data.tool === "string" ? data.tool : "unknown",
+          outcome: typeof data.outcome === "string" ? data.outcome : "",
+          completed_at: typeof data.completed_at === "string" ? data.completed_at : typeof data.created === "string" ? data.created : "",
+          files_touched: stringArray(data.files_touched),
+          tasks_completed: stringArray(data.tasks_completed),
+          completed: stringArray(data.completed),
+          partially_completed: stringArray(data.partially_completed),
+          blocked: stringArray(data.blocked),
           verification_run: typeof data.verification_run === "string" ? data.verification_run : null,
-          commands_to_resume: Array.isArray(data.commands_to_resume) ? data.commands_to_resume as string[] : [],
+          commands_to_resume: stringArray(data.commands_to_resume),
         });
       } catch (e: unknown) {
         if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
@@ -72,7 +75,7 @@ export async function resumeCommand(
   const allSessions = await registry.listActive(projectSlug);
   const activeSessions = allSessions.filter((s) => s.status === "active");
 
-  const interruptedSessions = (await registry.listInterrupted()).filter((s) => s.project === projectSlug);
+  const interruptedSessions = (await registry.listInterrupted(projectSlug)).filter((s) => s.project === projectSlug);
 
   const suggestedNextSteps: string[] = [];
 
@@ -114,6 +117,10 @@ export async function resumeCommand(
     interrupted_sessions: interruptedSessions,
     suggested_next_steps: suggestedNextSteps,
   };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 export function formatResumeContext(ctx: ResumeContext): string {

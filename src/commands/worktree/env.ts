@@ -6,6 +6,7 @@ export interface WorktreeEnvArgs {
   json?: boolean;
   shell?: "sh" | "fish" | "powershell";
   providers?: string[];
+  timeoutMs?: number;
 }
 
 export interface WorktreeEnvResult {
@@ -25,7 +26,7 @@ export async function worktreeEnvCommand(
   const worktreeRoot = (ctx.workspacePath ?? process.cwd());
   const resolved = await resolveWorktreeEnv(
     worktreeRoot,
-    args.providers ? { providers: args.providers } : undefined
+    { providers: args.providers, timeoutMs: args.timeoutMs }
   );
   const json: Record<string, string> = {};
   for (const variable of resolved.vars) json[variable.name] = variable.value;

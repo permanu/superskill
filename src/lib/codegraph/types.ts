@@ -83,6 +83,7 @@ export interface ExtractResult {
   nodes: CodeNode[];
   edges: CodeEdge[];
   imports: ImportRef[];
+  exportAliases?: Record<string, string>;
 }
 
 export type Extractor = (input: ExtractInput) => ExtractResult;
@@ -113,6 +114,9 @@ export interface ScanOptions {
   skipDirs?: string[];
   maxFileSize?: number;
   languages?: LanguageId[];
+  maxFiles?: number;
+  maxTotalBytes?: number;
+  maxDepth?: number;
 }
 
 export interface ScanResult {

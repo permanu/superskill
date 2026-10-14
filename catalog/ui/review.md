@@ -2,7 +2,7 @@
 name: review
 pack: ui
 always: false
-triggers: [ui, ux, design, redesign, review, polish, screenshot, figma, critique]
+triggers: [ui, ux, design, redesign, review, polish, screenshot, figma, critique, browser, e2e, qa, click, harness, playwright, cypress, webdriver]
 ---
 
 # UI review checklist
@@ -13,6 +13,11 @@ Use for UI diffs and "does this look right" requests. Report findings as `path:l
 - Look at the rendered surface (screenshot or dev server), not only the diff.
 - Compare against the rest of the app: same spacing scale, same type ladder, same control shapes.
 - State the user-visible consequence of each finding.
+
+## Browser and e2e evidence
+- Discover the project's existing app scripts, test-runner configuration, browser harness, and available browser access before choosing a command. Reuse the runner already present; do not add a framework for QA.
+- Run the narrowest relevant existing browser/e2e check and report its exact command and result. Distinguish an automated test from a manually observed render.
+- If no runner, harness, app server, or browser access is available, say `unavailable` and name what you inspected and what could not be verified. Never invent clicks, screenshots, counts, or a pass.
 
 ## Walk these in order
 1. Hierarchy: one obvious primary action; one obvious first place to look; no competing CTAs.
@@ -29,4 +34,4 @@ Use for UI diffs and "does this look right" requests. Report findings as `path:l
 ## Verdict
 - Blockers: unusable keyboard path, unreadable contrast, broken layout at a real viewport, misleading copy.
 - Nits: spacing drift, inconsistent radius or shadow, hover-only affordance, copy tone.
-- If the graph changed, regenerate the notes with `graph viz` and confirm they render (Mermaid + code blocks).
+- Graph-note regeneration is separate: use `pipeline/qa` only when generated-note output changed or the user explicitly requests it. UI review never regenerates notes as a side effect.

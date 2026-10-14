@@ -4,7 +4,10 @@ import {
   DEFAULT_READ_MAX_BYTES,
   DEFAULT_RESPONSE_MAX_BYTES,
   READ_MAX_BYTES_CAP,
+  RESPONSE_MAX_BYTES_CAP,
   capResponseBytes,
+  fitGraphOpenResponse,
+  GRAPH_OPEN_MAX_BYTES,
   maxResponseBytes,
   resolveReadMaxBytes,
   serializeToolResult,
@@ -191,6 +194,7 @@ describe("createRegistry", () => {
       "init",
       "status",
       "superskill",
+      "skill_validate",
     ];
 
     for (const name of expectedTools) {
@@ -209,13 +213,13 @@ describe("createRegistry", () => {
     }
   });
 
-  it("adaptArgs for read passes path and coerces depth", async () => {
+  it("adaptArgs for read passes path and numeric depth", async () => {
     const { createRegistry } = await import("./registry.js");
     const registry = createRegistry();
     const vaultFs = createMockVaultFs("# Hello");
     const ctx: CommandContext = { ...createMockContext(), vaultFs };
 
-    const result = await registry.execute("read", { path: "test.md", depth: "2" }, ctx);
+    const result = await registry.execute("read", { path: "test.md", depth: 2 }, ctx);
     expect(result).toBe("# Hello");
     expect(vaultFs.read).toHaveBeenCalledWith("test.md");
   });
@@ -280,11 +284,14 @@ describe("output bounding", () => {
     expect(serializeToolResult({ a: 1 })).toBe('{\n  "a": 1\n}');
   });
 
-  it("returns text up to the cap and truncates beyond it at a UTF-8-safe boundary", () => {
+  it("returns text up to the cap and wraps truncated previews at a UTF-8-safe boundary", () => {
     expect(capResponseBytes("abcdef", 6)).toBe("abcdef");
-    expect(capResponseBytes("abcdef", 3)).toBe("abc\n…[truncated; full size 6 bytes]");
-    expect(capResponseBytes("aé", 2)).toBe("a\n…[truncated; full size 3 bytes]");
-    expect(capResponseBytes("aé", 2)).not.toContain("\uFFFD");
+    const original = serializeToolResult({ text: "é\"\\\n".repeat(500) });
+    const bounded = capResponseBytes(original, 128);
+    expect(JSON.parse(bounded)).toMatchObject({ truncated: true, bytes: Buffer.byteLength(original), preview: expect.any(String) });
+    expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(128);
+    expect(bounded).not.toContain("\uFFFD");
+    expect(JSON.parse(capResponseBytes("aé", 2))).toMatchObject({ truncated: true, bytes: 3 });
   });
 
   it("reads the global response cap from SUPERSKILL_MAX_RESPONSE_BYTES", () => {
@@ -294,6 +301,12 @@ describe("output bounding", () => {
     expect(maxResponseBytes()).toBe(12);
     process.env.SUPERSKILL_MAX_RESPONSE_BYTES = "not-a-number";
     expect(maxResponseBytes()).toBe(DEFAULT_RESPONSE_MAX_BYTES);
+    process.env.SUPERSKILL_MAX_RESPONSE_BYTES = String(RESPONSE_MAX_BYTES_CAP * 10);
+    expect(maxResponseBytes()).toBe(RESPONSE_MAX_BYTES_CAP);
+    for (const value of ["12oops", "Infinity", "1.5", "-1", "0"]) {
+      process.env.SUPERSKILL_MAX_RESPONSE_BYTES = value;
+      expect(maxResponseBytes()).toBe(DEFAULT_RESPONSE_MAX_BYTES);
+    }
   });
 
   it("resolves read max_bytes with the default and the 10MB cap", () => {
@@ -301,6 +314,57 @@ describe("output bounding", () => {
     expect(resolveReadMaxBytes("not-a-number")).toBe(DEFAULT_READ_MAX_BYTES);
     expect(resolveReadMaxBytes(READ_MAX_BYTES_CAP * 2)).toBe(READ_MAX_BYTES_CAP);
     expect(resolveReadMaxBytes(128)).toBe(128);
+  });
+
+  it("fits graph-open pages as structured JSON with a UTF-8-safe advancing cursor", () => {
+    const content = `quote " slash \\\ntext 世界😀\n`.repeat(100);
+    const bytes = Buffer.byteLength(content, "utf8");
+    const page = JSON.parse(fitGraphOpenResponse({
+      id: "skill:test",
+      kind: "skill",
+      bytes,
+      tokens: 10,
+      offset_bytes: 0,
+      next_offset_bytes: null,
+      read_complete: true,
+      content_bytes: bytes,
+      content,
+      truncated: false,
+    }, 300)) as { content: string; bytes: number; offset_bytes: number; content_bytes: number; next_offset_bytes: number | null; read_complete: boolean; truncated: boolean };
+
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(300);
+    expect(Buffer.from(content).subarray(0, page.content_bytes).toString("utf8")).toBe(page.content);
+    expect(page.content).toBe(content.slice(0, page.content.length));
+    expect(page.bytes).toBe(bytes);
+    expect(page.offset_bytes).toBe(0);
+    expect(page.content_bytes).toBe(Buffer.byteLength(page.content, "utf8"));
+    expect(page.next_offset_bytes).toBe(page.content_bytes);
+    expect(page.read_complete).toBe(false);
+    expect(page.truncated).toBe(true);
+    expect(page.content).not.toContain("\uFFFD");
+  });
+
+  it("rejects response caps too small to encode graph-open page metadata", () => {
+    expect(() => fitGraphOpenResponse({
+      id: "skill:test", kind: "skill", bytes: 10, tokens: 1, offset_bytes: 0,
+      next_offset_bytes: null, read_complete: true, content_bytes: 10, content: "0123456789", truncated: false,
+    }, 32)).toThrow(/SUPERSKILL_MAX_RESPONSE_BYTES/);
+  });
+
+  it("refuses a page that would fit only metadata and leave its byte cursor unchanged", () => {
+    const source = "😀";
+    const emptyPage = {
+      id: "skill:test", kind: "skill", bytes: 4, tokens: 1, offset_bytes: 0,
+      next_offset_bytes: 0, read_complete: false, content_bytes: 0, content: "", truncated: true,
+    };
+    expect(() => fitGraphOpenResponse({
+      ...emptyPage,
+      next_offset_bytes: null,
+      read_complete: true,
+      content_bytes: 4,
+      content: source,
+      truncated: false,
+    }, Buffer.byteLength(JSON.stringify(emptyPage), "utf8"))).toThrow(/cursor/);
   });
 });
 
@@ -311,14 +375,14 @@ describe("read tool bounding", () => {
     expect(properties.max_bytes).toBeDefined();
   });
 
-  it("truncates vault reads beyond max_bytes with a marker", async () => {
+  it("truncates vault reads beyond max_bytes with structured metadata", async () => {
     const { createRegistry } = await import("./registry.js");
     const registry = createRegistry();
     const vaultFs = createMockVaultFs("x".repeat(200));
     const ctx: CommandContext = { ...createMockContext(), vaultFs };
 
     const result = (await registry.execute("read", { path: "big.md", max_bytes: 50 }, ctx)) as string;
-    expect(result).toBe(`${"x".repeat(50)}\n…[truncated; full size 200 bytes]`);
+    expect(JSON.parse(result)).toMatchObject({ truncated: true, bytes: 200, preview: expect.any(String) });
     expect(vaultFs.read).toHaveBeenCalledWith("big.md");
   });
 });
@@ -369,5 +433,41 @@ describe("workspace_path injection", () => {
     expect(registry.get("project_context")!.adaptArgs!({ detail_level: "full", max_tokens: 1200 })).toMatchObject({ maxTokens: 1200 });
     expect(registry.get("evidence")!.adaptArgs!({ action: "list", ticket: "ticket-001", ts: "2026-01-01T00:00:00Z" }))
       .toMatchObject({ ts: "2026-01-01T00:00:00Z" });
+  });
+});
+
+describe("graph traversal pagination schema", () => {
+  it("exposes bounded finite integer byte offsets and maps both MCP fields", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const registry = createRegistry();
+    const registration = registry.get("graph_traverse")!;
+    const properties = registration.toolDef.inputSchema.properties as Record<string, { type?: string; minimum?: number; maximum?: number }>;
+    expect(properties.offset_bytes).toMatchObject({ type: "integer", minimum: 0, maximum: GRAPH_OPEN_MAX_BYTES });
+    expect(properties.max_bytes).toMatchObject({ type: "integer", minimum: 1, maximum: GRAPH_OPEN_MAX_BYTES });
+    expect(registration.adaptArgs!({ action: "open", id: "skill:test", offset_bytes: 1024, max_bytes: 2048 }))
+      .toMatchObject({ offsetBytes: 1024, maxBytes: 2048 });
+    for (const value of [1.5, Number.POSITIVE_INFINITY, GRAPH_OPEN_MAX_BYTES + 1]) {
+      expect(() => registry.validate("graph_traverse", { action: "open", id: "skill:test", offset_bytes: value }))
+        .toThrow(/offset_bytes/);
+    }
+  });
+});
+
+describe("skill_validate registration", () => {
+  it("registers a read-only, bounded workspace-relative validation tool", async () => {
+    const { createRegistry } = await import("./registry.js");
+    const registry = createRegistry();
+    const registration = registry.get("skill_validate")!;
+    const properties = registration.toolDef.inputSchema.properties as Record<string, unknown>;
+    expect(properties.workspace_path).toBeDefined();
+    expect(properties.path).toMatchObject({ type: "string", minLength: 1, maxLength: 4096 });
+    expect(properties.profile).toMatchObject({ type: "string", enum: ["anthropic", "portable"] });
+    expect(registration.toolDef.annotations?.readOnlyHint).toBe(true);
+    expect(registration.rateLimit).toBe("expensive");
+    expect(registration.adaptArgs!({ path: "skills/demo/SKILL.md", profile: "portable" }))
+      .toEqual({ path: "skills/demo/SKILL.md", profile: "portable" });
+    for (const path of ["/etc/passwd", "../outside/SKILL.md", "skills\\..\\outside\\SKILL.md"]) {
+      expect(() => registry.validate("skill_validate", { path })).toThrow(/invalid format|must/i);
+    }
   });
 });

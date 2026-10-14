@@ -7,9 +7,16 @@ const CONSTITUTION_PATH = fileURLToPath(new URL("../catalog/constitution.md", im
 const text = readFileSync(CONSTITUTION_PATH, "utf-8");
 
 describe("constitution", () => {
-  it("stays within the always-injected token budget", () => {
+  it("stays compact for optional loading", () => {
     // Conservative estimate: BPE tokenizers average at least 3.5 chars/token on prose.
     expect(Math.ceil(text.length / 3.5)).toBeLessThanOrEqual(400);
+  });
+
+  it("describes conditional loading instead of claiming automatic injection", () => {
+    expect(text).toContain("Not auto-loaded by MCP");
+    expect(text).toContain("optional session-start hook");
+    expect(text).toContain("explicit graph-constitution request");
+    expect(text).not.toMatch(/always injected/i);
   });
 
   it("declares 10-15 axioms with stable unique IDs", () => {

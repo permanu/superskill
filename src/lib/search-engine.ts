@@ -2,9 +2,11 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { resolve, relative } from "path";
-import { readFile, stat } from "fs/promises";
+import { constants } from "node:fs";
+import { open } from "fs/promises";
 import { parseFrontmatter } from "./frontmatter.js";
 import { escapeRegex } from "./escape-regex.js";
+import { VaultFS, VaultError } from "./vault-fs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,13 +24,27 @@ export interface SearchResult {
  * Validate that a search path stays within the vault root.
  * Throws if the path escapes the vault boundary.
  */
-function validateSearchPath(vaultPath: string, searchPath: string): string {
+async function validateSearchPath(vaultFs: VaultFS, searchPath: string): Promise<string> {
+  const vaultPath = vaultFs.root;
   const resolved = resolve(vaultPath, searchPath);
   const rel = relative(vaultPath, resolved);
   if (rel.startsWith("..") || rel.startsWith("/")) {
     throw new Error(`Search path escapes vault: ${searchPath}`);
   }
+  await vaultFs.verifyNoSymlinkEscape(searchPath);
   return resolved;
+}
+
+async function readableSearchPath(vaultFs: VaultFS, path: string): Promise<boolean> {
+  if (path.split(/[\\/]/).some((segment) => segment.startsWith(".")) || /[\x00-\x1f\x7f]/.test(path)) return false;
+  try {
+    await vaultFs.verifyNoSymlinkEscape(path);
+    return true;
+  } catch (error) {
+    if (error instanceof VaultError && (error.code === "PERMISSION_DENIED" || error.code === "FILE_NOT_FOUND")) return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 /**
@@ -52,11 +68,14 @@ export async function searchText(
 ): Promise<SearchResult[]> {
   const { pathFilter, limit = 10 } = options;
   validateSearchLimit(limit);
+  const vaultFs = new VaultFS(vaultPath);
 
   const args = [
     "--json",
     "--max-count", "3",
+    "--max-filesize", "10M",
     "--type", "md",
+    "--glob", "!**/[pP][eE][rR][sS][oO][nN][aA][lL]/**",
     "--ignore-case",
     "--fixed-strings",
     "--",
@@ -65,8 +84,8 @@ export async function searchText(
 
   // Validate pathFilter stays within vault
   const searchPath = pathFilter
-    ? validateSearchPath(vaultPath, pathFilter)
-    : vaultPath;
+    ? await validateSearchPath(vaultFs, pathFilter)
+    : await validateSearchPath(vaultFs, ".");
 
   try {
     const { stdout } = await execFileAsync("rg", [...args, searchPath], {
@@ -87,7 +106,7 @@ export async function searchText(
           const lineNum = parsed.data.line_number;
 
           // Skip hidden dirs and paths escaping vault
-          if (relPath.startsWith(".") || relPath.startsWith("..")) continue;
+          if (!await readableSearchPath(vaultFs, relPath)) continue;
 
           // Keep the best snippet per file (prefer earlier matches with more content)
           if (!seenPaths.has(relPath)) {
@@ -127,7 +146,8 @@ export async function searchStructured(
 ): Promise<SearchResult[]> {
   const { limit = 10, pathFilter } = options;
   validateSearchLimit(limit);
-  const searchRoot = pathFilter ? validateSearchPath(vaultPath, pathFilter) : vaultPath;
+  const vaultFs = new VaultFS(vaultPath);
+  const searchRoot = await validateSearchPath(vaultFs, pathFilter ?? ".");
 
   // No filters means no structured criteria; return no matches rather than
   // building an empty regex.
@@ -147,12 +167,16 @@ export async function searchStructured(
   try {
     const { stdout } = await execFileAsync("rg", [
       "--files-with-matches",
+      "--null",
+      "--max-filesize", "100K",
       "--type", "md",
+      "--glob", "!**/[pP][eE][rR][sS][oO][nN][aA][lL]/**",
       "--regexp", keyPattern,
       "--regexp", valuePattern,
+      "--",
       searchRoot,
     ], { timeout: 10_000, maxBuffer: 1024 * 1024 });
-    candidates = stdout.trim().split("\n").filter(Boolean);
+    candidates = stdout.split("\0").filter(Boolean);
   } catch (e: any) {
     if (e.code === "ENOENT" && (e.message as string).includes("rg")) {
       throw new Error("ripgrep (rg) is required for structured search. Install it: https://github.com/BurntSushi/ripgrep");
@@ -167,13 +191,27 @@ export async function searchStructured(
     if (results.length >= limit) break;
 
     const relPath = toRelativePath(vaultPath, absPath);
-    if (relPath.startsWith(".") || relPath.startsWith("..")) continue;
+    if (!await readableSearchPath(vaultFs, relPath)) continue;
 
     try {
-      const fileStat = await stat(absPath);
-      if (fileStat.size > MAX_FILE_SIZE) continue;
-
-      const content = await readFile(absPath, "utf-8");
+      const handle = await open(absPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      let content: string;
+      try {
+        const fileStat = await handle.stat();
+        if (!fileStat.isFile() || fileStat.size > MAX_FILE_SIZE) continue;
+        if (!await readableSearchPath(vaultFs, relPath)) continue;
+        const buffer = Buffer.alloc(MAX_FILE_SIZE + 1);
+        let bytes = 0;
+        while (bytes < buffer.length) {
+          const result = await handle.read(buffer, bytes, buffer.length - bytes, bytes);
+          if (result.bytesRead === 0) break;
+          bytes += result.bytesRead;
+        }
+        if (bytes > MAX_FILE_SIZE || !await readableSearchPath(vaultFs, relPath)) continue;
+        content = buffer.subarray(0, bytes).toString("utf8");
+      } finally {
+        await handle.close();
+      }
       const { data } = parseFrontmatter(content);
 
       // Check all filters match

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { repoStateDir, worktreeKey } from "./paths.js";
+import { ensureSafeDirectory, physicalPathInside, readRegularText, repoStateDir, worktreeKey } from "./paths.js";
 import { hashFile, isPathInside } from "./safety.js";
 
 export const POLICY_SCHEMA_VERSION = 1;
@@ -55,32 +56,53 @@ const POLICY_FILE = "policy.json";
 const HOOK_STATE_FILE = "hook.state";
 const JOURNAL_FILE = "journal.jsonl";
 const MANIFESTS_DIR = "manifests";
-const STATE_DIR_MODE = 0o700;
 const STATE_FILE_MODE = 0o600;
 const VERIFY_CONCURRENCY = 16;
 const HOOK_KINDS = new Set(["block", "husky", "lefthook", "precommit"]);
 
 async function statePath(worktreeRoot: string, ...parts: string[]): Promise<string> {
-  return join(await repoStateDir(worktreeRoot), ...parts);
+  const root = await repoStateDir(worktreeRoot);
+  const path = join(root, ...parts);
+  try {
+    if (!await physicalPathInside(path, dirname(root))) {
+      await lstat(dirname(root));
+      throw new Error(`Unsafe repository state path: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return path;
 }
 
 async function ensureStateDir(dir: string): Promise<void> {
-  await mkdir(dir, { recursive: true, mode: STATE_DIR_MODE });
+  await ensureSafeDirectory(dir);
 }
 
-async function atomicWrite(filePath: string, content: string): Promise<void> {
+async function atomicWrite(filePath: string, content: string, worktreeRoot: string): Promise<void> {
+  const boundary = dirname(await repoStateDir(worktreeRoot));
+  if (!await physicalPathInside(filePath, boundary)) throw new Error(`Unsafe repository state path: ${filePath}`);
   const dir = dirname(filePath);
   await ensureStateDir(dir);
   const tmpPath = join(
     dir,
     `.${basename(filePath)}.tmp-${process.pid}-${Date.now().toString(36)}-${randomUUID()}`,
   );
+  let identity: { dev: number; ino: number } | undefined;
   try {
-    await writeFile(tmpPath, content, { encoding: "utf-8", mode: STATE_FILE_MODE });
+    const file = await open(tmpPath, "wx", STATE_FILE_MODE);
+    try {
+      identity = await file.stat();
+      await file.writeFile(content, "utf-8");
+      await file.sync();
+    } finally { await file.close(); }
+    if (!await physicalPathInside(filePath, boundary)) throw new Error(`Repository state ancestry changed: ${filePath}`);
     await rename(tmpPath, filePath);
   } catch (err) {
     try {
-      await rm(tmpPath, { force: true });
+      if (identity && await physicalPathInside(tmpPath, boundary)) {
+        const current = await lstat(tmpPath);
+        if (current.dev === identity.dev && current.ino === identity.ino) await unlink(tmpPath);
+      }
     } catch (cleanupErr) {
       const code = (cleanupErr as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {
@@ -95,7 +117,7 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
 
 async function readText(filePath: string): Promise<string | null> {
   try {
-    return await readFile(filePath, "utf-8");
+    return await readRegularText(filePath, 16 * 1024 * 1024);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
@@ -154,7 +176,7 @@ export async function readPolicy(worktreeRoot: string): Promise<WorktreePolicy |
 
 export async function writePolicy(worktreeRoot: string, policy: WorktreePolicy): Promise<void> {
   const filePath = await statePath(worktreeRoot, POLICY_FILE);
-  await atomicWrite(filePath, `${JSON.stringify(policy, null, 2)}\n`);
+  await atomicWrite(filePath, `${JSON.stringify(policy, null, 2)}\n`, worktreeRoot);
 }
 
 export async function readHookState(worktreeRoot: string): Promise<HookState | null> {
@@ -170,15 +192,18 @@ export async function readHookState(worktreeRoot: string): Promise<HookState | n
 
 export async function writeHookState(worktreeRoot: string, state: HookState): Promise<void> {
   const filePath = await statePath(worktreeRoot, HOOK_STATE_FILE);
-  await atomicWrite(filePath, `${JSON.stringify(state, null, 2)}\n`);
+  await atomicWrite(filePath, `${JSON.stringify(state, null, 2)}\n`, worktreeRoot);
 }
 
 export async function clearHookState(worktreeRoot: string): Promise<void> {
   const filePath = await statePath(worktreeRoot, HOOK_STATE_FILE);
   try {
-    await rm(filePath, { force: true });
+    const info = await lstat(filePath);
+    if (!info.isFile() || info.isSymbolicLink() || !await readHookState(worktreeRoot)) throw new Error(`Unrecognized hook state preserved: ${filePath}`);
+    await unlink(filePath);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return;
     console.error(`[worktree-state] failed to clear ${filePath}: ${code ?? String(err)}`);
     throw err;
   }
@@ -192,12 +217,30 @@ export async function readManifest(
   worktreeRoot: string,
   worktreePath: string,
 ): Promise<WorktreeManifest | null> {
-  return readJson<WorktreeManifest>(await manifestPath(worktreeRoot, worktreePath));
+  const path = await manifestPath(worktreeRoot, worktreePath);
+  const value = await readJson<unknown>(path);
+  if (value === null) return null;
+  if (!isWorktreeManifest(value) || resolve(value.worktree) !== resolve(worktreePath)) {
+    console.error(`[worktree-state] unrecognized manifest preserved at ${path}`);
+    return null;
+  }
+  return value;
 }
 
 export async function writeManifest(worktreeRoot: string, manifest: WorktreeManifest): Promise<void> {
+  if (!isWorktreeManifest(manifest)) throw new Error("Invalid worktree manifest");
   const filePath = await manifestPath(worktreeRoot, manifest.worktree);
-  await atomicWrite(filePath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await atomicWrite(filePath, `${JSON.stringify(manifest, null, 2)}\n`, worktreeRoot);
+}
+
+function isWorktreeManifest(value: unknown): value is WorktreeManifest {
+  return isRecord(value) && value.v === 1 && typeof value.worktree === "string" && resolve(value.worktree) === value.worktree
+    && typeof value.createdAt === "string" && Number.isFinite(Date.parse(value.createdAt)) && Array.isArray(value.files)
+    && value.files.every((entry) => isRecord(entry) && typeof entry.path === "string" && entry.path.length > 0
+      && !entry.path.includes("\\") && isPathInside(resolve(value.worktree as string, entry.path), value.worktree as string)
+      && entry.path.replace(/\/$/, "") === toPosix(relative(value.worktree as string, resolve(value.worktree as string, entry.path)))
+      && typeof entry.sha256 === "string" && /^[0-9a-f]{64}$/.test(entry.sha256)
+      && typeof entry.size === "number" && Number.isSafeInteger(entry.size) && entry.size >= 0);
 }
 
 interface ListingEntry {
@@ -255,7 +298,7 @@ export async function verifyManifest(
     VERIFY_CONCURRENCY,
     async (entry): Promise<{ status: "modified" | "missing" | "intact"; path: string }> => {
       const abs = resolve(root, entry.path);
-      if (!isPathInside(abs, root)) {
+      if (!isPathInside(abs, root) || !await physicalPathInside(abs, root)) {
         console.error(`[worktree-state] manifest entry escapes root: ${entry.path}`);
         return { status: "modified", path: entry.path };
       }
@@ -302,10 +345,12 @@ export function newJournalId(now: Date = new Date()): string {
 export async function appendJournal(worktreeRoot: string, entry: JournalEntry): Promise<void> {
   const dir = await repoStateDir(worktreeRoot);
   await ensureStateDir(dir);
-  await appendFile(join(dir, JOURNAL_FILE), `${JSON.stringify(entry)}\n`, {
-    encoding: "utf-8",
-    mode: STATE_FILE_MODE,
-  });
+  const path = await statePath(worktreeRoot, JOURNAL_FILE);
+  const file = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | constants.O_NONBLOCK, STATE_FILE_MODE);
+  try {
+    if (!(await file.stat()).isFile()) throw new Error(`Journal is not a regular file: ${path}`);
+    await file.writeFile(`${JSON.stringify(entry)}\n`);
+  } finally { await file.close(); }
 }
 
 export async function readJournal(worktreeRoot: string): Promise<JournalEntry[]> {
@@ -317,7 +362,12 @@ export async function readJournal(worktreeRoot: string): Promise<JournalEntry[]>
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      entries.push(JSON.parse(trimmed) as JournalEntry);
+      const value: unknown = JSON.parse(trimmed);
+      if (!isRecord(value) || typeof value.id !== "string" || typeof value.ts !== "string"
+        || !["quarantine", "purge", "restore", "install", "uninstall", "seed"].includes(value.action as string)
+        || !Array.isArray(value.paths) || !value.paths.every((path) => typeof path === "string")
+        || typeof value.bytes !== "number" || !Number.isFinite(value.bytes) || value.bytes < 0) throw new Error("Invalid journal entry");
+      entries.push(value as unknown as JournalEntry);
     } catch {
       console.error(`[worktree-state] ignoring corrupt journal line in ${filePath}`);
     }

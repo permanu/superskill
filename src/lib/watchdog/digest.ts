@@ -39,16 +39,17 @@ export function formatDuration(startedAt: number, endedAt?: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-function callLabel(call: TraceToolCall): string {
-  const summary = call.inputSummary ? ` \`${call.inputSummary}\`` : "";
+function callLabel(call: TraceToolCall, includePrompts: boolean): string {
+  const summary = includePrompts && call.inputSummary ? ` \`${call.inputSummary}\`` : "";
   const error = call.status === "error" ? " (error)" : "";
   return `#${call.index} ${call.name}${error}${summary}`;
 }
 
-export function renderDigest(trace: SessionTrace, maxTokens = 2400): string {
+export function renderDigest(trace: SessionTrace, maxTokens = 2400, opts: { includePrompts?: boolean } = {}): string {
+  const includePrompts = opts.includePrompts === true;
   const lines: string[] = [];
   const ref = trace.ref;
-  const title = ref.title ? ` — ${ref.title}` : "";
+  const title = includePrompts && ref.title ? ` — ${ref.title.slice(0, 160)}` : "";
   lines.push(`## ${ref.tool}:${ref.id.slice(-8)}${title}`);
   lines.push("");
 
@@ -71,7 +72,7 @@ export function renderDigest(trace: SessionTrace, maxTokens = 2400): string {
   if (trace.diff) {
     lines.push(`- diff: +${trace.diff.additions}/-${trace.diff.deletions} across ${trace.diff.files} files`);
   }
-  if (trace.sessionNotes?.outcome) {
+  if (includePrompts && trace.sessionNotes?.outcome) {
     lines.push(`- outcome: ${trace.sessionNotes.outcome.slice(0, 160)}`);
   }
 
@@ -82,9 +83,10 @@ export function renderDigest(trace: SessionTrace, maxTokens = 2400): string {
     .join(", ");
   lines.push(`- tools: ${census.total} calls, ${census.errors} errors — ${censusText}`);
   lines.push(`- files: ${trace.filesRead.length} read, ${trace.filesWritten.length} written`);
+  lines.push(`- prompts: ${trace.userTurns.length} retained · commands: ${trace.commands.length} retained${includePrompts ? " · sensitive excerpts included by request" : " · transcript excerpts omitted"}`);
   if (trace.truncated) lines.push("- ⚠ trace truncated by reader caps");
 
-  if (trace.userTurns.length > 0) {
+  if (includePrompts && trace.userTurns.length > 0) {
     lines.push("");
     lines.push(`### Prompts (${trace.userTurns.length} shown, first ${Math.min(5, trace.userTurns.length)})`);
     for (const prompt of trace.userTurns.slice(0, 5)) {
@@ -97,11 +99,11 @@ export function renderDigest(trace: SessionTrace, maxTokens = 2400): string {
     lines.push("");
     lines.push("### Failures");
     for (const call of failures) {
-      lines.push(`- ${callLabel(call)}${call.errorText ? `: ${call.errorText.slice(0, 160)}` : ""}`);
+      lines.push(`- ${callLabel(call, includePrompts)}${includePrompts && call.errorText ? `: ${call.errorText.slice(0, 160)}` : ""}`);
     }
   }
 
-  if (trace.commands.length > 0) {
+  if (includePrompts && trace.commands.length > 0) {
     const unique = [...new Set(trace.commands)].slice(0, 12);
     lines.push("");
     lines.push("### Commands");

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadRules } from "./loader.js";
 import type { RuleLanguage, ValidationIssue } from "./types.js";
 import {
   validateAll,
@@ -19,6 +20,11 @@ const KNOWN_OK = new Set(["rust-err-result", "rust-api-result-context"]);
 
 function codes(issues: ValidationIssue[]): string[] {
   return issues.map((entry) => entry.code);
+}
+
+async function writePackMetadata(dir: string): Promise<void> {
+  await writeFile(join(dir, "sources.md"), "# Sources\n\nBaseline: latest\n");
+  await writeFile(join(dir, "categories.md"), "| prefix | title | target | primary sources |\n|---|---|---|---|\n| err | Errors | 2 | 1 |\n");
 }
 
 function inlineRuleContent(
@@ -303,11 +309,11 @@ describe("elision detection", () => {
     expect(elisions[0].severity).toBe("error");
   });
 
-  it("warns on unicode ellipses", async () => {
+  it("rejects unicode ellipses used as elisions", async () => {
     const issues = await validateInline("rust", "err-unicode.md", "fn f() {}\u2026", "fn f() {}");
     const ellipses = issues.filter((entry) => entry.code === "unicode-ellipsis");
     expect(ellipses).toHaveLength(1);
-    expect(ellipses[0].severity).toBe("warning");
+    expect(ellipses[0].severity).toBe("error");
   });
 
   it("warns on elisions inside line comments", async () => {
@@ -386,6 +392,34 @@ describe("hedging detection", () => {
   it("ignores hedging words inside code fences", async () => {
     const issues = await validateInline("rust", "err-hedge-code.md", "fn consider() {}", "fn good() {}");
     expect(codes(issues)).not.toContain("hedging");
+  });
+
+  it("ignores literal inline code when linting prose", async () => {
+    const issues = await validateInline(
+      "rust", "err-inline-code.md", "fn bad() {}", "fn good() {}",
+      "The names `TODO`, `placeholder`, `consider`, and ``often `as needed` …`` are literal API inputs.",
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it.each([
+    ["rust", 'fn bad() { let _ = "TODO // ... …"; let _ = r##"FIXME /* … */"##; }', "fn good() {}"],
+    ["typescript", 'const bad = "TODO // ... …";\nconst raw = `FIXME /* … */`;', "const good = 1;"],
+    ["python", 'bad = "TODO # ... …"\nraw = """FIXME\n# ... …\n"""', "good = 1"],
+    ["cpp", 'const char* bad = R"text(TODO // …)text";', "void good() {}"],
+  ] as const)("ignores anti-slop markers in %s string literals", async (lang, bad, good) => {
+    const issues = await validateInline(lang, "err-literal.md", bad, good);
+    expect(issues).toEqual([]);
+  });
+
+  it("still detects comments after a string literal and a Rust lifetime", async () => {
+    const issues = await validateInline(
+      "rust", "err-real-comment.md",
+      'fn bad<\'a>(x: &\'a str) { let _ = "https://example.com"; /* TODO ... */ }',
+      "fn good() {}",
+    );
+    expect(codes(issues)).toContain("forbidden-token");
+    expect(codes(issues)).toContain("comment-elision");
   });
 });
 
@@ -474,6 +508,7 @@ describe("compilation harness integration", () => {
       "compile_exempt: edition-2024 static_mut_refs demonstration",
     ]);
     await writeFile(file, content, "utf-8");
+    await writePackMetadata(packDir);
     await writeFile(
       join(packDir, "INDEX.md"),
       "# Rust Rules Index\n\nBaseline: latest\nRules: 1 (verified: 0)\n\n## err - Error handling (1)\n\n- [err-exempt](err-exempt.md) - exempt fixture\n",
@@ -584,6 +619,24 @@ describe("frontmatter and body edge cases", () => {
     expect(list.filter((code) => code === "enum")).toHaveLength(3);
     expect(list.filter((code) => code === "field-type")).toHaveLength(4);
     expect(result.rule).toBeNull();
+  });
+
+  it.each(["stable", "1.85", '" latest "', "Latest"])("rejects a nonliteral latest baseline %s", async (baseline) => {
+    const result = await validateRaw("err-edge.md", fmLines({ baseline }));
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "baseline-invalid", severity: "error" }));
+    expect(result.rule).toBeNull();
+    expect(result.compile).toEqual([]);
+  });
+
+  it("rejects triggers that can never select a rule", async () => {
+    const result = await validateRaw("err-edge.md", [
+      ...fmLines(), 'triggers: { keywords: [], files: ["**/*.rs"], symbols: [] }',
+    ]);
+    expect(codes(result.issues)).toContain("triggers-unreachable");
+    const reachable = await validateRaw("err-edge.md", [
+      ...fmLines(), 'triggers: { files: ["**/*_test.rs"] }',
+    ]);
+    expect(codes(reachable.issues)).not.toContain("triggers-unreachable");
   });
 
   it("requires a tool id for tool enforcement and validates trigger shapes", async () => {
@@ -779,14 +832,14 @@ describe("pack and catalog edge cases", () => {
     }
   });
 
-  it("discovers sibling ids and falls back for unreadable catalog entries", async () => {
+  it("discovers sibling ids and ignores non-file catalog entries", async () => {
     const dir = await mkdtemp(join(tmpdir(), "rules-known-"));
     const packDir = join(dir, "rust");
     await mkdir(join(packDir, "broken.md"), { recursive: true });
-    await writeFile(join(packDir, "other.md"), inlineRuleContent("rust", "other", "fn bad() {}", "fn good() {}"), "utf-8");
+    await writeFile(join(packDir, "err-other.md"), inlineRuleContent("rust", "err-other", "fn bad() {}", "fn good() {}"), "utf-8");
     await writeFile(
       join(packDir, "err-edge.md"),
-      inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}", ["related: [rust-other]"]),
+      inlineRuleContent("rust", "err-edge", "fn bad() {}", "fn good() {}", ["related: [rust-err-other]"]),
       "utf-8",
     );
     try {
@@ -813,6 +866,94 @@ describe("pack and catalog edge cases", () => {
     try {
       const report = await validatePack(packDir, { compile: false });
       expect(codes(report.errors)).toContain("related-unresolved");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("validates nested files and resolves nested related ids using the loader's file set", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-nested-"));
+    const pack = join(dir, "rust");
+    await mkdir(join(pack, "nested"), { recursive: true });
+    await writePackMetadata(pack);
+    await writeFile(join(pack, "err-root.md"), inlineRuleContent("rust", "err-root", "fn bad() {}", "fn good() {}", [
+      "related: [rust-err-child]",
+    ]));
+    await writeFile(join(pack, "nested/err-child.md"), inlineRuleContent("rust", "err-child", "fn bad() {}", "fn good() {}"));
+    await writeFile(join(pack, "nested/sources.md"), "not a rule");
+    await writeFile(join(pack, "INDEX.md"), "# Rules\n\nBaseline: latest\nRules: 2 (verified: 0)\n\n[root](err-root.md)\n\n| rule |\n|---|\n| [child](nested/err-%63hild.md#summary) |\n");
+    try {
+      const loaded = await loadRules(dir);
+      const report = await validateAll(dir, { compile: false });
+      expect(report.errors).toEqual([]);
+      expect(report.ruleCount).toBe(loaded.rules.length);
+      expect(report.checkedCount).toBe(2);
+      const direct = await validateFile(join(pack, "err-root.md"), { compile: false });
+      expect(direct.issues).toEqual([]);
+      expect((await validateFile(join(pack, "nested/err-child.md"), { compile: false })).rule?.relPath).toBe("rust/nested/err-child.md");
+
+      await writeFile(join(pack, "nested/err-child.md"), inlineRuleContent("rust", "err-child", "fn bad() {}", "fn good() {}").replace("baseline: latest", "baseline: stable"));
+      expect(codes((await validateAll(dir, { compile: false })).errors)).toContain("baseline-invalid");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["missing", "mismatched", "broken-yaml"])("does not resolve related ids from %s id frontmatter", async (kind) => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-invalid-related-"));
+    const pack = join(dir, "rust");
+    await mkdir(pack);
+    const target = inlineRuleContent("rust", "err-target", "fn bad() {}", "fn good() {}");
+    const invalid = kind === "missing" ? target.replace("id: rust-err-target\n", "")
+      : kind === "mismatched" ? target.replace("id: rust-err-target", "id: rust-err-wrong")
+      : target.replace("id: rust-err-target", "id: [broken");
+    await writeFile(join(pack, "err-target.md"), invalid);
+    await writeFile(join(pack, "err-ref.md"), inlineRuleContent("rust", "err-ref", "fn bad() {}", "fn good() {}", [
+      `related: [${kind === "mismatched" ? "rust-err-wrong" : "rust-err-target"}]`,
+    ]));
+    try {
+      const result = await validateFile(join(pack, "err-ref.md"), { compile: false });
+      expect(codes(result.issues)).toContain("related-unresolved");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("checks required layout files and declared index totals without requiring absent language packs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-layout-"));
+    const pack = join(dir, "rust");
+    await mkdir(pack);
+    await writeFile(join(pack, "err-rule.md"), inlineRuleContent("rust", "err-rule", "fn bad() {}", "fn good() {}"));
+    await writeFile(join(pack, "INDEX.md"), "# Rules\n\nBaseline: stable\nRules: 9 (verified: 1)\n\n[rule](err-rule.md)\n");
+    try {
+      const report = await validateAll(dir, { compile: false });
+      expect(codes(report.errors)).toContain("sources-file-missing");
+      expect(codes(report.errors)).toContain("categories-file-missing");
+      expect(codes(report.errors)).toContain("index-count");
+      expect(codes(report.errors)).toContain("index-baseline");
+      expect(codes(report.warnings)).not.toContain("pack-missing");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("safely reports malformed URL escapes, traversal, and duplicate rule links in any index layout", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rules-index-safe-"));
+    const pack = join(dir, "rust");
+    await mkdir(pack);
+    await writePackMetadata(pack);
+    await writeFile(join(pack, "err-rule.md"), inlineRuleContent("rust", "err-rule", "fn bad() {}", "fn good() {}"));
+    await writeFile(join(pack, "INDEX.md"), [
+      "# Rules", "", "Baseline: latest", "Rules: 1 (verified: 0)", "",
+      "[rule](./err-%72ule.md)", "| [again](err-rule.md) |",
+      "[bad](err-%zz.md)", "[escape](%2e%2e/outside.md)",
+      "[docs](categories.md)", "[web](https://example.com/thing.md)",
+    ].join("\n"));
+    try {
+      const report = await validatePack(pack, { compile: false });
+      expect(codes(report.errors)).not.toContain("index-missing");
+      expect(report.errors.filter((entry) => entry.code === "index-extra")).toHaveLength(2);
+      expect(codes(report.errors)).toContain("index-duplicate");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

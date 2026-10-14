@@ -2,6 +2,7 @@
 
 import { dirname } from "node:path";
 import type { CodeNode, ScanResult } from "./codegraph/types.js";
+import { markdownText } from "./code-notes.js";
 import { scanForSecrets } from "./secret-scanner.js";
 
 const DIAGRAM_LIMIT = 24;
@@ -60,7 +61,7 @@ function sequentialIds(ids: string[]): Map<string, string> {
 }
 
 function cleanMermaidText(s: string): string {
-  return s.replace(/["|<>]/g, " ").replace(/\s+/g, " ").trim();
+  return s.replace(/[\x00-\x1f\x7f-\x9f"[\]|<>#`]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function sortEdges(edges: DiagramEdge[]): DiagramEdge[] {
@@ -262,7 +263,7 @@ export function buildArchitectureNotes(opts: { slug: string; scan: ScanResult })
       ...diagram(
         "High-level architecture",
         rootGraph,
-        `Project structure for ${opts.slug}. Top-level directories and files, connected by observed imports. ${notice}`,
+        `Project structure for ${markdownText(opts.slug)}. Top-level directories and files, connected by observed imports. ${notice}`,
         "No supported source files were found in this project.",
       ),
     },

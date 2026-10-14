@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { captureCommand } from "./capture.js";
 import { VaultFS } from "../lib/vault-fs.js";
 import { KnowledgeIndex } from "../lib/knowledge-index.js";
 import type { CommandContext } from "../core/types.js";
+import * as numbering from "../lib/auto-number.js";
 
 function createContext(vaultFs: VaultFS): CommandContext {
   return {
@@ -31,6 +32,7 @@ describe("captureCommand", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
@@ -72,5 +74,47 @@ describe("captureCommand", () => {
     } finally {
       idx.close();
     }
+  });
+
+  it.each([
+    null,
+    { type: "learning", title: 7, content: "body" },
+    { type: "learning", title: " ", content: "body" },
+    { type: "learning", title: "Bad", content: { text: "body" } },
+    { type: "learning", title: "Bad", content: "body", tags: ["ok", 7] },
+    { type: "learning", title: "Bad", content: "body", confidence: "certain" },
+  ])("prevalidates the full batch shape before writing: %j", async (invalid) => {
+    await expect(captureCommand({ project: slug, items: [
+      { type: "learning", title: "Valid", content: "body" },
+      invalid as never,
+    ] }, ctx)).rejects.toThrow(/capture item 2/i);
+    expect(await vaultFs.exists(`projects/${slug}/learnings`)).toBe(false);
+  });
+
+  it("rejects non-array items and preflights secrets before any numbered claims", async () => {
+    await expect(captureCommand({ project: slug, items: {} as never }, ctx)).rejects.toThrow(/items must be an array/i);
+    await expect(captureCommand({ project: slug, items: [
+      { type: "learning", title: "Valid", content: "body" },
+      { type: "learning", title: "Sensitive", content: `ghp_${"A".repeat(36)}` },
+    ] }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+    expect(await vaultFs.exists(`projects/${slug}/learnings`)).toBe(false);
+  });
+
+  it("reports completed captures when a later write fails", async () => {
+    const claim = numbering.claimNumberedFile;
+    vi.spyOn(numbering, "claimNumberedFile").mockImplementationOnce(claim).mockRejectedValueOnce(new Error("disk full"));
+    const first = { path: `projects/${slug}/learnings/001-first.md`, type: "learning", title: "First" };
+    await expect(captureCommand({ project: slug, items: [
+      { type: "learning", title: "First", content: "first body" },
+      { type: "learning", title: "Second", content: "second body" },
+    ] }, ctx)).rejects.toMatchObject({ captured: [first], failed_index: 1, message: expect.stringContaining(first.path) });
+    expect(await vaultFs.read(first.path)).toContain("first body");
+    expect(await vaultFs.exists(`projects/${slug}/learnings/002-second.md`)).toBe(false);
+  });
+
+  it("retains permission-denied errors when a requested project is outside the jail", async () => {
+    ctx.vaultFs = new VaultFS(vaultRoot, { projectSlug: "other-project" });
+    await expect(captureCommand({ project: slug, items: [{ type: "learning", title: "Denied", content: "body" }] }, ctx)).rejects.toMatchObject({ code: "PERMISSION_DENIED", captured: [] });
+    expect(await vaultFs.exists(`projects/${slug}/learnings`)).toBe(false);
   });
 });

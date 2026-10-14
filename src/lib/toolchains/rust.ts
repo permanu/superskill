@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { EnvVar, ProviderContext, ToolchainProvider } from "./types.js";
 
 export function commandExists(cmd: string): boolean {
   const pathValue = process.env.PATH;
   if (!pathValue) return false;
-  for (const dir of pathValue.split(delimiter)) {
+  for (const dir of pathValue.split(delimiter).slice(0, 128)) {
     if (!dir) continue;
-    if (existsSync(join(dir, cmd)) || existsSync(join(dir, `${cmd}.exe`))) return true;
+    for (const name of process.platform === "win32" ? [cmd, `${cmd}.exe`] : [cmd]) {
+      const path = join(dir, name);
+      try {
+        if (!statSync(path).isFile()) continue;
+        accessSync(path, constants.X_OK);
+        return true;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES") {
+          console.error(`[toolchain-rust] cannot inspect executable ${path}: ${code ?? String(err)}`);
+        }
+      }
+    }
   }
   return false;
 }
@@ -38,7 +50,7 @@ export const rustProvider: ToolchainProvider = {
         { name: "RUSTC_WRAPPER", value: "sccache" },
         { name: "SCCACHE_DIR", value: join(ctx.cacheNamespace, "sccache") },
         { name: "SCCACHE_CACHE_SIZE", value: sccacheCacheSize() },
-        { name: "SCCACHE_BASEDIRS", value: ctx.projectRoot },
+        { name: "SCCACHE_BASEDIRS", value: [...new Set([ctx.projectRoot, ctx.worktreeRoot])].join(delimiter) },
         { name: "CARGO_INCREMENTAL", value: "0" },
       );
     }

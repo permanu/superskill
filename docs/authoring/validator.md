@@ -48,6 +48,7 @@ used).
 | `fm-missing` | error | File does not start with a `---` frontmatter block. |
 | `fm-parse` | error | YAML frontmatter does not parse. |
 | `field-required` | error | Missing/empty `id`, `lang`, `prefix`, `title`, `severity`, `enforce`, `baseline`, `status`. |
+| `baseline-invalid` | error | `baseline` is not the literal `latest`. |
 | `enum` | error | `lang`, `severity`, `enforce`, or `status` outside its enum. |
 | `prefix-format` | error | `prefix` is not lowercase kebab-case. |
 | `field-type` | error | `tool`, `triggers`, `triggers.*`, or `related` has the wrong shape. |
@@ -72,7 +73,7 @@ used).
 | `forbidden-token` | error / warning | `TODO`, `FIXME`, `XXX`, `TBD` are errors; `placeholder`, `lorem` are warnings. |
 | `snippet-elision` | error | Bare elision line: the entire line is `...` or `..` (Python `Ellipsis` exempt). |
 | `comment-elision` | warning | `...` or spaced `..` inside `//`, `#`, or `/* */` comments in a code fence. |
-| `unicode-ellipsis` | warning | Unicode ellipsis `…` used as an elision. |
+| `unicode-ellipsis` | error | Unicode ellipsis `…` used as an elision. |
 | `snippet-too-long` | warning | A snippet exceeds 25 content lines (§4). |
 | `hedging` | warning | `consider`, `might`, or `often` in prose (outside code fences). |
 | `vague-condition` | warning | `as needed` without a nearby condition (`if`/`when`/`unless`/`before`/`after`/`once`/`whenever`/`only`). |
@@ -80,24 +81,28 @@ used).
 | `pack-missing` | warning | `validatePack` directory does not exist. |
 | `root-missing` | warning | `validateAll` root does not exist (reported, not fatal). |
 | `index-file-missing` | error | `INDEX.md` absent from a pack. |
+| `sources-baseline` | error | `sources.md` does not declare `Baseline: latest`. |
+| `index-baseline` / `index-count` | error | Index baseline or discovered total/verified counts do not match. |
 | `index-missing` | error | Rule file not listed in `INDEX.md`. |
 | `index-extra` | error | `INDEX.md` lists a file that does not exist as a rule in the directory. |
 | `compile-skipped` | warning | Toolchain missing; snippet was not compiled. |
 | `compile-exempt` | warning | Rule declares `compile_exempt`; snippet compilation skipped for the stated reason (rule still counts as checked). |
 | `compile-failed` | error | Snippet failed to compile (message carries the compiler version). |
 
-`INDEX.md` is compared in both directions over its list entries: every rule file
-must have exactly one list link, and every list link must resolve to a rule file
-(reserved files `INDEX.md`, `sources.md`, `categories.md` are never rule files).
-Prose links elsewhere in the index (for example to `categories.md`) are ignored.
+Pack collection is recursive and excludes symlinks and reserved metadata files.
+Existing packs require `INDEX.md`, `sources.md`, and `categories.md`; baseline and
+total/verified counts must agree with the discovered files. Index links may use
+lists, tables, or plain Markdown, including safe nested paths and URL escapes.
+Every rule must be indexed, and links naming rule files must resolve. Links to
+reserved metadata files are not rule links.
 
 Compilation runs only when the file is otherwise error-free, so a rule with
 static errors never pays for a toolchain run. Warnings (comment elisions,
-Unicode ellipses, over-length snippets, hedging) never block: `checkedCount`
+over-length snippets, hedging) never block: `checkedCount`
 counts rules with zero **errors** only.
 
 Elision policy (§12): bare `...`/`..` lines are errors; `...`/spaced `..` inside
-comments and `…` are warnings. Literal syntax such as C/C++ `...` (catch-all,
+comments are warnings; Unicode `…` elisions are errors. Literal syntax such as C/C++ `...` (catch-all,
 varargs, packs) and Rust `..` ranges — including `0..10` in comments — is not
 flagged, and a Python `...` statement is treated as `Ellipsis`, not an elision.
 
@@ -128,7 +133,7 @@ probed from the toolchain (e.g. `rustc 1.94.0`, `tsc 5.9.3`, `Python 3.14.6`), o
 | python | `python3 -m py_compile <file>` | none. |
 | go | `go build ./...` in a temp module | prepends `package main` when the snippet has no package clause; appends an empty `func main() {}` when a `main` package lacks one. |
 | swift | `swiftc -parse <file>` | none (top-level code is valid). |
-| java | `javac -d <tmp> <file>` | type declarations (including `@interface`) are kept (file named after the public type); method blocks are wrapped in `class Snippet`; bare statements in `class Snippet { main(...) }`; `module` declarations compile as `module-info.java`; `package`-only units as `package-info.java`. Snippets importing `org.junit.*` / `org.openjdk.jmh.*` compile with `-cp ~/.superskill/cache/jars/*` (jars fetched once from Maven Central; `SUPERSKILL_JAVA_JAR_CACHE` overrides the dir). If the jars are unavailable the snippet is skipped with a `missing-dependency:` reason. |
+| java | `javac -d <tmp> <file>` | type declarations (including `@interface`) are kept (file named after the public type); method blocks are wrapped in `class Snippet`; bare statements in `class Snippet { main(...) }`; `module` declarations compile as `module-info.java`; `package`-only units as `package-info.java`. JUnit/JMH imports use an explicit classpath of source-pinned, hash-verified Maven jars, never a cache-directory wildcard. `SUPERSKILL_JAVA_JAR_CACHE` overrides the private cache; missing or unverifiable jars yield a `missing-dependency:` skip. |
 | c | `clang -fsyntax-only -std=c23 <file>` | none first; falls back to `int main(void) { <code> }` with stdio/stdlib/string/stdint/stdbool includes; leading preprocessor lines stay at file scope. |
 | cpp | `clang++ -fsyntax-only -std=c++23 <file>` | same as C, with iostream/string/vector/cstdio/cstdint includes and `int main()`. |
 

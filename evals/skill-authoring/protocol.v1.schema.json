@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superskill.local/schemas/skill-eval-protocol.v1.schema.json",
+  "title": "Skill authoring evaluation protocol v1",
+  "oneOf": [
+    {"$ref": "#/$defs/plan"},
+    {"$ref": "#/$defs/ledger"}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "model": {
+      "type": "object",
+      "required": ["provider_id", "model_id", "variant", "reference"],
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 3},
+        "variant": {"type": "string", "minLength": 1},
+        "reference": {"type": "string", "minLength": 5}
+      },
+      "additionalProperties": false
+    },
+    "controls": {
+      "type": "object",
+      "required": ["harness", "permissions", "mcp", "tool_availability", "steering_sha256"],
+      "properties": {
+        "harness": {"type": "object", "required": ["id", "version"], "properties": {"id": {"type": "string"}, "version": {"type": "string"}}, "additionalProperties": false},
+        "permissions": {"type": "object", "required": ["profile", "network", "vault", "home", "fresh_workspace_per_run", "cross_arm_outputs", "project_agents_disabled", "global_steering_sha256", "permission_rules_sha256", "permissions_sha256"], "properties": {"profile": {"type": "string"}, "network": {"const": "disabled"}, "vault": {"const": "inaccessible"}, "home": {"const": "isolated-empty"}, "fresh_workspace_per_run": {"const": true}, "cross_arm_outputs": {"const": false}, "project_agents_disabled": {"const": true}, "global_steering_sha256": {"$ref": "#/$defs/sha256"}, "permission_rules_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}, "permissions_sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false},
+        "mcp": {"type": "object", "required": ["servers", "storage_root", "cwd_policy", "command_policy", "environment_policies", "environment_sha256"], "properties": {"servers": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object", "required": ["name", "backend_sha256"], "properties": {"name": {"const": "superskill"}, "backend_sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false}}, "storage_root": {"const": "isolated-arm-home"}, "cwd_policy": {"const": "fresh-fixture-repo"}, "command_policy": {"const": "absolute-node-and-built-server"}, "environment_policies": {"type": "object", "required": ["HOME", "VAULT_PATH", "SUPERSKILL_CACHE_ROOT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"], "properties": {"HOME": {"const": "arm-home"}, "VAULT_PATH": {"const": "arm-home/vault"}, "SUPERSKILL_CACHE_ROOT": {"const": "arm-home/cache"}, "GIT_CONFIG_GLOBAL": {"const": "/dev/null"}, "GIT_CONFIG_NOSYSTEM": {"const": "1"}}, "additionalProperties": false}, "environment_sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false},
+        "tool_availability": {"type": "object", "required": ["tools", "sha256"], "properties": {"tools": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false},
+        "steering_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "fixture": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "executionPolicy": {
+      "type": "object",
+      "required": ["read_paths", "write_paths", "commands", "network", "external_paths"],
+      "properties": {
+        "read_paths": {"type": "array", "items": {"type": "string"}},
+        "write_paths": {"type": "array", "items": {"type": "string"}},
+        "commands": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+        "network": {"const": "deny"},
+        "external_paths": {"const": "deny"}
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "required": ["request_id", "case_id", "case_name", "arm_id", "model", "skill", "controls_sha256", "fixture_sha256", "fixture_files", "execution_policy", "execution_policy_sha256", "user_prompt", "workspace_policy"],
+      "properties": {
+        "request_id": {"type": "string", "minLength": 1},
+        "case_id": {"type": "string", "minLength": 1},
+        "case_name": {"type": "string", "minLength": 1},
+        "arm_id": {"enum": ["without_native_skill", "old_skill", "improved_skill"]},
+        "model": {"$ref": "#/$defs/model"},
+        "skill": {
+          "type": "object",
+          "required": ["mode", "permission_mode", "sha256", "source_id"],
+          "properties": {
+            "mode": {"enum": ["none", "snapshot"]},
+            "permission_mode": {"enum": ["deny_all", "allow_superskill"]},
+            "sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+            "source_id": {"oneOf": [{"type": "null"}, {"const": "superskill"}]}
+          },
+          "additionalProperties": false
+        },
+        "controls_sha256": {"$ref": "#/$defs/sha256"},
+        "fixture_sha256": {"$ref": "#/$defs/sha256"},
+        "fixture_files": {"type": "array", "items": {"$ref": "#/$defs/fixture"}, "minItems": 1},
+        "execution_policy": {"$ref": "#/$defs/executionPolicy"},
+        "execution_policy_sha256": {"$ref": "#/$defs/sha256"},
+        "user_prompt": {"type": "string", "minLength": 1},
+        "workspace_policy": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "required": ["protocol_version", "plan_id", "profile", "model", "controls", "fixture_manifest", "fixture_sha256", "arms", "requests", "evaluation_note"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "plan_id": {"type": "string", "minLength": 1},
+        "profile": {
+          "type": "object",
+          "required": ["id", "sha256"],
+          "properties": {"id": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}},
+          "additionalProperties": false
+        },
+        "model": {"$ref": "#/$defs/model"},
+        "controls": {"$ref": "#/$defs/controls"},
+        "fixture_manifest": {"type": "array", "items": {"type": "object", "required": ["case_id", "path", "sha256"], "properties": {"case_id": {"type": "string"}, "path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false}},
+        "fixture_sha256": {"$ref": "#/$defs/sha256"},
+        "arms": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "object", "required": ["id", "skill_mode", "permission_mode", "skill_sha256"], "properties": {"id": {"enum": ["without_native_skill", "old_skill", "improved_skill"]}, "skill_mode": {"enum": ["none", "snapshot"]}, "permission_mode": {"enum": ["deny_all", "allow_superskill"]}, "skill_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}}, "additionalProperties": false}},
+        "requests": {"type": "array", "minItems": 9, "items": {"$ref": "#/$defs/request"}},
+        "evaluation_note": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "observed": {
+      "type": "object",
+      "required": ["provider_id", "model_id", "variant", "harness_id", "harness_version", "permissions_sha256", "tool_availability_sha256", "steering_sha256", "fixture_sha256", "skill_sha256", "mcp_backend_sha256", "skill_permission_mode", "mcp_server_names", "mcp_storage_isolated", "mcp_environment_sha256", "mcp_cwd_policy", "mcp_command_policy", "execution_policy_sha256", "project_agents_disabled"],
+      "properties": {
+        "provider_id": {"type": ["string", "null"]},
+        "model_id": {"type": ["string", "null"]},
+        "variant": {"type": ["string", "null"]},
+        "harness_id": {"type": ["string", "null"]},
+        "harness_version": {"type": ["string", "null"]},
+        "permissions_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "tool_availability_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "steering_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "fixture_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "skill_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "mcp_backend_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "skill_permission_mode": {"type": ["string", "null"]},
+        "mcp_environment_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "mcp_cwd_policy": {"type": ["string", "null"]},
+        "mcp_command_policy": {"type": ["string", "null"]},
+        "execution_policy_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
+        "mcp_server_names": {"oneOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]},
+        "mcp_storage_isolated": {"type": ["boolean", "null"]},
+        "project_agents_disabled": {"type": ["boolean", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["id", "isolation", "cross_arm_access", "home_isolated", "vault_isolated", "fixture_sha256"],
+      "properties": {
+        "id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+        "isolation": {"enum": ["verified", "unverified"]},
+        "cross_arm_access": {"enum": ["blocked", "unverified"]},
+        "home_isolated": {"type": ["boolean", "null"]},
+        "vault_isolated": {"type": ["boolean", "null"]},
+        "fixture_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}
+      },
+      "additionalProperties": false
+    },
+    "manualReview": {
+      "type": "object",
+      "required": ["status", "score", "reviewer", "evidence"],
+      "properties": {
+        "status": {"enum": ["unreviewed", "reviewed"]},
+        "score": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+        "reviewer": {"type": ["string", "null"]},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["type", "scope"],
+      "properties": {
+        "type": {"enum": ["read", "write", "command", "approval_request", "network"]},
+        "scope": {"enum": ["fixture", "isolated_home", "external", "unknown"]},
+        "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"},
+        "success": {"type": ["boolean", "null"]},
+        "authorized": {"type": ["boolean", "null"]},
+        "purpose": {"enum": ["task", "harness_metadata", "unknown"]},
+        "argv": {"type": "array", "items": {"type": "string"}},
+        "effect": {"enum": ["read", "test", "mutating", "unknown"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "action": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "read"}}}, "then": {"required": ["path", "success"]}},
+        {"if": {"properties": {"type": {"const": "write"}}}, "then": {"required": ["path", "success", "authorized"]}},
+        {"if": {"properties": {"type": {"const": "command"}}}, "then": {"required": ["argv", "effect", "exit_code"]}},
+        {"if": {"properties": {"type": {"const": "approval_request"}}}, "then": {"required": ["action"]}}
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": ["request_id", "status", "execution_source", "observed", "workspace", "started_at", "duration_ms", "usage", "trace", "skill_delivery", "output", "manual_review", "error"],
+      "properties": {
+        "request_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["complete", "failed", "skipped", "incomplete"]},
+        "execution_source": {"enum": ["harness", "manual"]},
+        "observed": {"$ref": "#/$defs/observed"},
+        "workspace": {"$ref": "#/$defs/workspace"},
+        "started_at": {"type": ["string", "null"]},
+        "duration_ms": {"type": ["number", "null"], "minimum": 0},
+        "usage": {
+          "type": "object",
+          "required": ["input_tokens", "output_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens", "total_tokens", "total_tokens_source", "cost_usd", "cost_unknown_reason", "source"],
+          "properties": {
+            "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "reasoning_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "cache_read_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "cache_write_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "total_tokens": {"type": ["integer", "null"], "minimum": 0},
+            "total_tokens_source": {"enum": ["reported", "derived_components", "unknown"]},
+            "cost_usd": {"type": ["number", "null"], "minimum": 0},
+            "cost_unknown_reason": {"type": ["string", "null"]},
+            "source": {"enum": ["provider", "harness", "opencode-session-api", "unknown"]}
+          },
+          "additionalProperties": false
+        },
+        "trace": {"type": "object", "required": ["status", "source", "events"], "properties": {"status": {"enum": ["complete", "partial", "unavailable"]}, "source": {"enum": ["harness", "manual", "unavailable"]}, "events": {"type": "array", "items": {"$ref": "#/$defs/event"}}}, "additionalProperties": false},
+        "skill_delivery": {"type": "object", "required": ["status", "sha256", "source_id", "evidence"], "properties": {"status": {"enum": ["loaded", "not_loaded", "unknown"]}, "sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}, "source_id": {"type": ["string", "null"]}, "evidence": {"type": ["string", "null"]}}, "additionalProperties": false},
+        "output": {"type": "object", "required": ["status", "source", "final_text", "files"], "properties": {"status": {"enum": ["complete", "partial", "unavailable"]}, "source": {"enum": ["harness", "manual", "unavailable"]}, "final_text": {"type": ["string", "null"]}, "files": {"type": "array", "items": {"type": "object", "required": ["path", "workspace_path", "sha256"], "properties": {"path": {"type": "string"}, "workspace_path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}, "additionalProperties": false}}}, "additionalProperties": false},
+        "manual_review": {"$ref": "#/$defs/manualReview"},
+        "error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "ledger": {
+      "type": "object",
+      "required": ["protocol_version", "plan", "results"],
+      "properties": {"protocol_version": {"const": 1}, "plan": {"$ref": "#/$defs/plan"}, "results": {"type": "array", "items": {"$ref": "#/$defs/result"}}},
+      "additionalProperties": false
+    }
+  }
+}

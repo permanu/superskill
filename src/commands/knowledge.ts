@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandContext } from "../core/types.js";
+import { validateProjectSlug } from "../config.js";
 import { VaultError, type VaultFS } from "../lib/vault-fs.js";
 import { rebuildProjectIndex } from "../lib/knowledge-index.js";
 import { writeKnowledgeGraphFiles, type KnowledgeVizResult } from "../lib/knowledge-viz.js";
+import { resolveWorkspaceContext } from "../lib/workspace-context.js";
 
 export type { KnowledgeVizResult };
 
@@ -20,14 +22,14 @@ export async function resolveVizOpenTarget(
 }
 
 function slugOf(args: { project?: string }, ctx: CommandContext): string {
-  const slug = args.project ?? ctx.projectSlug ?? undefined;
-  if (!slug) {
+  const slug = args.project ?? ctx.projectSlug ?? ctx.vaultFs.projectSlug ?? undefined;
+  if (!slug || ctx.projectSlug === null || ctx.vaultFs.projectSlug === null) {
     throw new VaultError("PERMISSION_DENIED", "Knowledge index requires a project scope.");
   }
-  if (ctx.projectSlug && args.project && args.project !== ctx.projectSlug) {
-    throw new VaultError("PERMISSION_DENIED", `Cross-project access denied: ${args.project}`);
+  if ([ctx.projectSlug, ctx.vaultFs.projectSlug].some((scope) => typeof scope === "string" && scope !== slug)) {
+    throw new VaultError("PERMISSION_DENIED", `Cross-project access denied: ${slug}`);
   }
-  return slug;
+  return validateProjectSlug(slug);
 }
 
 export async function knowledgeRebuildCommand(
@@ -44,5 +46,6 @@ export async function knowledgeVizCommand(
   ctx: CommandContext,
 ): Promise<KnowledgeVizResult> {
   const project = slugOf(args, ctx);
-  return writeKnowledgeGraphFiles(ctx.vaultPath, project, { codeRoot: ctx.workspacePath ?? process.cwd() });
+  const workspace = await resolveWorkspaceContext(ctx.vaultPath, ctx.workspacePath ?? process.cwd(), project);
+  return writeKnowledgeGraphFiles(ctx.vaultPath, project, { codeRoot: workspace.workspacePath });
 }

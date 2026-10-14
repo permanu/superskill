@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { HarnessResult } from "../types.js";
 import { probeTool, runProcess, skippedResult, tryCandidates, withTempDir } from "./common.js";
 
@@ -36,118 +37,125 @@ const JMH_IMPORT_RE = /(?:^|\n)\s*import\s+(?:static\s+)?org\.openjdk\.jmh\./;
 
 const JAR_CACHE_DIR = process.env.SUPERSKILL_JAVA_JAR_CACHE ?? join(homedir(), ".superskill", "cache", "jars");
 
-const JAR_ARTIFACTS = [
-  "org/junit/jupiter/junit-jupiter-api/5.11.4/junit-jupiter-api-5.11.4.jar",
-  "org/junit/jupiter/junit-jupiter-params/5.11.4/junit-jupiter-params-5.11.4.jar",
-  "org/junit/platform/junit-platform-commons/1.11.4/junit-platform-commons-1.11.4.jar",
-  "org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar",
-  "org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar",
-  "org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar",
-  "net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar",
-  "org/apache/commons/commons-math3/3.6.1/commons-math3-3.6.1.jar",
+interface JarArtifact {
+  readonly path: string;
+  readonly sha256: string;
+}
+
+export const JAR_ARTIFACTS: readonly JarArtifact[] = [
+  { path: "org/junit/jupiter/junit-jupiter-api/5.11.4/junit-jupiter-api-5.11.4.jar", sha256: "ab83ef9e51ac4597d59d26b4b58812129550e2f579a404c8af7d09f5ce5b4293" },
+  { path: "org/junit/jupiter/junit-jupiter-params/5.11.4/junit-jupiter-params-5.11.4.jar", sha256: "02a6e015de7ce94ac7f256e7fa05b8091dea861fe79a555a7993313d0f6c7d96" },
+  { path: "org/junit/platform/junit-platform-commons/1.11.4/junit-platform-commons-1.11.4.jar", sha256: "9edd969b0d0670c54105bc91ae79bd1c6f503e12115faba82073b84c86bbc334" },
+  { path: "org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar", sha256: "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b" },
+  { path: "org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar", sha256: "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38" },
+  { path: "org/openjdk/jmh/jmh-core/1.37/jmh-core-1.37.jar", sha256: "dc0eaf2bbf0036a70b60798c785d6e03a9daf06b68b8edb0f1ba9eb3421baeb3" },
+  { path: "net/sf/jopt-simple/jopt-simple/5.0.4/jopt-simple-5.0.4.jar", sha256: "df26cc58f235f477db07f753ba5a3ab243ebe5789d9f89ecf68dd62ea9a66c28" },
+  { path: "org/apache/commons/commons-math3/3.6.1/commons-math3-3.6.1.jar", sha256: "1e56d7b058d28b65abd256b8458e3885b674c1d588fa43cd7d1cbb9c7ef2b308" },
 ];
 
-interface JarState {
-  ok: boolean;
-  output: string;
-}
+type JarState = { ok: true; output: string; classpath: string } | { ok: false; output: string };
 
 let jarPromise: Promise<JarState> | null = null;
 
-const JAR_MANIFEST_FILE = "manifest.json";
+const MAX_JAR_BYTES = 8 * 1024 * 1024;
+const JAR_DOWNLOAD_TIMEOUT_MS = 15_000;
 
 function sha256(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-async function readJarManifest(): Promise<Record<string, string>> {
-  const file = join(JAR_CACHE_DIR, JAR_MANIFEST_FILE);
+async function fetchPinnedJar(relative: string): Promise<Buffer> {
+  const response = await fetch(`https://repo.maven.apache.org/maven2/${relative}`, {
+    redirect: "error",
+    signal: AbortSignal.timeout(JAR_DOWNLOAD_TIMEOUT_MS),
+  });
+  if (!response.ok || Number(response.headers.get("content-length")) > MAX_JAR_BYTES) {
+    await response.body?.cancel();
+    if (!response.ok) throw new Error(`download failed (${response.status}) for ${relative}`);
+    throw new Error(`jar download exceeds ${MAX_JAR_BYTES} bytes: ${relative}`);
+  }
+  if (!response.body) throw new Error(`empty download for ${relative}`);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > MAX_JAR_BYTES) throw new Error(`jar download exceeds ${MAX_JAR_BYTES} bytes: ${relative}`);
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks, size);
+}
+
+async function readCachedJar(file: string): Promise<Buffer | null> {
+  let handle;
   try {
-    const parsed: unknown = JSON.parse(await readFile(file, "utf-8"));
-    const manifest: Record<string, string> = {};
-    if (parsed && typeof parsed === "object") {
-      for (const [name, digest] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof digest === "string" && /^[0-9a-f]{64}$/.test(digest)) manifest[name] = digest;
-      }
-    }
-    return manifest;
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") console.error(`[java-harness] jar manifest unreadable: ${(e as Error).message}`);
-    return {};
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
   }
-}
-
-async function writeJarManifest(manifest: Record<string, string>): Promise<void> {
-  await writeFile(join(JAR_CACHE_DIR, JAR_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
-}
-
-/** Download a jar, verifying against the pinned sha256 with one re-download on mismatch. */
-async function fetchPinnedJar(url: string, name: string, expected: string | undefined): Promise<Buffer> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`download failed (${response.status}) for ${url}`);
-  let buffer = Buffer.from(await response.arrayBuffer());
-  if (!expected || sha256(buffer) === expected) return buffer;
-  console.error(`[java-harness] hash mismatch for ${name}; re-downloading once`);
-  const retry = await fetch(url);
-  if (!retry.ok) throw new Error(`download failed (${retry.status}) for ${url}`);
-  buffer = Buffer.from(await retry.arrayBuffer());
-  if (sha256(buffer) !== expected) {
-    throw new Error(`integrity check failed for ${name}: content does not match the pinned sha256`);
-  }
-  return buffer;
-}
-
-async function prepareJars(): Promise<JarState> {
   try {
-    await mkdir(JAR_CACHE_DIR, { recursive: true });
-    const manifest = await readJarManifest();
-    let manifestChanged = false;
-    for (const relative of JAR_ARTIFACTS) {
-      const name = relative.slice(relative.lastIndexOf("/") + 1);
-      const file = join(JAR_CACHE_DIR, name);
-      const url = `https://repo1.maven.org/maven2/${relative}`;
-      const expected = manifest[name];
-      let existing: Buffer | null = null;
-      try {
-        existing = await readFile(file);
-      } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT") return { ok: false, output: `cannot read cached jar ${name}: ${(e as Error).message}` };
-      }
-      if (existing) {
-        const digest = sha256(existing);
-        if (expected === undefined) {
-          manifest[name] = digest;
-          manifestChanged = true;
-          continue;
-        }
-        if (digest === expected) continue;
-        console.error(`[java-harness] hash mismatch for ${name}; deleting and re-downloading once`);
-        try {
-          await unlink(file);
-        } catch (e) {
-          const code = (e as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT") console.error(`[java-harness] could not delete ${name}: ${(e as Error).message}`);
-        }
-      }
-      const buffer = await fetchPinnedJar(url, name, expected);
-      await writeFile(file, buffer);
-      const digest = sha256(buffer);
-      if (manifest[name] !== digest) {
-        manifest[name] = digest;
-        manifestChanged = true;
-      }
+    const info = await handle.stat();
+    if (!info.isFile() || (process.getuid && info.uid !== process.getuid())) throw new Error(`unsafe cached jar: ${file}`);
+    if (info.size > MAX_JAR_BYTES) throw new Error(`cached jar exceeds ${MAX_JAR_BYTES} bytes: ${file}`);
+    await handle.chmod(0o600);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      size += chunk.length;
+      if (size > MAX_JAR_BYTES) throw new Error(`cached jar exceeds ${MAX_JAR_BYTES} bytes: ${file}`);
+      chunks.push(chunk);
     }
-    if (manifestChanged) await writeJarManifest(manifest);
-    return { ok: true, output: "" };
+    return Buffer.concat(chunks, size);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeCachedJar(file: string, bytes: Buffer): Promise<void> {
+  const temp = `${file}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, bytes, { flag: "wx", mode: 0o600 });
+    await rename(temp, file);
+  } finally {
+    await unlink(temp).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== "ENOENT") console.error(`[java-harness] could not remove temporary jar: ${e.message}`);
+    });
+  }
+}
+
+export async function prepareJavaJars(cacheDir = JAR_CACHE_DIR, artifacts: readonly JarArtifact[] = JAR_ARTIFACTS): Promise<JarState> {
+  try {
+    if (cacheDir.includes(delimiter)) throw new Error("jar cache path contains a classpath delimiter");
+    await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+    const directory = await open(cacheDir, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    try {
+      const info = await directory.stat();
+      if (!info.isDirectory() || (process.getuid && info.uid !== process.getuid())) throw new Error(`unsafe jar cache: ${cacheDir}`);
+      await directory.chmod(0o700);
+    } finally {
+      await directory.close();
+    }
+    const files: string[] = [];
+    for (const artifact of artifacts) {
+      if (!/^(?:[\w.-]+\/)+[\w.-]+\.jar$/.test(artifact.path) || artifact.path.split("/").some((part) => part === "." || part === "..") || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
+        throw new Error("invalid pinned jar artifact");
+      }
+      const name = artifact.path.slice(artifact.path.lastIndexOf("/") + 1);
+      const file = join(cacheDir, name);
+      const existing = await readCachedJar(file);
+      const bytes = existing ?? await fetchPinnedJar(artifact.path);
+      if (sha256(bytes) !== artifact.sha256) throw new Error(`integrity check failed for ${name}: content does not match the pinned sha256`);
+      if (!existing) await writeCachedJar(file, bytes);
+      files.push(file);
+    }
+    return { ok: true, output: "", classpath: files.join(delimiter) };
   } catch (e) {
     return { ok: false, output: e instanceof Error ? e.message : String(e) };
   }
 }
 
 function ensureJars(): Promise<JarState> {
-  if (!jarPromise) jarPromise = prepareJars();
+  if (!jarPromise) jarPromise = prepareJavaJars().finally(() => { jarPromise = null; });
   return jarPromise;
 }
 
@@ -181,7 +189,7 @@ export async function compileJava(code: string): Promise<HarnessResult> {
         output: `missing-dependency: ${missing} jars unavailable (${jars.output})`,
       };
     }
-    classpath = join(JAR_CACHE_DIR, "*");
+    classpath = jars.classpath;
   }
   const candidates: { file: string; code: string }[] = [];
   if (TYPE_DECL_RE.test(code)) {

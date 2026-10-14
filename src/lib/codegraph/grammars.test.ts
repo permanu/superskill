@@ -3,10 +3,11 @@
 import { describe, expect, it } from "vitest";
 import {
   isSupported,
+  getParser,
   languageForExtension,
   languageForFile,
   loadLanguage,
-  resetGrammars,
+  PARSE_TIMEOUT_MICROS,
   supportedFor,
   supportedLanguages,
 } from "./grammars.js";
@@ -37,12 +38,30 @@ describe("grammars", () => {
     expect(languageForFile("Makefile")).toBeNull();
   });
 
-  it("loads grammars lazily and caches them, including after a reset", async () => {
+  it("loads grammars lazily and retains one language instance across concurrent callers", async () => {
     const first = await loadLanguage("python");
     const second = await loadLanguage("python");
     expect(second).toBe(first);
-    resetGrammars();
-    const third = await loadLanguage("python");
-    expect(third).not.toBe(first);
+    const concurrent = await Promise.all([loadLanguage("rust"), loadLanguage("rust"), loadLanguage("rust")]);
+    expect(concurrent[0]).toBe(concurrent[1]);
+    expect(concurrent[1]).toBe(concurrent[2]);
+  });
+
+  it("gives direct parser consumers a bounded, reset parser", async () => {
+    const parser = await getParser();
+    parser.setLanguage(await loadLanguage("typescript"));
+    expect(parser.getTimeoutMicros()).toBe(PARSE_TIMEOUT_MICROS);
+    parser.setTimeoutMicros(1);
+    expect(() => parser.parse("const value = 1;\n".repeat(10_000))).toThrow(/Parsing failed/);
+    parser.setTimeoutMicros(PARSE_TIMEOUT_MICROS);
+    const reused = await getParser();
+    expect(reused).toBe(parser);
+    const tree = reused.parse("export const recovered = 1;");
+    try {
+      expect(tree.rootNode.hasError).toBe(false);
+      expect(tree.rootNode.text).toBe("export const recovered = 1;");
+    } finally {
+      tree.delete();
+    }
   });
 });

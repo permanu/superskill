@@ -90,7 +90,7 @@ describe("runCachesProbe managed caches", () => {
     expect(autoDue.due).toBe(true);
     expect(autoDue.reason).toContain("idle 40d");
     expect(autoDue.plan).toBe(
-      'superskill-cli worktree gc --older-than 30d --include "repo-a/go-build" --apply',
+      'superskill-cli worktree gc --all --older-than 30d --include "repo-a/go-build" --apply',
     );
     expect(autoDue.meta).toEqual({ repoId: "repo-a", tool: "go", tier: "auto" });
 
@@ -100,7 +100,7 @@ describe("runCachesProbe managed caches", () => {
     expect(consentDue.tier).toBe("consent");
     expect(consentDue.reason).toContain("consent required");
     expect(consentDue.plan).toBe(
-      'superskill-cli worktree gc --older-than 30d --tier consent --include "repo-b/cargo-build" --apply',
+      'superskill-cli worktree gc --all --older-than 30d --tier consent --include "repo-b/cargo-build" --apply',
     );
 
     expect(consentSmall.due).toBe(false);
@@ -204,7 +204,7 @@ describe("runCachesProbe default caches", () => {
     const sccacheItem = byTitle.get("rust default cache Mozilla.sccache");
     expect(sccacheItem?.tier).toBe("auto");
     expect(sccacheItem?.due).toBe(true);
-    expect(sccacheItem?.plan).toBe(`rm -rf "${sccache}"`);
+    expect(sccacheItem?.plan).toBeNull();
 
     const goModItem = byTitle.get("go default cache go/pkg/mod");
     expect(goModItem?.tier).toBe("auto");
@@ -229,7 +229,31 @@ describe("runCachesProbe default caches", () => {
     expect(result.items[0].due).toBe(true);
   });
 
-  it("caps default items at 40 and leaves bytes unknown when sizes are off", async () => {
+  it("reports quarantine retention for manual review without deleting or authorizing purge", async () => {
+    const cacheRoot = join(home, ".cache", "superskill");
+    const retained = join(cacheRoot, "_quarantine", "legacy");
+    await mkdir(retained, { recursive: true });
+    await writeFile(join(retained, "keep"), "recovery data");
+    const result = await runCachesProbe(probeOptions({ sizes: true }), {
+      scanCacheRoot: async () => [], platformCacheRoot: () => cacheRoot, home, platform: "linux",
+    });
+    const item = result.items.find((entry) => entry.meta.retention === true);
+    expect(item).toMatchObject({ tier: "review", due: false, bytes: expect.any(Number) });
+    expect(item?.plan).toBe("superskill-cli worktree gc --all --purge");
+    expect(await readdir(retained)).toEqual(["keep"]);
+  });
+
+  it("uses native uv and ccache pruning, never raw removal for inferred caches", async () => {
+    const cacheBase = join(home, ".cache");
+    for (const name of ["uv", "ccache", "pypoetry", "piper", "uv-user-work", "pnpm-store-work"]) await mkdir(join(cacheBase, name), { recursive: true });
+    const result = await runCachesProbe(probeOptions(), {
+      scanCacheRoot: async () => [], platformCacheRoot: () => join(cacheBase, "superskill"), home, platform: "linux",
+    });
+    expect(result.items.map((item) => item.title)).toEqual(["cpp default cache ccache", "python default cache pypoetry", "python default cache uv"]);
+    expect(result.items.map((item) => item.plan)).toEqual(["ccache --cleanup", null, "uv cache prune"]);
+  });
+
+  it("does not infer unmanaged caches from name prefixes", async () => {
     const cacheBase = join(home, "Library", "Caches");
     for (let index = 0; index < 45; index += 1) {
       await mkdir(join(cacheBase, `go-build-${String(index).padStart(2, "0")}`), { recursive: true });
@@ -242,9 +266,7 @@ describe("runCachesProbe default caches", () => {
       platform: "darwin",
     });
 
-    expect(result.items).toHaveLength(40);
-    expect(result.items[0].bytes).toBeNull();
-    expect(result.items.every((item) => item.meta.tool === "go")).toBe(true);
+    expect(result.items).toEqual([]);
   });
 
   it("emits no default items on unsupported platforms", async () => {

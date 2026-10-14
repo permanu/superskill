@@ -8,6 +8,7 @@ import { formatBytes } from "../../format-bytes.js";
 import { probeDirAge, probeDirSize } from "../../worktree/audit.js";
 import { hashId } from "../../worktree/paths.js";
 import { quoteShell } from "../shell.js";
+import { mapBounded, probeDeadline } from "../budget.js";
 import type {
   HygieneItem,
   HygieneProbe,
@@ -85,7 +86,7 @@ async function probeDerivedData(
   let bytes: number | null = null;
   let ageDays: number | null = null;
   if (opts.sizes) {
-    [bytes, ageDays] = await Promise.all([probeDirSize(path), probeDirAge(path)]);
+    [bytes, ageDays] = await Promise.all([probeDirSize(path, { deadline: opts.deadline }), probeDirAge(path)]);
   } else {
     ageDays = Math.max(0, opts.now - info.mtimeMs) / MS_PER_DAY;
   }
@@ -156,12 +157,13 @@ async function probeDeviceSupport(
     .sort();
   const older = entries.filter((entry) => compareVersions(entry.version, maxVersion) < 0);
 
-  return Promise.all(
-    older.map(async (entry): Promise<HygieneItem> => {
+  return mapBounded(
+    older,
+    async (entry): Promise<HygieneItem> => {
       let bytes: number | null = null;
       let ageDays: number | null = null;
       if (opts.sizes) {
-        [bytes, ageDays] = await Promise.all([probeDirSize(entry.path), probeDirAge(entry.path)]);
+        [bytes, ageDays] = await Promise.all([probeDirSize(entry.path, { deadline: opts.deadline }), probeDirAge(entry.path)]);
       }
       return {
         id: `xcode:device-support:${hashId(entry.name)}`,
@@ -176,7 +178,8 @@ async function probeDeviceSupport(
         plan: `rm -rf ${quoteShell(entry.path)}`,
         meta: { version: formatVersion(entry.version), name: entry.name, newest: newestNames.join(", ") },
       };
-    }),
+    },
+    { deadline: opts.deadline, cap: 40 },
   );
 }
 
@@ -242,6 +245,7 @@ export async function runXcodeProbe(
   opts: HygieneProbeOptions,
   deps: XcodeProbeDeps = {},
 ): Promise<HygieneProbeResult> {
+  opts = { ...opts, deadline: probeDeadline(opts.deadline) };
   const platform = deps.platform ?? process.platform;
   if (platform !== "darwin") {
     return {
@@ -254,7 +258,12 @@ export async function runXcodeProbe(
 
   const home = deps.home ?? homedir();
   const xcodeHome = join(home, "Library", "Developer", "Xcode");
-  const exec = deps.exec ?? defaultExec;
+  const underlyingExec = deps.exec ?? defaultExec;
+  const exec: XcodeExec = (cmd, args, settings) => {
+    const remaining = opts.deadline! - Date.now();
+    if (remaining <= 0) return Promise.reject(new Error("xcode probe time budget reached"));
+    return underlyingExec(cmd, args, { ...settings, timeout: Math.max(1, Math.min(settings.timeout, remaining)) });
+  };
 
   try {
     const [derivedData, deviceSupport, simulators] = await Promise.all([

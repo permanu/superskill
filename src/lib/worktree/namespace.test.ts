@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -48,12 +48,12 @@ describe("worktree markers", () => {
   it("records a marker with the resolved worktree path and refreshes it", async () => {
     const worktree = join(base, "wt");
     await mkdir(worktree, { recursive: true });
-    await recordWorktreeMarker(cacheNs, "key1", worktree);
-    const marker = join(cacheNs, ".worktrees", "key1");
+    await recordWorktreeMarker(cacheNs, worktreeKey(worktree), worktree);
+    const marker = join(cacheNs, ".worktrees", worktreeKey(worktree));
     expect(await readFile(marker, "utf-8")).toBe(`${worktree}\n`);
 
     const before = await stat(marker);
-    await recordWorktreeMarker(cacheNs, "key1", worktree);
+    await recordWorktreeMarker(cacheNs, worktreeKey(worktree), worktree);
     const after = await stat(marker);
     expect(after.mtimeMs).toBe(before.mtimeMs);
   });
@@ -62,16 +62,59 @@ describe("worktree markers", () => {
     expect((await readWorktreeMarkers(cacheNs)).size).toBe(0);
     const worktree = join(base, "wt");
     await mkdir(worktree, { recursive: true });
-    await recordWorktreeMarker(cacheNs, "key1", worktree);
-    await recordWorktreeMarker(cacheNs, "key2", worktree);
+    const other = join(base, "other");
+    await recordWorktreeMarker(cacheNs, worktreeKey(worktree), worktree);
+    await recordWorktreeMarker(cacheNs, worktreeKey(other), other);
     const markers = await readWorktreeMarkers(cacheNs);
-    expect(markers.get("key1")).toBe(worktree);
-    expect(markers.get("key2")).toBe(worktree);
+    expect(markers.get(worktreeKey(worktree))).toBe(worktree);
+    expect(markers.get(worktreeKey(other))).toBe(other);
   });
 
   it("detects missing marker targets only for absent paths", async () => {
     expect(await markerTargetMissing(join(base, "does-not-exist"))).toBe(true);
     expect(await markerTargetMissing(base)).toBe(false);
+  });
+
+  it("accepts only bounded regular path-bound marker records and preserves everything else", async () => {
+    const worktree = join(base, "missing");
+    const key = worktreeKey(worktree);
+    const dir = join(cacheNs, ".worktrees");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "user-notes"), `${worktree}\n`);
+    await writeFile(join(dir, "1234567890abcdef"), `${worktree}\n`);
+    await writeFile(join(dir, key), `${worktree}\n`);
+    expect([...await readWorktreeMarkers(cacheNs)]).toEqual([[key, worktree]]);
+    await rm(join(dir, key));
+    await symlink(join(dir, "user-notes"), join(dir, key));
+    expect((await readWorktreeMarkers(cacheNs)).size).toBe(0);
+    expect((await lstat(join(dir, key))).isSymbolicLink()).toBe(true);
+    expect((await readdir(dir)).sort()).toEqual(["1234567890abcdef", key, "user-notes"].sort());
+    await expect(recordWorktreeMarker(cacheNs, "../escape", worktree)).rejects.toThrow("key");
+  });
+
+  it("does not classify dangling links or ENOTDIR targets as absent worktrees", async () => {
+    const dangling = join(base, "link");
+    await symlink(join(base, "missing"), dangling);
+    await writeFile(join(base, "file"), "keep");
+    expect(await markerTargetMissing(dangling)).toBe(false);
+    expect(await markerTargetMissing(join(base, "file", "child"))).toBe(false);
+  });
+
+  it("refuses marker directory symlinks and never overwrites unknown marker contents", async () => {
+    const worktree = join(base, "worktree");
+    const outside = join(base, "outside");
+    await mkdir(cacheNs, { recursive: true });
+    await mkdir(outside);
+    await symlink(outside, join(cacheNs, ".worktrees"));
+    await expect(recordWorktreeMarker(cacheNs, worktreeKey(worktree), worktree)).rejects.toThrow("Unsafe");
+    expect((await readWorktreeMarkers(cacheNs)).size).toBe(0);
+    expect(await readdir(outside)).toEqual([]);
+    await rm(join(cacheNs, ".worktrees"));
+    await mkdir(join(cacheNs, ".worktrees"));
+    const marker = join(cacheNs, ".worktrees", worktreeKey(worktree));
+    await writeFile(marker, "private user note");
+    await expect(recordWorktreeMarker(cacheNs, worktreeKey(worktree), worktree)).rejects.toThrow("preserved");
+    expect(await readFile(marker, "utf-8")).toBe("private user note");
   });
 });
 
@@ -133,6 +176,18 @@ describe("migrateLegacyNamespace", () => {
     expect(result.migrated).toBe(false);
     expect(result.note).toContain("already exists");
     expect(existsSync(join(cacheRoot, "legacy"))).toBe(true);
+  });
+
+  it("refuses traversal identities and symlink cache roots even in migration previews", async () => {
+    const outside = join(base, "outside");
+    await mkdir(join(outside, "legacy"), { recursive: true });
+    await symlink(outside, cacheRoot);
+    const unsafeRoot = await migrateLegacyNamespace({ repoId: "shared", legacyRepoId: "legacy" }, { cacheRoot });
+    expect(unsafeRoot.migrated).toBe(false);
+    expect(unsafeRoot.note).toContain("unsafe");
+    const traversal = await migrateLegacyNamespace({ repoId: "../escape", legacyRepoId: "legacy" }, { cacheRoot, dryRun: true });
+    expect(traversal.note).toContain("unsafe");
+    expect(await readdir(outside)).toEqual(["legacy"]);
   });
 });
 

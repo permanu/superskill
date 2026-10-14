@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile, appendFile, access, readdir, lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import matter from "gray-matter";
+import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import matter from "../../lib/markdown-matter.js";
 import type { CommandContext } from "../../core/types.js";
 import { detectStack } from "../../lib/stack-detector.js";
 import { detectTool } from "../../lib/tool-detector.js";
 import {
   ensureSuperskillDir,
+  loadGraph,
   mutateGraph,
   findNode,
   removeNode,
@@ -16,8 +18,10 @@ import {
 } from "../../lib/graph/store.js";
 import { normalizeInstalls, normalizeStars } from "../../lib/graph/learner.js";
 import { auditHasFailure } from "../../lib/security-gate.js";
-import { loadCatalog, packagedCatalogVersion } from "../../lib/catalog.js";
+import { loadCatalog, packagedCatalogVersion, readBoundedSkillFile } from "../../lib/catalog.js";
+import { parseSkillId } from "../../lib/graph/loader.js";
 import { registerProject } from "../../lib/project-map.js";
+import { validateNativeSkillMetadata, type NativeSkillIssue } from "../../lib/native-skill.js";
 import type {
   ProjectNode,
   SkillNode,
@@ -31,6 +35,7 @@ export interface InitResult {
   project_stack: string[];
   project_tools: string[];
   native_skills_found: number;
+  native_skill_compatibility_warnings: Array<{ path: string; issues: NativeSkillIssue[] }>;
   skills_discovered: number;
   skills_blocked: number;
   graph_path: string;
@@ -55,14 +60,25 @@ This project uses superskill for skill routing and rules.
 `;
 
 async function appendToInstructionFile(projectDir: string): Promise<void> {
+  const root = await realpath(projectDir);
   for (const filename of ["AGENTS.md", "CLAUDE.md"]) {
-    const filePath = join(projectDir, filename);
+    const filePath = join(root, filename);
     try {
-      await access(filePath);
-      const content = await readFile(filePath, "utf-8");
+      if ((await lstat(filePath)).isSymbolicLink()) throw new Error(`Initialization refused: symlink at ${filename}`);
+      const { bytes } = await readBoundedSkillFile(filePath, [root]);
+      const content = bytes.toString("utf-8");
       if (content.includes("## SuperSkill")) continue;
-      await appendFile(filePath, SUPER_SKILL_APPEND, "utf-8");
-    } catch {
+      const handle = await open(filePath, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        if (!(await handle.stat()).isFile()) throw new Error(`Instruction path is not a regular file: ${filename}`);
+        await handle.writeFile(SUPER_SKILL_APPEND, "utf-8");
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      console.error(`[skill-init] failed to update ${filename}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
   }
 }
@@ -76,13 +92,20 @@ function getSkillDirectories(projectDir: string): string[] {
 }
 
 async function scanNativeSkillDirs(projectDir: string): Promise<string[]> {
-  const dirs = getSkillDirectories(projectDir);
+  const dirs = getSkillDirectories(await realpath(projectDir));
   const skillFiles: string[] = [];
+  const budget = { entries: 0 };
 
   for (const dir of dirs) {
     try {
-      await collectSkillFiles(dir, skillFiles);
-    } catch {
+      if (await realpath(dir) !== dir) throw new Error(`Symlinked native skill source root rejected: ${dir}`);
+      await collectSkillFiles(dir, skillFiles, budget);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        console.error(`[skill-init] failed to scan ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     }
   }
 
@@ -92,22 +115,26 @@ async function scanNativeSkillDirs(projectDir: string): Promise<string[]> {
 async function collectSkillFiles(
   dir: string,
   results: string[],
+  budget: { entries: number },
   depth = 0,
 ): Promise<void> {
   if (depth > 5) return;
   try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
+    const entries = await opendir(dir);
+    for await (const entry of entries) {
+      if (++budget.entries > 10_000) throw new Error("Native skill scan entry limit exceeded");
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".agents") continue;
         if (entry.name === "node_modules" || entry.name === "dist") continue;
-        await collectSkillFiles(fullPath, results, depth + 1);
-      } else if (entry.name === "SKILL.md") {
+        await collectSkillFiles(fullPath, results, budget, depth + 1);
+      } else if (entry.isFile() && entry.name === "SKILL.md") {
         results.push(fullPath);
       }
     }
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
   }
 }
 
@@ -121,6 +148,11 @@ export interface ParsedNativeSkill {
   langs?: string[];
   triggers?: string[];
   always?: boolean;
+}
+
+interface NativeSkillInspection {
+  parsed: ParsedNativeSkill | null;
+  compatibilityIssues: NativeSkillIssue[];
 }
 
 const TRIGGER_STOPWORDS: ReadonlySet<string> = new Set([
@@ -168,28 +200,33 @@ export function deriveTriggers(name: string, description: string): string[] {
   return terms;
 }
 
-export async function parseNativeSkillFile(filePath: string): Promise<ParsedNativeSkill | null> {
+async function inspectNativeSkillFile(filePath: string): Promise<NativeSkillInspection> {
   try {
-    const content = await readFile(filePath, "utf-8");
+    if ((await lstat(filePath)).isSymbolicLink()) throw new Error(`Symlinked native skill file rejected: ${filePath}`);
+    const { bytes } = await readBoundedSkillFile(filePath, [await realpath(dirname(filePath))]);
+    const content = bytes.toString("utf-8");
     const { data } = matter(content);
+    const compatibilityIssues = validateNativeSkillMetadata(data)
+      .filter((issue) => issue.severity === "error");
     const name = typeof data.name === "string" ? data.name : "";
-    if (!name) return null;
+    if (!name || parseSkillId(`native/${name}`)?.source !== "native") return { parsed: null, compatibilityIssues };
 
     const result: ParsedNativeSkill = { name };
 
     if (data.audits && typeof data.audits === "object") {
       const a = data.audits as Record<string, unknown>;
+      const status = (value: unknown): AuditStatus => value === "pass" || value === "warn" || value === "fail" ? value : "unknown";
       result.audits = {
-        gen: (typeof a.gen === "string" ? a.gen : "unknown") as AuditStatus,
-        socket: (typeof a.socket === "string" ? a.socket : "unknown") as AuditStatus,
-        snyk: (typeof a.snyk === "string" ? a.snyk : "unknown") as AuditStatus,
+        gen: status(a.gen),
+        socket: status(a.socket),
+        snyk: status(a.snyk),
       };
     }
 
-    if (typeof data.installs === "number") result.installs = data.installs;
-    if (typeof data.stars === "number") result.stars = data.stars;
+    if (Number.isSafeInteger(data.installs) && data.installs >= 0) result.installs = data.installs;
+    if (Number.isSafeInteger(data.stars) && data.stars >= 0) result.stars = data.stars;
     if (typeof data.source === "string") result.source = data.source;
-    if (typeof data.pack === "string") result.pack = data.pack as SkillPack;
+    if (typeof data.pack === "string" && /^(?:memory|code|review|security|ops|devops|optimizer|pipeline|watchdog|ui)$/.test(data.pack)) result.pack = data.pack as SkillPack;
     if (Array.isArray(data.langs)) result.langs = data.langs.filter((v): v is string => typeof v === "string");
     const explicitTriggers = Array.isArray(data.triggers)
       ? data.triggers.filter((v): v is string => typeof v === "string")
@@ -202,10 +239,24 @@ export async function parseNativeSkillFile(filePath: string): Promise<ParsedNati
     }
     if (data.always === true) result.always = true;
 
-    return result;
-  } catch {
-    return null;
+    return { parsed: result, compatibilityIssues };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[skill-init] failed to parse ${filePath}: ${code ?? "invalid native skill file"}`);
+    return {
+      parsed: null,
+      compatibilityIssues: [{
+        code: "metadata.unreadable",
+        field: "SKILL.md",
+        severity: "error",
+        message: "Native skill metadata could not be read safely; the file was excluded from native routing.",
+      }],
+    };
   }
+}
+
+export async function parseNativeSkillFile(filePath: string): Promise<ParsedNativeSkill | null> {
+  return (await inspectNativeSkillFile(filePath)).parsed;
 }
 
 export async function initProject(
@@ -216,24 +267,18 @@ export async function initProject(
   const projectDir = ctx.workspacePath ?? process.cwd();
 
   try {
-    if (options.startup) {
-      for (const relativePath of [".superskill", ".superskill/graph.json", ".gitignore"]) {
-        try {
-          if ((await lstat(join(projectDir, relativePath))).isSymbolicLink()) {
-            throw new Error(`Automatic initialization refused: symlink at ${relativePath}`);
-          }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-      }
+    if (args.bridge === true) throw new Error("Native skill bridge is unsupported; existing native skills are left unchanged");
+    await realpath(projectDir);
+    for (const relativePath of [".superskill", ".superskill/graph.json", ".superskill/graph.lock", ".gitignore", "AGENTS.md", "CLAUDE.md"]) {
       try {
-        const persisted = JSON.parse(await readFile(join(projectDir, ".superskill", "graph.json"), "utf8"));
-        if (!Array.isArray(persisted.nodes) || !Array.isArray(persisted.edges)) throw new Error("Invalid existing graph; automatic initialization refused");
+        const info = await lstat(join(projectDir, relativePath));
+        if (info.isSymbolicLink()) throw new Error(`Initialization refused: symlink at ${relativePath}`);
+        if (relativePath === ".superskill" ? !info.isDirectory() : !info.isFile()) throw new Error(`Initialization refused: invalid file type at ${relativePath}`);
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
     }
+    await loadGraph(projectDir);
     const [stack, tool] = await Promise.all([
       detectStack(projectDir),
       Promise.resolve(detectTool()),
@@ -243,6 +288,8 @@ export async function initProject(
     const projectTools = tool.tool !== "unknown" ? [tool.tool] : [];
 
     const nativeFiles = await scanNativeSkillDirs(projectDir);
+    const nativeRoot = await realpath(projectDir);
+    const nativeSkillCompatibilityWarnings: InitResult["native_skill_compatibility_warnings"] = [];
     const nativeSkills: Array<{
       id: string;
       name: string;
@@ -258,7 +305,14 @@ export async function initProject(
     const seenNames = new Set<string>();
 
     for (const filePath of nativeFiles) {
-      const parsed = await parseNativeSkillFile(filePath);
+      const inspection = await inspectNativeSkillFile(filePath);
+      if (inspection.compatibilityIssues.length > 0) {
+        nativeSkillCompatibilityWarnings.push({
+          path: relative(nativeRoot, filePath),
+          issues: inspection.compatibilityIssues,
+        });
+      }
+      const parsed = inspection.parsed;
       if (!parsed || seenNames.has(parsed.name)) continue;
       seenNames.add(parsed.name);
       nativeSkills.push({
@@ -371,7 +425,7 @@ export async function initProject(
     let vaultMappingError: string | undefined;
     if (!options.startup) try {
       const registration = await registerProject(
-        ctx.config.vaultPath,
+        ctx.vaultPath,
         projectDir,
         typeof args.slug === "string" && args.slug.trim() !== "" ? args.slug : undefined,
       );
@@ -386,6 +440,7 @@ export async function initProject(
       project_stack: projectStack,
       project_tools: projectTools,
       native_skills_found: nativeSkills.length,
+      native_skill_compatibility_warnings: nativeSkillCompatibilityWarnings,
       skills_discovered: catalog.length,
       skills_blocked: skillsBlocked,
       graph_path: join(superskillDir, "graph.json"),
@@ -401,6 +456,7 @@ export async function initProject(
       project_stack: [],
       project_tools: [],
       native_skills_found: 0,
+      native_skill_compatibility_warnings: [],
       skills_discovered: 0,
       skills_blocked: 0,
       graph_path: join(projectDir, ".superskill", "graph.json"),

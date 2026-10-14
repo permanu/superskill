@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -238,7 +238,7 @@ describe("worktree hooks", () => {
     });
 
     it("installs into a custom empty hooks dir", async () => {
-      const hooksDir = join(base, "empty-hooks");
+      const hooksDir = join(repo, "empty-hooks");
       await mkdir(hooksDir);
       await git(repo, ["config", "core.hooksPath", hooksDir]);
 
@@ -344,7 +344,7 @@ describe("worktree hooks", () => {
       expect(result.notes.join(" ")).toContain("not executable");
       expect(result.notes.join(" ")).toContain("0755");
       expect((await stat(hook)).mode & 0o777).toBe(0o755);
-      expect((await stat(result.backupPath as string)).mode & 0o777).toBe(0o644);
+      expect((await stat(result.backupPath as string)).mode & 0o777).toBe(0o600);
       expect(await readFile(result.backupPath as string, "utf-8")).toBe(original);
     });
 
@@ -652,7 +652,7 @@ describe("worktree hooks", () => {
       expect(result.notes.join(" ")).toContain("removed superskill block from .lefthook-local.yml");
     });
 
-    it("restores a recorded lefthook backup on uninstall", async () => {
+    it("never restores an arbitrary recorded lefthook backup", async () => {
       const hookFile = await installLefthook();
       const backup = join(base, "lefthook-backup.yml");
       await writeFile(backup, "# prior local config\n");
@@ -662,9 +662,9 @@ describe("worktree hooks", () => {
 
       const result = await uninstallPostCheckoutHook(repo);
       expect(result.removed).toBe(true);
-      expect(result.restored).toBe(true);
-      expect(await readFile(hookFile, "utf-8")).toBe("# prior local config\n");
-      expect(result.notes.join(" ")).toContain("restored backup of pre-existing .lefthook-local.yml");
+      expect(result.restored).toBe(false);
+      expect(await exists(hookFile)).toBe(false);
+      expect(await readFile(backup, "utf-8")).toBe("# prior local config\n");
     });
   });
 
@@ -705,10 +705,118 @@ describe("worktree hooks", () => {
       const result = await uninstallPostCheckoutHook(repo);
       expect(result.removed).toBe(true);
       expect(result.restored).toBe(false);
-      expect(result.notes.join(" ")).toContain("backup could not be restored");
+      expect(result.notes.join(" ")).toContain("kept the hook file");
       const content = await readFile(hook, "utf-8");
       expect(content).not.toContain(HOOK_START);
       expect(await exists(backupPath)).toBe(true);
+    });
+  });
+
+  describe("hook safety boundaries", () => {
+    it("refuses external hooks paths and never mistakes an external .husky name for local ownership", async () => {
+      const external = join(base, ".husky-external");
+      await mkdir(external);
+      const target = join(external, "post-checkout");
+      await writeFile(target, "external user hook\n");
+      await git(repo, ["config", "core.hooksPath", external]);
+      expect((await detectHookManager(repo)).kind).toBe("block");
+      const installed = await installPostCheckoutHook(repo);
+      expect(installed.changed).toBe(false);
+      expect(installed.notes.join(" ")).toContain("outside trusted");
+      expect((await uninstallPostCheckoutHook(repo)).removed).toBe(false);
+      expect(await readFile(target, "utf8")).toBe("external user hook\n");
+      expect(await exists(join(repo, ".husky/post-checkout"))).toBe(false);
+    });
+
+    it("does not classify lookalike local .husky paths as the husky manager", async () => {
+      await git(repo, ["config", "core.hooksPath", ".husky-not-owned"]);
+      const installed = await installPostCheckoutHook(repo);
+      expect(installed.kind).toBe("block");
+      expect(installed.hookFile).toContain(".husky-not-owned");
+      expect(await exists(join(repo, ".husky/post-checkout"))).toBe(false);
+    });
+
+    it("refuses symlink hook files on install and uninstall", async () => {
+      const hook = await postCheckoutPath(repo);
+      const target = join(base, "user-hook");
+      await writeFile(target, "user hook\n");
+      await symlink(target, hook);
+      expect((await installPostCheckoutHook(repo)).changed).toBe(false);
+      expect((await uninstallPostCheckoutHook(repo)).removed).toBe(false);
+      expect((await lstat(hook)).isSymbolicLink()).toBe(true);
+      expect(await readFile(target, "utf8")).toBe("user hook\n");
+    });
+
+    it("refuses symlink hook parent directories even when the target is inside the repository", async () => {
+      const target = join(repo, "user-hooks");
+      await mkdir(target);
+      const hook = await postCheckoutPath(repo);
+      await rm(dirname(hook), { recursive: true, force: true });
+      await symlink(target, dirname(hook));
+      const installed = await installPostCheckoutHook(repo);
+      expect(installed.changed).toBe(false);
+      expect(installed.notes.join(" ")).toContain("symlink");
+      expect((await uninstallPostCheckoutHook(repo)).removed).toBe(false);
+      expect(await exists(join(target, "post-checkout"))).toBe(false);
+    });
+
+    it("removes only the recorded owned target after core.hooksPath changes", async () => {
+      const installed = await installPostCheckoutHook(repo);
+      const otherDir = join(repo, "new-user-hooks");
+      await mkdir(otherDir);
+      const other = join(otherDir, "post-checkout");
+      const otherContent = await readFile(installed.hookFile, "utf8");
+      await writeFile(other, otherContent);
+      await git(repo, ["config", "core.hooksPath", otherDir]);
+      expect((await uninstallPostCheckoutHook(repo)).removed).toBe(true);
+      expect(await exists(installed.hookFile)).toBe(false);
+      expect(await readFile(other, "utf8")).toBe(otherContent);
+    });
+
+    it("never resurrects stale backup contents after the user removes their old hook", async () => {
+      const hook = await postCheckoutPath(repo);
+      await writeFile(hook, "#!/bin/sh\necho old-user-content\n", { mode: 0o755 });
+      const installed = await installPostCheckoutHook(repo);
+      const content = await readFile(hook, "utf8");
+      await writeFile(hook, `#!/bin/sh\n${content.slice(content.indexOf(HOOK_START))}`);
+      const removed = await uninstallPostCheckoutHook(repo);
+      expect(removed.removed).toBe(true);
+      expect(removed.restored).toBe(false);
+      expect(await readFile(hook, "utf8")).toBe("#!/bin/sh\n");
+      expect(await readFile(installed.backupPath!, "utf8")).toContain("old-user-content");
+    });
+
+    it("ignores recorded backups outside the exact owned backup path", async () => {
+      const hook = await postCheckoutPath(repo);
+      await writeFile(hook, "#!/bin/sh\n", { mode: 0o755 });
+      await installPostCheckoutHook(repo);
+      const external = join(base, "user-backup");
+      await writeFile(external, "never restore this\n");
+      const state = await readHookState(repo);
+      await writeHookState(repo, { ...state!, backupPath: external });
+      const removed = await uninstallPostCheckoutHook(repo);
+      expect(removed.restored).toBe(false);
+      expect(await readFile(hook, "utf8")).toBe("#!/bin/sh\n");
+      expect(await readFile(external, "utf8")).toBe("never restore this\n");
+    });
+
+    it("preserves user edits within a previously managed hook block", async () => {
+      const installed = await installPostCheckoutHook(repo);
+      const edited = (await readFile(installed.hookFile, "utf8")).replace("\ntrue\n", "\nuser-custom-command\n");
+      await writeFile(installed.hookFile, edited);
+      expect((await installPostCheckoutHook(repo)).changed).toBe(false);
+      expect((await uninstallPostCheckoutHook(repo)).removed).toBe(false);
+      expect(await readFile(installed.hookFile, "utf8")).toBe(edited);
+      expect(await readHookState(repo)).not.toBeNull();
+    });
+
+    it("supports the trusted common git directory for a linked worktree", async () => {
+      const linked = join(base, "linked");
+      await git(repo, ["worktree", "add", "-q", "-b", "linked-test", linked]);
+      const installed = await installPostCheckoutHook(linked);
+      expect(installed.changed).toBe(true);
+      expect(installed.hookFile).toBe(await postCheckoutPath(linked));
+      expect((await uninstallPostCheckoutHook(linked)).removed).toBe(true);
     });
   });
 });

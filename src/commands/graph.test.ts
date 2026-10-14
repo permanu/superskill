@@ -26,8 +26,8 @@ describe("graph commands", () => {
   beforeEach(async () => {
     vaultRoot = join(homedir(), `.vault-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(vaultRoot, { recursive: true });
-    vaultFs = new VaultFS(vaultRoot);
-    ctx = createCommandContext(vaultFs);
+    vaultFs = new VaultFS(vaultRoot, { projectSlug: "testproj" });
+    ctx = createCommandContext(vaultFs, { projectSlug: "testproj" });
   });
 
   afterEach(async () => {
@@ -50,8 +50,8 @@ Link to [[other-note]] and [[another-note]].
 
       const result = await graphRelatedCommand({ path: "note.md" }, ctx);
 
-      expect(result.outgoing).toContain("other-note");
-      expect(result.outgoing).toContain("another-note");
+      expect(result.outgoing).toContain("projects/testproj/other-note.md");
+      expect(result.outgoing).toContain("projects/testproj/another-note.md");
     });
 
     it("extracts wikilinks with aliases", async () => {
@@ -67,7 +67,7 @@ Link to [[target|display text]].
 
       const result = await graphRelatedCommand({ path: "note.md" }, ctx);
 
-      expect(result.outgoing).toContain("target");
+      expect(result.outgoing).toContain("projects/testproj/target.md");
     });
 
     it("deduplicates wikilinks", async () => {
@@ -83,7 +83,7 @@ Link to [[same-note]] twice: [[same-note]].
 
       const result = await graphRelatedCommand({ path: "note.md" }, ctx);
 
-      expect(result.outgoing.filter(l => l === "same-note")).toHaveLength(1);
+      expect(result.outgoing.filter(l => l === "projects/testproj/same-note.md")).toHaveLength(1);
     });
 
     it("returns empty array when no wikilinks", async () => {
@@ -127,7 +127,7 @@ Link to [[target]] here.
 
       const result = await graphRelatedCommand({ path: "target.md" }, ctx);
 
-      expect(result.backlinks).toContain("source.md");
+      expect(result.backlinks).toContain("projects/testproj/source.md");
     });
 
     it("excludes self-references from backlinks", async () => {
@@ -143,7 +143,7 @@ Link to [[note]] itself.
 
       const result = await graphRelatedCommand({ path: "note.md" }, ctx);
 
-      expect(result.backlinks).not.toContain("note.md");
+      expect(result.backlinks).not.toContain("projects/testproj/note.md");
     });
 
     it("finds backlinks with .md extension in link", async () => {
@@ -169,7 +169,7 @@ Link to [[target.md]].
 
       const result = await graphRelatedCommand({ path: "target.md" }, ctx);
 
-      expect(result.backlinks).toContain("source.md");
+      expect(result.backlinks).toContain("projects/testproj/source.md");
     });
   });
 
@@ -199,8 +199,8 @@ type: note
 
       const result = await graphRelatedCommand({ path: "a.md", hops: 1 }, ctx);
 
-      expect(result.outgoing).toContain("b");
-      expect(result.outgoing).not.toContain("c");
+      expect(result.outgoing).toContain("projects/testproj/b.md");
+      expect(result.outgoing).not.toContain("projects/testproj/c.md");
     });
 
     it("returns second hop when hops > 1", async () => {
@@ -228,8 +228,8 @@ type: note
 
       const result = await graphRelatedCommand({ path: "a.md", hops: 2 }, ctx);
 
-      expect(result.outgoing).toContain("b");
-      expect(result.outgoing).toContain("c");
+      expect(result.outgoing).toContain("projects/testproj/b.md");
+      expect(result.outgoing).toContain("projects/testproj/c.md");
     });
 
     it("finds second hop backlinks", async () => {
@@ -246,10 +246,11 @@ type: note
 
   describe("graphCrossProjectCommand", () => {
     it("jails results to the scoped project", async () => {
+      const unscoped = new VaultFS(vaultRoot);
       await mkdir(join(vaultRoot, "projects/proj-a"), { recursive: true });
       await mkdir(join(vaultRoot, "projects/proj-b"), { recursive: true });
 
-      await vaultFs.write(
+      await unscoped.write(
         "projects/proj-a/note.md",
         `---
 type: note
@@ -259,7 +260,7 @@ API endpoint documentation
 `
       );
 
-      await vaultFs.write(
+      await unscoped.write(
         "projects/proj-b/note.md",
         `---
 type: note
@@ -269,16 +270,17 @@ API client implementation
 `
       );
 
-      const scoped = createCommandContext(vaultFs, { projectSlug: "proj-a" });
+      const scoped = createCommandContext(new VaultFS(vaultRoot, { projectSlug: "proj-a" }), { projectSlug: "proj-a" });
       const result = await graphCrossProjectCommand({ query: "API", limit: 10 }, scoped);
 
       expect(Object.keys(result)).toEqual(["proj-a"]);
+      expect(result["proj-a"]).toHaveLength(1);
       expect(result["proj-a"].every((r) => r.path.includes("proj-a"))).toBe(true);
     });
 
     it("rejects calls without a project scope", async () => {
       await expect(
-        graphCrossProjectCommand({ query: "API", limit: 10 }, ctx),
+        graphCrossProjectCommand({ query: "API", limit: 10 }, createCommandContext(vaultFs)),
       ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     });
 
@@ -286,7 +288,7 @@ API client implementation
       await mkdir(join(vaultRoot, "projects/proj-a"), { recursive: true });
       for (let i = 0; i < 30; i++) {
         await vaultFs.write(
-          `projects/proj-a/note-${i}.md`,
+          `projects/testproj/note-${i}.md`,
           `---
 type: note
 ---
@@ -296,7 +298,7 @@ Test content ${i}
         );
       }
 
-      const scoped = createCommandContext(vaultFs, { projectSlug: "proj-a" });
+      const scoped = createCommandContext(vaultFs, { projectSlug: "testproj" });
       const result = await graphCrossProjectCommand({ query: "Test", limit: 5 }, scoped);
 
       const totalResults = Object.values(result).flat().length;
@@ -305,6 +307,27 @@ Test content ${i}
   });
 
   describe("error handling", () => {
+    it.each([null, undefined])("rejects unresolved scope %s before reading any note", async (projectSlug) => {
+      await new VaultFS(vaultRoot).write("projects/other/secret.md", "[[target]] private");
+      const read = vi.spyOn(vaultFs, "read");
+      await expect(graphRelatedCommand({ path: "projects/other/secret.md" }, createCommandContext(vaultFs, { projectSlug }))).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("filters sibling-project targets from indexed links", async () => {
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "safe" });
+      await scoped.write("source.md", "[[projects/other/secret.md]]\n[[target]]");
+      await scoped.write("target.md", "# Target");
+      const result = await graphRelatedCommand({ path: "source.md" }, createCommandContext(scoped, { projectSlug: "safe" }));
+      expect(result.outgoing).toEqual(["projects/safe/target.md"]);
+    });
+
+    it.each([NaN, Infinity, 1.5, 0, 9])("rejects invalid hop bounds %s", async (hops) => {
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "safe" });
+      await scoped.write("source.md", "# Source");
+      await expect(graphRelatedCommand({ path: "source.md", hops }, createCommandContext(scoped, { projectSlug: "safe" }))).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    });
+
     it("throws for non-existent file", async () => {
       await expect(
         graphRelatedCommand({ path: "nonexistent.md" }, ctx)
@@ -334,6 +357,7 @@ describe("graphTraverseCommand", () => {
 
     vaultRoot = join(homedir(), `.vault-traverse-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(vaultRoot, { recursive: true });
+    writeFileSync(join(vaultRoot, "project-map.json"), JSON.stringify({ [repoRoot]: "testproj" }));
     const vaultFs = new VaultFS(vaultRoot, { projectSlug: "testproj" });
     await vaultFs.write("notes/alpha.md", "---\ntype: note\n---\n# Alpha\n\nVAULT SENTINEL.\n");
     ctx = createCommandContext(vaultFs, { projectSlug: "testproj", workspacePath: repoRoot });
@@ -395,6 +419,23 @@ describe("graphTraverseCommand", () => {
     });
   });
 
+  it("passes exact-byte paging options through to open", async () => {
+    const page = (await graphTraverseCommand({
+      action: "open",
+      id: "code:src/index.ts",
+      offsetBytes: 7,
+      maxBytes: 6,
+    }, ctx)) as any;
+    expect(page).toMatchObject({
+      offset_bytes: 7,
+      next_offset_bytes: 13,
+      read_complete: false,
+      content_bytes: 6,
+      truncated: true,
+      content: "const ",
+    });
+  });
+
   it("validates action arguments", async () => {
     await expect(graphTraverseCommand({ action: "resolve" }, ctx)).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
@@ -402,5 +443,12 @@ describe("graphTraverseCommand", () => {
     await expect(graphTraverseCommand({ action: "node" }, ctx)).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
+    await expect(graphTraverseCommand({ action: "open", id: "code:src/index.ts", offsetBytes: -1 }, ctx)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(graphTraverseCommand({ action: "open", id: "code:src/index.ts", maxBytes: 0 }, ctx)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
+
+  it("rejects a direct context that mixes another project with this workspace", async () => {
+    const mismatched = createCommandContext(new VaultFS(vaultRoot, { projectSlug: "other" }), { projectSlug: "other", workspacePath: repoRoot });
+    await expect(graphTraverseCommand({ action: "open", id: "code:src/index.ts" }, mismatched)).rejects.toThrow(/does not match/);
   });
 });

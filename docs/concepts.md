@@ -2,14 +2,14 @@
 
 ## Constitution
 
-`catalog/constitution.md` holds the T0 axioms — always-on principles such as evidence-before-done, parse-at-boundaries, no-secrets, and verified-only injection. Each axiom names the mechanism that enforces it (gate check, validator, security scanner, router, review). The harness hook can inject it at session start; it is not something you load manually.
+`catalog/constitution.md` holds optional T0 guidance, including evidence-before-done, parse-at-boundaries, and no-secrets. It is not universally injected: a configured session-start hook can emit it, or a host can explicitly open the `constitution` graph node. It applies when actually present in context; it is not an automatic background policy. Each item names its enforcement mechanism (gate check, validator, security scanner, router, review).
 
 ## The Plan
 
 `superskill` never dumps rules. A deterministic router builds a plan from explicit keys:
 
 - **Language scope** — project stack, task words, and the extensions of the `files` you pass. Rules for other languages are not eligible.
-- **Phase** — inferred from the task: `deploy`/`release`/`ship` → ship, `review`/`refactor`/`audit`/`diff` → review, `add`/`build`/`create`/`implement` → implement, `brainstorm`/`plan`/`design` → explore.
+- **Phase** — explicit or inferred from the task. It selects methodology packs and the content budget, and labels the rule plan; it does not filter individual rules, which have no phase-eligibility metadata.
 - **Eligibility** — only `status: verified` rules by default; drafts are pull-only.
 - **Ranking** — severity (`must` → `should` → `prefer`), then score (file match 100, keyword 10, symbol 1), then rule id.
 - **Budget** — a phase-sized token budget; rules that do not fit are reported in `dropped`, never silently cut.
@@ -19,7 +19,7 @@ The response's `rules_plan` is the audit trail: `selected`, `explain`, `dropped`
 
 ## Flows
 
-Plans carry a `flows` slot for named multi-step procedures alongside the rule set. The enforced flow today is the gate pipeline — spec → tickets → evidence → gate check — where every step is a command with a deterministic outcome.
+Plans reserve `flows` and `gates` slots for compatibility; both are currently empty. The router does not execute procedures or evidence gates. Run the separate spec → tickets → evidence → gate check commands explicitly when using that workflow.
 
 ## Gates
 
@@ -32,11 +32,13 @@ Work is not "done" because a model says so. The gate pipeline is:
 
 ## Code graph
 
-A deterministic, local-only code graph built with tree-sitter WASM. No LLM, no network, no native modules. Every edge is tagged **EXTRACTED** (read directly from an AST) or **INFERRED** (resolved by a rule or heuristic), so verification can restrict itself to facts that are true by construction. Use it through `impact` and `claims`.
+A deterministic, local-only code graph built with tree-sitter WASM. No LLM, no network, no native modules. Every edge is tagged **EXTRACTED** (read directly from an AST) or **INFERRED** (resolved by a rule or heuristic). Scans respect Git ignore rules and resource budgets; incomplete parsing or binding coverage is not evidence of absence. Negative claims without sufficient edge evidence return `unverifiable`, not a promise of complete interprocedural analysis. Use it through `impact` and `claims`.
 
 ## Vault
 
 Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS5 + an edges table is a derived index (porter stemming: `authorize` hits `Authorization`); the `write` tool updates it incrementally, and `graph rebuild` rebuilds it from markdown (run it after batch or out-of-band edits). The project is auto-detected from the current directory (git root + `project-map.json`); override with `--project`.
+
+Notes with `inject: always` are collected only from `projects/<slug>/shared/`, including full context mode. Vault-root `shared/` is not injected into project contexts.
 
 ## Project isolation
 
@@ -47,6 +49,8 @@ Markdown under `~/Vaults/ai/projects/<slug>/` is the source of truth. SQLite FTS
 - `.superskill/` is per-developer and gitignored.
 
 ## Packs
+
+Internal pack IDs (for example, `pipeline/delivery`) and atomic rule files use SuperSkill's routing and rule contracts. They are not native `SKILL.md` files and do not need to meet native skill metadata rules. Use the [native skill template](SKILL-TEMPLATE.md) and explicit `skill validate` profile for native skills; a structural pass does not establish model behavior quality or cross-host compatibility.
 
 | Pack | When |
 |------|------|

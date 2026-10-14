@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { HygienePolicy } from "./policy.js";
+import { mapBounded, probeDeadline } from "./budget.js";
 import type {
   HygieneCategory,
   HygieneCategoryTotal,
@@ -25,6 +26,8 @@ export interface BuildHygieneReportOptions {
   policy: HygienePolicy;
   now?: number;
   generatedAt?: string;
+  deadline?: number;
+  activeWorktreePaths?: string[];
 }
 
 function describeError(reason: unknown): string {
@@ -80,9 +83,15 @@ function buildTotals(items: HygieneItem[]): HygieneTotals {
 
 export async function buildHygieneReport(opts: BuildHygieneReportOptions): Promise<HygieneReport> {
   const now = opts.now ?? Date.now();
-  const settled = await Promise.allSettled(
-    opts.probes.map((probe) => probe.run({ repoPaths: opts.repoPaths, sizes: opts.sizes, policy: opts.policy, now })),
-  );
+  const deadline = probeDeadline(opts.deadline);
+  const settled = await mapBounded(opts.probes, async (probe) => {
+    try {
+      if (Date.now() >= deadline) return { status: "fulfilled" as const, value: { category: probe.id, label: probe.id, items: [], skipped: { probe: probe.id, reason: "report time budget reached" } } };
+      return { status: "fulfilled" as const, value: await probe.run({ repoPaths: opts.repoPaths.slice(0, 50), sizes: opts.sizes, policy: opts.policy, now, deadline, activeWorktreePaths: opts.activeWorktreePaths }) };
+    } catch (reason) {
+      return { status: "rejected" as const, reason };
+    }
+  }, { concurrency: 2 });
 
   const items: HygieneItem[] = [];
   const skipped: HygieneSkip[] = [];

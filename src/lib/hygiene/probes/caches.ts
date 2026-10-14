@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Dirent } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { formatBytes } from "../../format-bytes.js";
 import { probeDirAge, probeDirSize } from "../../worktree/audit.js";
 import {
   inferTool,
+  TOOL_PREFIXES,
   scanCacheRoot,
   type GcCandidate,
   type GcTier,
 } from "../../worktree/gc.js";
-import { hashId, platformCacheRoot } from "../../worktree/paths.js";
+import { hashId, platformCacheRoot, repoStateDir } from "../../worktree/paths.js";
+import { isPhysicallyContained } from "../../worktree/quarantine.js";
+import { probeDeadline } from "../budget.js";
 import type { HygienePolicy } from "../policy.js";
 import type {
   HygieneItem,
@@ -81,10 +84,10 @@ function managedItem(
   const target = relativeToRoot(cacheRoot, candidate.path);
   const floor = policy.cacheAutoMinAgeDays;
   const bytes = sizes ? candidate.bytes : null;
-  const plan =
+  const plan = candidate.tool === "unknown" || /[*?\[\]{}]/.test(target) ? null :
     candidate.tier === "consent"
-      ? `superskill-cli worktree gc --older-than ${floor}d --tier consent --include ${quoteShell(target)} --apply`
-      : `superskill-cli worktree gc --older-than ${floor}d --include ${quoteShell(target)} --apply`;
+      ? `superskill-cli worktree gc --all --older-than ${floor}d --tier consent --include ${quoteShell(target)} --apply`
+      : `superskill-cli worktree gc --all --older-than ${floor}d --include ${quoteShell(target)} --apply`;
   const reason =
     candidate.orphaned === true
       ? `orphaned worktree cache (registered worktree path is gone), ${ageLabel(candidate.ageDays)}`
@@ -99,7 +102,7 @@ function managedItem(
     bytes,
     ageDays: candidate.ageDays,
     tier: candidate.tier,
-    due: isDue(candidate.tier, bytes, candidate.ageDays, policy),
+    due: candidate.tool !== "unknown" && isDue(candidate.tier, bytes, candidate.ageDays, policy),
     reason,
     plan,
     meta: { repoId: candidate.repoId, tool: candidate.tool, tier: candidate.tier },
@@ -129,25 +132,27 @@ async function collectManagedItems(
   const scan = deps.scanCacheRoot ?? scanCacheRoot;
   const cacheRootOf = deps.platformCacheRoot ?? platformCacheRoot;
   const cacheRoot = cacheRootOf();
-  const candidates = await scan({ all: true, measureSizes: opts.sizes });
+  const candidates = await scan({ all: true, measureSizes: opts.sizes, maxCandidates: MANAGED_ITEM_CAP, deadline: opts.deadline });
   const items = candidates.map((candidate) => managedItem(candidate, cacheRoot, opts.policy, opts.sizes));
   return capManagedItems(items);
 }
 
-function classifyDefault(name: string, infer: typeof inferTool): { tool: string; tier: GcTier } | null {
+function classifyDefault(name: string): { tool: string; tier: GcTier } | null {
   const alias = NAME_ALIASES.get(name.toLowerCase());
   if (alias !== undefined) return alias;
-  const inferred = infer(name);
-  return inferred.tool === "unknown" ? null : inferred;
+  const exact = TOOL_PREFIXES.find((entry) => entry.prefix === name.toLowerCase());
+  return exact ? { tool: exact.tool, tier: exact.tier } : null;
 }
 
-function defaultPlan(name: string, tool: string, path: string): string {
+function defaultPlan(name: string): string | null {
   const lower = name.toLowerCase();
-  if (lower.startsWith("go-build")) return "go clean -cache";
-  if (lower.startsWith("go-mod")) return "go clean -modcache";
-  if (tool === "node" && lower.startsWith("pnpm-store")) return "pnpm store prune";
-  if (tool === "python" && lower.startsWith("pip")) return "pip cache purge";
-  return `rm -rf ${quoteShell(path)}`;
+  if (lower === "go-build") return "go clean -cache";
+  if (lower === "go-mod") return "go clean -modcache";
+  if (lower === "pnpm-store") return "pnpm store prune";
+  if (lower === "pip") return "pip cache purge";
+  if (lower === "uv") return "uv cache prune";
+  if (lower === "ccache") return "ccache --cleanup";
+  return null;
 }
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -178,7 +183,6 @@ async function collectDefaultItems(
   const cacheBase = defaultCacheBase(platform, home);
   if (cacheBase === null) return [];
 
-  const infer = deps.inferTool ?? inferTool;
   const managedRootName = basename((deps.platformCacheRoot ?? platformCacheRoot)());
   const entries: DefaultCacheEntry[] = [];
 
@@ -192,8 +196,9 @@ async function collectDefaultItems(
   }
 
   for (const entry of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entries.length >= DEFAULT_ITEM_CAP) break;
     if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === managedRootName) continue;
-    const classification = classifyDefault(entry.name, infer);
+    const classification = classifyDefault(entry.name);
     if (classification === null) continue;
     entries.push({
       path: join(cacheBase, entry.name),
@@ -216,8 +221,9 @@ async function collectDefaultItems(
 
   const items: HygieneItem[] = [];
   for (const entry of entries.slice(0, DEFAULT_ITEM_CAP)) {
+    if (Date.now() >= (opts.deadline ?? Infinity)) break;
     const [bytes, ageDays] = await Promise.all([
-      opts.sizes ? probeDirSize(entry.path) : Promise.resolve(null),
+      opts.sizes ? probeDirSize(entry.path, { deadline: opts.deadline }) : Promise.resolve(null),
       probeDirAge(entry.path),
     ]);
     items.push({
@@ -230,9 +236,48 @@ async function collectDefaultItems(
       tier: entry.tier,
       due: isDue(entry.tier, bytes, ageDays, opts.policy),
       reason: "default build cache (not superskill-managed); regenerates",
-      plan: entry.plan ?? defaultPlan(entry.name, entry.tool, entry.path),
+      plan: entry.plan ?? defaultPlan(entry.name),
       meta: { managed: false, tool: entry.tool },
     });
+  }
+  return items;
+}
+
+async function collectRetentionItems(opts: HygieneProbeOptions, deps: CachesProbeDeps): Promise<HygieneItem[]> {
+  const cacheRoot = (deps.platformCacheRoot ?? platformCacheRoot)();
+  const targets = [{ path: join(cacheRoot, "_quarantine"), root: cacheRoot, label: "Cache quarantine", plan: "superskill-cli worktree gc --all --purge" }];
+  const seen = new Set<string>();
+  for (const repo of opts.repoPaths.slice(0, 50)) {
+    if (Date.now() >= (opts.deadline ?? Infinity)) break;
+    const path = await repoStateDir(repo);
+    const key = await realpath(path).catch(() => path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ path, root: join(path, ".."), label: "Worktree metadata and local quarantine", plan: `superskill-cli worktree gc --worktree ${quoteShell(repo)} --purge` });
+  }
+  const items: HygieneItem[] = [];
+  for (const target of targets.slice(0, 40)) {
+    if (Date.now() >= (opts.deadline ?? Infinity)) break;
+    try {
+      const info = await lstat(target.path);
+      if (!info.isDirectory() || !(await isPhysicallyContained(target.path, target.root))) continue;
+      items.push({
+        id: `cache:retention:${hashId(target.path)}`,
+        category: "caches",
+        title: target.label,
+        path: target.path,
+        bytes: opts.sizes ? await probeDirSize(target.path, { deadline: opts.deadline }) : null,
+        ageDays: Math.max(0, opts.now - info.mtimeMs) / 86_400_000,
+        tier: "review",
+        due: false,
+        reason: "retained recovery data; review manually. Purge is a plan until explicitly authorized with --yes; journals and manifests are never automatically deleted",
+        plan: target.plan,
+        meta: { retention: true, managed: true },
+      });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[hygiene-caches] cannot inspect retention path ${target.path}: ${code ?? String(err)}`);
+    }
   }
   return items;
 }
@@ -241,15 +286,23 @@ export async function runCachesProbe(
   opts: HygieneProbeOptions,
   deps: CachesProbeDeps = {},
 ): Promise<HygieneProbeResult> {
+  opts = { ...opts, deadline: probeDeadline(opts.deadline) };
   const errors: string[] = [];
   let managed: HygieneItem[] | null = null;
   let defaults: HygieneItem[] | null = null;
+  let retention: HygieneItem[] = [];
 
   try {
     managed = await collectManagedItems(opts, deps);
   } catch (err) {
     errors.push(`managed: ${errorMessage(err)}`);
     console.error(`[hygiene-caches] managed cache scan failed: ${errorMessage(err)}`);
+  }
+
+  try {
+    retention = await collectRetentionItems(opts, deps);
+  } catch (err) {
+    console.error(`[hygiene-caches] retention scan failed: ${errorMessage(err)}`);
   }
 
   try {
@@ -262,7 +315,7 @@ export async function runCachesProbe(
   return {
     category: "caches",
     label: "Build caches",
-    items: [...(managed ?? []), ...(defaults ?? [])],
+    items: [...(managed ?? []), ...(defaults ?? []), ...retention],
     skipped:
       managed === null && defaults === null
         ? { probe: "caches", reason: errors.join("; ") || "cache scan failed" }

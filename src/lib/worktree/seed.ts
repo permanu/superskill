@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFile } from "node:child_process";
-import { lstat, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { platform } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from "node:fs/promises";
+import { hostname, platform } from "node:os";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { SeedSpec } from "../toolchains/index.js";
 import { resolveProviders } from "../toolchains/index.js";
 import { buildProviderContext } from "./context.js";
 import { hashFile, isPathInside } from "./safety.js";
+import { physicalPathInside, readRegularText } from "./paths.js";
 import {
   appendJournal,
   listingSignature,
@@ -110,23 +112,72 @@ async function chunked<T, R>(items: T[], size: number, fn: (item: T) => Promise<
 
 async function claimSeedLock(
   dest: string,
-): Promise<{ ok: true; lockPath: string } | { ok: false; reason: string }> {
+): Promise<{ ok: true; lockPath: string; stage: string; recoveredStage?: string; owned: () => Promise<boolean>; release: () => Promise<void> } | { ok: false; reason: string }> {
   const lockPath = `${dest}.superskill-lock`;
-  try {
-    await writeFile(lockPath, `${process.pid}\n`, { encoding: "utf-8", flag: "wx", mode: 0o600 });
-    return { ok: true, lockPath };
-  } catch (err) {
-    const code = errnoCode(err);
-    if (code === "EEXIST") return { ok: false, reason: "locked by another bootstrap" };
-    return { ok: false, reason: `cannot create lock: ${code ?? errorMessage(err)}` };
+  const token = randomUUID();
+  const stage = join(dirname(dest), `.${basename(dest)}.superskill-seed-${token}`);
+  let recoveredStage: string | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let handle;
+    try { handle = await open(lockPath, "wx", 0o600); }
+    catch (err) {
+      const code = errnoCode(err);
+      if (code !== "EEXIST") return { ok: false, reason: `cannot create lock: ${code ?? errorMessage(err)}` };
+      if (attempt === 1) return { ok: false, reason: "locked by another bootstrap" };
+      try {
+        const before = await lstat(lockPath);
+        const raw = await readRegularText(lockPath, 4096);
+        const owner = JSON.parse(raw);
+        if (!before.isFile() || owner.host !== hostname() || !Number.isInteger(owner.pid) || owner.pid <= 0 || typeof owner.token !== "string") return { ok: false, reason: "locked by another bootstrap" };
+        try { process.kill(owner.pid, 0); return { ok: false, reason: "locked by another bootstrap" }; }
+        catch (error) { if (errnoCode(error) !== "ESRCH") return { ok: false, reason: "locked by another bootstrap" }; }
+        const after = await lstat(lockPath);
+        if (before.dev !== after.dev || before.ino !== after.ino || await readRegularText(lockPath, 4096) !== raw) return { ok: false, reason: "lock ownership changed" };
+        if (owner.stage === join(dirname(dest), `.${basename(dest)}.superskill-seed-${owner.token}`)) recoveredStage = owner.stage;
+        await unlink(lockPath);
+      } catch (error) {
+        if (!(error instanceof SyntaxError) && errnoCode(error) !== "ENOENT") console.error(`[worktree-seed] cannot recover lock ${lockPath}: ${errorMessage(error)}`);
+        return { ok: false, reason: "locked by another bootstrap" };
+      }
+      continue;
+    }
+    const identity = await handle.stat();
+    const raw = JSON.stringify({ v: 1, pid: process.pid, host: hostname(), token, stage, dest });
+    const owned = async () => {
+      try {
+        const info = await lstat(lockPath);
+        return info.isFile() && info.dev === identity.dev && info.ino === identity.ino && await readRegularText(lockPath, 4096) === raw;
+      } catch (error) {
+        if (errnoCode(error) === "ENOENT") return false;
+        throw error;
+      }
+    };
+    const release = async () => { if (await owned()) await unlink(lockPath); };
+    try { await handle.writeFile(raw); await handle.sync(); }
+    catch (error) {
+      try {
+        const info = await lstat(lockPath);
+        if (info.dev === identity.dev && info.ino === identity.ino) await unlink(lockPath);
+      } catch (cleanupError) {
+        if (errnoCode(cleanupError) !== "ENOENT") console.error(`[worktree-seed] cannot clear unwritten lock: ${errorMessage(cleanupError)}`);
+      }
+      throw error;
+    } finally { await handle.close(); }
+    return { ok: true, lockPath, stage, recoveredStage, owned, release };
   }
+  return { ok: false, reason: "locked by another bootstrap" };
 }
 
-async function releaseSeedLock(lockPath: string): Promise<void> {
+async function finishSeedStage(stage: string, root: string): Promise<void> {
   try {
-    await rm(lockPath, { force: true });
+    if (!await physicalPathInside(stage, root)) return;
+    const metadata = await lstat(join(stage, "seed.json"));
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return;
+    if ((await readdir(stage)).some((name) => name !== "seed.json")) return;
+    await unlink(join(stage, "seed.json"));
+    await rmdir(stage);
   } catch (err) {
-    console.error(`[worktree-seed] cannot remove lock ${lockPath}: ${errnoCode(err) ?? errorMessage(err)}`);
+    if (errnoCode(err) !== "ENOENT") console.error(`[worktree-seed] cannot clear completed stage ${stage}: ${errnoCode(err) ?? errorMessage(err)}`);
   }
 }
 
@@ -145,6 +196,7 @@ export async function copyTreeCoW(
   src: string,
   dest: string,
 ): Promise<{ method: "reflink" | "copy"; files: number; bytes: number }> {
+  if (await pathState(dest) === "present") throw new Error(`destination already exists: ${dest}`);
   const os = platform();
   let method: "reflink" | "copy";
   if (os === "darwin") {
@@ -288,12 +340,24 @@ export async function seedWorktree(
       result.skipped.push({ relative: relativePath, reason });
       continue;
     }
-    if (!isPathInside(spec.dest, worktreeRoot)) {
+    if (!isPathInside(spec.dest, worktreeRoot) || resolve(worktreeRoot, spec.relative) !== resolve(spec.dest) || !await physicalPathInside(spec.dest, worktreeRoot)) {
       result.skipped.push({ relative: relativePath, reason: "destination outside worktree" });
+      continue;
+    }
+    if (!await physicalPathInside(spec.source, built.repoRoot)) {
+      result.skipped.push({ relative: relativePath, reason: "source outside main worktree or traverses a symlink" });
       continue;
     }
     const destState = await pathState(spec.dest);
     if (destState === "present") {
+      if (!dryRun && await pathState(`${spec.dest}.superskill-lock`) === "present") {
+        const lock = await claimSeedLock(spec.dest);
+        if (lock.ok) {
+          if (lock.recoveredStage && await pathState(lock.recoveredStage) === "present") result.notes.push(`interrupted seed preserved at ${toPosix(lock.recoveredStage)}`);
+          try { await lock.release(); }
+          catch (error) { result.notes.push(`seed lock release failed: ${errorMessage(error)}`); }
+        }
+      }
       result.skipped.push({ relative: relativePath, reason: "already present" });
       continue;
     }
@@ -316,16 +380,43 @@ export async function seedWorktree(
     }
 
     try {
-      const copy = await copyTreeCoW(spec.source, spec.dest);
+      if (lock.recoveredStage && await pathState(lock.recoveredStage) === "present") result.notes.push(`interrupted seed preserved at ${toPosix(lock.recoveredStage)}`);
+      if (!await physicalPathInside(spec.dest, worktreeRoot) || !await physicalPathInside(spec.source, built.repoRoot)) throw new Error("source or destination ancestry changed");
+      if (await pathState(spec.dest) !== "missing") throw new Error("destination appeared after locking; preserved without copying");
+      if (!await lock.owned()) throw new Error("seed lock ownership changed");
+      await mkdir(lock.stage, { mode: 0o700 });
+      const journal = await open(join(lock.stage, "seed.json"), "wx", 0o600);
+      try {
+        await journal.writeFile(JSON.stringify({ v: 1, kind: "superskill-seed", source: spec.source, dest: spec.dest, stage: lock.stage }));
+        await journal.sync();
+      } finally { await journal.close(); }
+      const payload = join(lock.stage, "payload");
+      if (!await physicalPathInside(payload, worktreeRoot)) throw new Error("seed staging ancestry changed");
+      const copy = await copyTreeCoW(spec.source, payload);
+      if (!await lock.owned()) throw new Error("seed lock ownership changed");
+      if (!await physicalPathInside(spec.dest, worktreeRoot) || await pathState(spec.dest) !== "missing") throw new Error("destination appeared or ancestry changed during copying; staged copy preserved");
+      const info = await lstat(payload);
+      if (info.isSymbolicLink() || spec.kind === "dir" && !info.isDirectory() || spec.kind === "file" && !info.isFile()) throw new Error("copied seed kind changed");
+      if (spec.kind === "dir") {
+        await mkdir(spec.dest, { mode: info.mode & 0o777 });
+        const reservation = await lstat(spec.dest);
+        if (!await physicalPathInside(spec.dest, worktreeRoot)) throw new Error("destination ancestry changed before publication");
+        const current = await lstat(spec.dest);
+        if (reservation.dev !== current.dev || reservation.ino !== current.ino) throw new Error("destination reservation changed");
+        await rename(payload, spec.dest);
+      } else {
+        await link(payload, spec.dest);
+        await unlink(payload);
+      }
       result.seeded.push({ relative: relativePath, method: copy.method, files: copy.files, bytes: copy.bytes });
       copied.push({ relative: relativePath, dest: spec.dest, kind: spec.kind });
+      await finishSeedStage(lock.stage, worktreeRoot);
     } catch (err) {
       result.skipped.push({ relative: relativePath, reason: `copy failed: ${errorMessage(err)}` });
-      if ((await pathState(spec.dest)) === "present") {
-        result.notes.push(`partial copy left at ${toPosix(spec.dest)}; human intervention required`);
-      }
+      if (await pathState(lock.stage) === "present") result.notes.push(`interrupted seed preserved at ${toPosix(lock.stage)}; human intervention required`);
     } finally {
-      await releaseSeedLock(lock.lockPath);
+      try { await lock.release(); }
+      catch (error) { result.notes.push(`seed lock release failed: ${errorMessage(error)}`); }
     }
   }
 

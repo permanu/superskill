@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile, readdir, realpath } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { open, readFile, readdir, realpath } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { SessionTrace } from "./types.js";
 import { estimateTokens } from "../token-estimator.js";
 
@@ -16,6 +19,7 @@ export interface SteeringFile {
   chars: number;
   estimatedTokens: number;
   content: string;
+  truncated?: boolean;
 }
 
 export interface RepoContext {
@@ -53,28 +57,39 @@ async function hasWorkflowFiles(dir: string): Promise<boolean> {
 }
 
 async function readSteering(path: string, scope: "project" | "global"): Promise<SteeringFile | null> {
-  let real: string;
+  let handle;
   try {
-    real = await realpath(path);
-  } catch {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await handle.stat();
+    if (!info.isFile()) return null;
+    const buffer = Buffer.alloc(Math.min(info.size, STEERING_CONTENT_CAP));
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, bytes, buffer.length - bytes, null);
+      if (bytesRead === 0) break;
+      bytes += bytesRead;
+    }
+    const truncated = info.size > bytes;
+    const decoder = new StringDecoder("utf-8");
+    const retained = buffer.subarray(0, bytes);
+    const content = truncated ? decoder.write(retained) : decoder.end(retained);
+    return {
+      path,
+      realPath: await realpath(path),
+      scope,
+      lines: content.split(/\r?\n/).length,
+      chars: content.length,
+      estimatedTokens: estimateTokens(content),
+      content,
+      truncated,
+    };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[watchdog] steering read failed: ${code ?? "unreadable steering file"}`);
     return null;
+  } finally {
+    await handle?.close();
   }
-  let content: string;
-  try {
-    content = await readFile(real, "utf-8");
-  } catch {
-    return null;
-  }
-  const capped = content.length > STEERING_CONTENT_CAP ? content.slice(0, STEERING_CONTENT_CAP) : content;
-  return {
-    path,
-    realPath: real,
-    scope,
-    lines: content.split(/\r?\n/).length,
-    chars: content.length,
-    estimatedTokens: estimateTokens(content),
-    content: capped,
-  };
 }
 
 const PROJECT_STEERING = ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", "GEMINI.md"];
@@ -101,8 +116,20 @@ export async function collectSteeringFiles(repoRoot: string): Promise<SteeringFi
   return files;
 }
 
+export async function resolveRepoRoot(root: string): Promise<string> {
+  const absolute = resolve(root);
+  try {
+    const { stdout } = await promisify(execFile)("git", ["-C", absolute, "rev-parse", "--show-toplevel"], { timeout: 2000, maxBuffer: 4096 });
+    return stdout.trim() || absolute;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (typeof code === "string" && code !== "ENOENT") console.error(`[watchdog] git root lookup failed: ${code}`);
+    return absolute;
+  }
+}
+
 export async function collectRepoContext(root: string): Promise<RepoContext> {
-  const repoRoot = resolve(root);
+  const repoRoot = await resolveRepoRoot(root);
   const isGit = existsSync(join(repoRoot, ".git"));
   const packageJson = await readJsonSafe<{ scripts?: Record<string, string> }>(join(repoRoot, "package.json"));
   const scripts = packageJson?.scripts ?? {};

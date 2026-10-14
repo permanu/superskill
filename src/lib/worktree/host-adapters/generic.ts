@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { backupOnce, writeTextAtomic } from "./helpers.js";
+import { backupOnce, requireSafePath, unsafePathReason, writeTextAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "generic";
@@ -24,6 +24,7 @@ async function readTextOrNull(filePath: string): Promise<string | null> {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
       console.error(`[worktree-adapter-generic] cannot read ${filePath}: ${code ?? String(err)}`);
+      throw err;
     }
     return null;
   }
@@ -62,28 +63,40 @@ function result(
 
 async function apply(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, "AGENTS.md");
+  const unsafe = await unsafePathReason(filePath, ctx.repoRoot) ?? await unsafePathReason(`${filePath}.bak.superskill`, ctx.repoRoot);
+  if (unsafe !== null) return result(false, dryRun, filePath, [unsafe]);
   const current = await readTextOrNull(filePath);
+  if (current?.includes(START_MARKER) && !current.includes(END_MARKER)) {
+    return result(false, dryRun, filePath, ["unterminated superskill block; left unchanged"]);
+  }
   const next = withBlock(current ?? "");
   const changed = next !== (current ?? "");
   if (changed && !dryRun) {
-    if (current !== null) await backupOnce(filePath);
-    await writeTextAtomic(filePath, next);
+    if (current !== null) await backupOnce(filePath, ctx.repoRoot);
+    await writeTextAtomic(filePath, next, 0o600, ctx.repoRoot, current);
   }
   return result(changed, dryRun, filePath, []);
 }
 
 async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, "AGENTS.md");
+  const unsafe = await unsafePathReason(filePath, ctx.repoRoot) ?? await unsafePathReason(`${filePath}.bak.superskill`, ctx.repoRoot);
+  if (unsafe !== null) return result(false, dryRun, filePath, [unsafe]);
   const current = await readTextOrNull(filePath);
   if (current === null) return result(false, dryRun, filePath, []);
   const next = withoutBlock(current);
   if (next === null || next === current) return result(false, dryRun, filePath, []);
   if (!dryRun) {
-    await backupOnce(filePath);
-    if (next.trim() === "") {
+    await backupOnce(filePath, ctx.repoRoot);
+    const backup = await readTextOrNull(`${filePath}.bak.superskill`);
+    if (backup !== null && !backup.includes(START_MARKER) && (backup === next || `${backup}\n` === next)) {
+      await writeTextAtomic(filePath, backup, 0o600, ctx.repoRoot, current);
+    } else if (next.trim() === "") {
+      await requireSafePath(filePath, ctx.repoRoot);
+      if (await readTextOrNull(filePath) !== current) throw new Error(`${filePath} changed during uninstall; left unchanged`);
       await rm(filePath, { force: true });
     } else {
-      await writeTextAtomic(filePath, next);
+      await writeTextAtomic(filePath, next, 0o600, ctx.repoRoot, current);
     }
   }
   return result(true, dryRun, filePath, []);

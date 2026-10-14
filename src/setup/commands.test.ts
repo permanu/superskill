@@ -45,6 +45,26 @@ describe("slash command install", () => {
     }
   });
 
+  it("generates a host-qualified watchdog command with scoped read-only and confirmed-fix flows", () => {
+    installSlashCommands(opencodeConfig(), { homeDir: home });
+    const watchdog = readFileSync(join(home, ".config/opencode/commands/watchdog.md"), "utf-8");
+
+    expect(watchdog).toContain("tools.superskill.watchdog");
+    expect(watchdog).toContain("mcp__superskill__watchdog");
+    expect(watchdog).toContain('action "dig"');
+    expect(watchdog).toContain("persist=false");
+    expect(watchdog).toContain("current project");
+    expect(watchdog).toContain("all_projects=true and confirm=true only when the user explicitly requests and confirms cross-project scope");
+    expect(watchdog).toContain("action \"fix\" and apply=false");
+    expect(watchdog).toContain("reversible quarantine for file reclamation, never direct deletion");
+    expect(watchdog).toContain("apply=true only after explicit confirmation");
+    expect(watchdog).toContain("dismiss=true only when the user explicitly asks to dismiss");
+    expect(watchdog).toContain("generic QA request does not authorize vault, graph, or report writes");
+    expect(watchdog).toContain("superskill watchdog dig --scope session --no-persist");
+    expect(watchdog).toContain("superskill watchdog fix --finding <id>");
+    expect(watchdog).not.toContain("catalog/");
+  });
+
   it("is idempotent and never overwrites user files without the marker", async () => {
     installSlashCommands(opencodeConfig(), { homeDir: home });
     const first = readFileSync(join(home, ".config/opencode/commands/review.md"), "utf-8");

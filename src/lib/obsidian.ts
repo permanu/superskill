@@ -2,9 +2,10 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { validateProjectSlug } from "../config.js";
+import { VaultError, VaultFS } from "./vault-fs.js";
 
 export interface ObsidianLaunch {
   ok: boolean;
@@ -65,33 +66,38 @@ export async function openInObsidian(url: string): Promise<ObsidianLaunch> {
 }
 
 export async function scopeGraphFilter(vaultRoot: string, project: string): Promise<GraphScopeResult> {
-  const graphPath = join(vaultRoot, ".obsidian", "graph.json");
-  if (!existsSync(graphPath)) {
-    return { ok: false, reason: "vault has not been opened in Obsidian yet (no .obsidian/graph.json)" };
-  }
-  let raw: string;
   try {
-    raw = await readFile(graphPath, "utf8");
-  } catch (e: unknown) {
-    console.error("[obsidian] could not read .obsidian/graph.json:", e);
-    return { ok: false, reason: "could not read .obsidian/graph.json" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
+    validateProjectSlug(project);
   } catch {
-    return { ok: false, reason: "graph.json is not valid JSON; left unchanged" };
+    return { ok: false, reason: "invalid project slug; graph.json left unchanged" };
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, reason: "graph.json is not a JSON object; left unchanged" };
-  }
-  const graph = parsed as Record<string, unknown>;
-  graph.search = `path:projects/${project}`;
+  const vaultFs = new VaultFS(vaultRoot);
+  const settingsFs = new VaultFS(join(vaultRoot, ".obsidian"));
+  let result: GraphScopeResult = { ok: false };
   try {
-    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+    await vaultFs.read(".obsidian/graph.json");
+    await vaultFs.update(".obsidian/graph.json", async (raw) => {
+      await settingsFs.verifyNoSymlinkEscape("graph.json");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        result = { ok: false, reason: "graph.json is not valid JSON; left unchanged" };
+        return raw;
+      }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        result = { ok: false, reason: "graph.json is not a JSON object; left unchanged" };
+        return raw;
+      }
+      result = { ok: true };
+      return `${JSON.stringify({ ...parsed, search: `path:projects/${project}` }, null, 2)}\n`;
+    }, { create: false, mode: 0o600 });
   } catch (e: unknown) {
-    console.error("[obsidian] could not write .obsidian/graph.json:", e);
-    return { ok: false, reason: "could not write .obsidian/graph.json" };
+    if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") {
+      return { ok: false, reason: "vault has not been opened in Obsidian yet (no .obsidian/graph.json)" };
+    }
+    console.error("[obsidian] could not safely update .obsidian/graph.json:", e);
+    return { ok: false, reason: "could not safely update .obsidian/graph.json; left unchanged" };
   }
-  return { ok: true };
+  return result;
 }

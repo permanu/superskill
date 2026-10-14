@@ -30,6 +30,7 @@ export function isProseWord(value: string): boolean {
 }
 
 const REGEX_SPECIALS = "\\^$.*+?()[]{}|/";
+const MAX_GLOB_CACHE_SIZE = 512;
 const globCache = new Map<string, RegExp>();
 
 export function simpleStem(word: string): string {
@@ -173,10 +174,16 @@ function compileGlob(glob: string): RegExp {
 }
 
 export function globToRegExp(glob: string): RegExp {
-  const cached = globCache.get(glob);
-  if (cached) return cached;
-  const compiled = compileGlob(glob);
-  globCache.set(glob, compiled);
+  const key = normalizeFilePath(glob);
+  const cached = globCache.get(key);
+  if (cached) {
+    globCache.delete(key);
+    globCache.set(key, cached);
+    return cached;
+  }
+  const compiled = compileGlob(key);
+  if (globCache.size >= MAX_GLOB_CACHE_SIZE) globCache.delete(globCache.keys().next().value!);
+  globCache.set(key, compiled);
   return compiled;
 }
 

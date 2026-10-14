@@ -1,22 +1,24 @@
-# obsidian-mcp — AGENTS.md
+# SuperSkill — AGENTS.md
 
 ## Project Overview
 
-Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsidian vault (`~/Vaults/ai/`) that serves as shared memory for AI coding tools. Includes a knowledge graph system that routes skills from skills.sh to coding agents based on project context and task.
+Universal Agentic Knowledge Base — the `superskill` CLI and MCP server backed by an Obsidian vault (`~/Vaults/ai/`) that serves as shared memory for AI coding tools. It routes tasks through curated in-repo packs and deterministic rules. `skills.sh` is used only by the opt-in third-party skill installer, not by default routing.
 
 ## Commands
 
 - **Build:** `npm run build` (TypeScript → dist/)
 - **Dev:** `npm run dev` (build + watch via tsc --watch)
 - **Lint:** `npm run lint` (type check only: `tsc --noEmit`)
-- **Test:** `npm test` (Vitest test runner: `vitest run`)
+- **Test:** `npm test` (fresh runtime/grammar build, then Vitest)
+- **Focused tests:** `npx vitest run <files> --maxWorkers=2` (no rebuild; build first for tests that spawn the compiled CLI/MCP)
+- **Coverage:** `npm run test:coverage` (fresh build and existing coverage thresholds)
 
 ## Architecture
 
 - `src/cli.ts` — Commander.js CLI entry point
 - `src/mcp-server.ts` — MCP server (stdio transport)
 - `src/commands/` — Command modules (pure async functions, shared by CLI + MCP)
-- `src/commands/skill/` — Skill commands (init, activate, status, index)
+- `src/commands/skill/` — Skill commands (init, activate, validate, status, index)
 - `src/core/` — Command infrastructure (registry, types)
 - `src/lib/` — Library modules (vault-fs, frontmatter, search-engine, etc.)
 - `src/lib/graph/` — Knowledge graph (schema, store, loader, router, learner)
@@ -26,9 +28,9 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
 ## Key Patterns
 
 - **Unified command interface:** Every command takes `(args, ctx: CommandContext)` where ctx bundles vaultFs, vaultPath, config, sessionRegistry, and log.
-- **Graph-driven routing:** task → router → loader → security gate → content. The knowledge graph determines which skills are relevant based on project stack, phase, and activation history.
+- **Graph-driven routing:** task → router → loader → security gate → content. A per-checkout graph in the gitignored `.superskill/` directory records project stack, routed skills, and activation history; default routing uses the curated in-repo catalog.
 - **3-phase loading:** INDEX (project metadata + skill list) → NEIGHBORHOOD (co-activations + recent sessions) → CONTENT (actual SKILL.md files). Each phase is optional and can be skipped.
-- **Skills.sh is opt-in:** only `skill install <owner>/<repo>` queries skills.sh (skill list + gen/socket/snyk audits). The default catalog and routing never scrape it — `skill init` indexes the in-repo catalog. If skills.sh is unreachable, a GitHub clone is allowed and marked `.unaudited-superskill`; empty skills.sh results refuse the fallback.
+- **Skills.sh is opt-in:** only `skill install <owner>/<repo>` queries skills.sh (skill list + gen/socket/snyk audits). The default catalog and routing never scrape it — `skill init` indexes the in-repo catalog. If skills.sh is unreachable, GitHub fallback requires `--allow-unaudited` and marks the install `.unaudited-superskill`; empty skills.sh results refuse the fallback.
 - **Dual interface:** Every command works via both CLI and MCP. Commands are pure async functions.
 - **Sandboxed filesystem:** `VaultFS` enforces path validation, symlink escape detection, traversal rejection.
 - **Lazy singletons:** Graph store and the skills.sh client (opt-in installer path) are initialized on first use.
@@ -59,7 +61,7 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
 - Session lockfiles use `O_CREAT | O_EXCL` for atomic creation
 - External process calls use `execFile` (never `exec` with shell)
 - `vault_write` defaults to `append` mode to prevent accidental data loss
-- Skill content is security-audited (gen, socket, snyk) before loading. Skills with `fail` audit status are blocked.
+- Third-party skill installs use security audits and prompt-injection scanning. Explicit audit failures block activation; unknown or warning states are not proof of safety and may still be surfaced with a warning.
 
 ## Vault Structure
 
@@ -71,9 +73,12 @@ Universal Agentic Knowledge Base — a CLI tool and MCP server backed by an Obsi
     locks/
   projects/<slug>/
     context.md, decisions/, tasks/, learnings/, sessions/, brainstorms/, _archive/
-    .superskill/
-      graph.json              # project knowledge graph
-      skill-cache/            # symlinks to global cache
+    .knowledge-index.sqlite   # derived FTS5 + note-edge index; Markdown is source of truth
+
+<repo>/
+  .superskill/                # gitignored, per-checkout routing metadata
+    graph.json                # project stack, routed skills, activation history
+    skill-cache/              # project-local routed-skill cache entries; may link to trusted installed content
 ```
 
 

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readdir, readFile, stat } from "node:fs/promises";
-import type { Dirent } from "node:fs";
-import { join } from "node:path";
-import { catalogFile } from "../catalog.js";
+import { MAX_SKILL_FILE_BYTES, readBoundedSkillFile } from "../catalog.js";
+import { parseSkillId, resolveSkillSource } from "../skill-source.js";
+import type { ResolvedSkillSource } from "../skill-source.js";
 import type {
   Graph,
   SkillNode,
@@ -15,6 +14,9 @@ import type {
   ProjectPhase,
 } from "./schema.js";
 import { findNode, findNodes } from "./store.js";
+
+export { parseSkillId } from "../skill-source.js";
+export type { ParsedSkillId } from "../skill-source.js";
 
 export function loadIndex(graph: Graph): IndexResult {
   const project = findNode<import("./schema.js").ProjectNode>(graph, "project", "project");
@@ -156,29 +158,12 @@ export function loadNeighborhood(
 }
 
 const SKILL_CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CONTENT_SKILLS = 128;
+const MAX_CONTENT_BYTES = 8 * MAX_SKILL_FILE_BYTES;
 
-async function findNativeSkillFile(root: string, skillName: string, depth = 0): Promise<string | null> {
-  if (depth > 5) return null;
-  const direct = join(root, skillName, "SKILL.md");
-  try {
-    await stat(direct);
-    return direct;
-  } catch {
-    // marketplace layouts nest skills under intermediate directories
-  }
-  let entries: Dirent[];
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
-    const nested = await findNativeSkillFile(join(root, entry.name), skillName, depth + 1);
-    if (nested !== null) return nested;
-  }
-  return null;
+function logReadError(path: string, error: unknown): void {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[graph-loader] failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 export async function loadContent(
@@ -188,65 +173,63 @@ export async function loadContent(
   const skills: ContentResult["skills"] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
+  let remainingBytes = MAX_CONTENT_BYTES;
+  if (skillIds.length > MAX_CONTENT_SKILLS) warnings.push(`WARN: skill content request limit exceeded (${MAX_CONTENT_SKILLS} ids)`);
 
-  for (const skillId of skillIds) {
+  for (const skillId of skillIds.slice(0, MAX_CONTENT_SKILLS)) {
+    if (remainingBytes <= 0) {
+      warnings.push(`WARN: skill content total size limit reached (${MAX_CONTENT_BYTES} bytes)`);
+      break;
+    }
     if (seen.has(skillId)) continue;
     seen.add(skillId);
+    const parsed = parseSkillId(skillId);
+    if (!parsed) {
+      warnings.push(`WARN: invalid skill id rejected: ${String(skillId).slice(0, 160)}`);
+      continue;
+    }
     let content: string | null = null;
     let stale = false;
 
-    if (skillId.startsWith("native/")) {
-      const skillName = skillId.slice("native/".length);
-      const nativeRoots = [
-        join(projectDir, ".agents", "skills"),
-        join(projectDir, ".superskill", "skills"),
-        join(projectDir, ".claude", "skills"),
-      ];
-      for (const root of nativeRoots) {
-        const nativePath = await findNativeSkillFile(root, skillName);
-        if (nativePath === null) continue;
-        try {
-          const raw = await readFile(nativePath, "utf-8");
-          content = compressContent(raw);
-          break;
-        } catch {
-          continue;
-        }
+    let resolved: ResolvedSkillSource | null;
+    try {
+      resolved = await resolveSkillSource(projectDir, skillId);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (parsed.source !== "catalog" && code !== "ENOENT" && code !== "ENOTDIR") {
+        warnings.push(`WARN: ${skillId} — ${error instanceof Error ? error.message : String(error)}`);
       }
-      if (content === null) {
-        console.error(`[graph-loader] native skill content not found: ${skillId}`);
-      }
-    } else if (!skillId.includes("@") && skillId.includes("/")) {
-      try {
-        const raw = await readFile(catalogFile(skillId), "utf-8");
-        content = compressContent(raw);
-      } catch {
-        console.error(`[graph-loader] catalog skill not found: ${skillId}`);
-      }
-    } else {
-      const parts = skillId.split("@");
-      if (parts.length < 2) continue;
-      const ownerRepo = parts[0];
-      const skillName = parts.slice(1).join("@");
-      const ownerRepoParts = ownerRepo.split("/");
-      if (ownerRepoParts.length < 2) continue;
-      const owner = ownerRepoParts[0];
-      const repo = ownerRepoParts.slice(1).join("/");
+      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
+      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
+      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
+      continue;
+    }
 
-      const localPath = join(projectDir, ".superskill", "skill-cache", owner, repo, skillName, "SKILL.md");
+    if (!resolved) {
+      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
+      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
+      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
+      continue;
+    }
 
-      try {
-        const fileStat = await stat(localPath);
-        stale = Date.now() - fileStat.mtimeMs > SKILL_CACHE_STALE_MS;
-        const raw = await readFile(localPath, "utf-8");
-        content = compressContent(raw);
-        if (stale) {
-          console.error(`[graph-loader] serving stale cache for skill: ${skillId} (${localPath})`);
-          warnings.push(`WARN: ${skillId} — stale skill-cache (>7 days); served cached content`);
-        }
-      } catch {
-        console.error(`[graph-loader] content not found for skill: ${skillId}`);
+    try {
+      const { bytes, mtimeMs } = await readBoundedSkillFile(resolved.file, resolved.allowedRoots, Math.min(remainingBytes, MAX_SKILL_FILE_BYTES));
+      remainingBytes -= bytes.length;
+      stale = resolved.source === "cache" && Date.now() - mtimeMs > SKILL_CACHE_STALE_MS;
+      content = bytes.toString("utf-8");
+      if (stale) {
+        console.error(`[graph-loader] serving stale cache for skill: ${skillId} (${resolved.file})`);
+        warnings.push(`WARN: ${skillId} — stale skill-cache (>7 days); served cached content`);
       }
+    } catch (error) {
+      logReadError(resolved.file, error);
+      const code = (error as NodeJS.ErrnoException).code;
+      if (parsed.source !== "catalog" && code !== "ENOENT" && code !== "ENOTDIR") {
+        warnings.push(`WARN: ${skillId} — ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
+      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
+      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
     }
 
     if (content !== null) {
@@ -255,18 +238,4 @@ export async function loadContent(
   }
 
   return { skills, warnings };
-}
-
-function compressContent(content: string): string {
-  let result = content;
-  result = result.replace(/```[\s\S]*?```/g, (match) => {
-    const lines = match.split("\n");
-    if (lines.length <= 5) return match;
-    const header = lines[0];
-    const footer = lines[lines.length - 1];
-    const kept = lines.slice(1, 4).join("\n");
-    return `${header}\n${kept}\n// ... (${lines.length - 4} lines truncated)\n${footer}`;
-  });
-  result = result.replace(/\n{3,}/g, "\n\n");
-  return result.trim();
 }

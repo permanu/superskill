@@ -35,6 +35,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function backdate(path: string, days: number): Promise<void> {
   const when = new Date(Date.now() - days * DAY_MS);
+  if (existsSync(join(path, "manifest.json"))) {
+    const manifestPath = join(path, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+    manifest.ts = when.toISOString();
+    await writeFile(manifestPath, JSON.stringify(manifest));
+  }
   await utimes(path, when, when);
 }
 
@@ -268,7 +274,7 @@ describe("worktree quarantine", () => {
           entries,
         });
 
-      await mkdir(join(quarantine, "manifest-bounds"), { recursive: true });
+      await mkdir(join(quarantine, "manifest-bounds"), { recursive: true, mode: 0o700 });
       await writeFile(
         join(quarantine, "manifest-bounds", "manifest.json"),
         manifest([
@@ -285,6 +291,7 @@ describe("worktree quarantine", () => {
             bytes: 1,
           },
         ]),
+        { mode: 0o600 },
       );
 
       const bounds = await restoreQuarantine(repo, "manifest-bounds", { cacheRoot });

@@ -66,8 +66,14 @@ export function emptySpec(): Spec {
  * Ids are auto-assigned as A1..An when absent.
  */
 export function normalizeAcceptance(items: AcceptanceInput[]): SpecAcceptance[] {
+  if (!Array.isArray(items)) throw new Error("Acceptance items must be an array");
   return items.map((item, index) => {
     const raw = typeof item === "string" ? { text: item } : item;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Acceptance item ${index + 1} must be a string or object`);
+    if (typeof raw.text !== "string") throw new Error(`Acceptance item ${index + 1}: text must be a string`);
+    for (const field of ["id", "command", "manual"] as const) {
+      if (raw[field] !== undefined && typeof raw[field] !== "string") throw new Error(`Acceptance item ${index + 1}: ${field} must be a string`);
+    }
     const acceptance: SpecAcceptance = {
       id: raw.id?.trim() || `A${index + 1}`,
       text: (raw.text ?? "").trim(),
@@ -202,26 +208,43 @@ export function renderSpec(spec: Spec, title?: string): string {
  */
 export function validateSpec(spec: Spec): string[] {
   const errors = validateAcceptance(spec.acceptance);
+  for (const field of ["goal", "context", "rollback"] as const) {
+    if (typeof spec[field] !== "string") errors.push(`${field} must be a string`);
+  }
+  for (const field of ["non_goals", "constraints", "risks"] as const) {
+    if (!Array.isArray(spec[field]) || !spec[field].every((item) => typeof item === "string" && item.trim())) errors.push(`${field} must be an array of non-empty strings`);
+  }
+  if (spec.files === null || typeof spec.files !== "object" || !Array.isArray(spec.files.allowed) || !Array.isArray(spec.files.forbidden)) {
+    errors.push("files must contain allowed and forbidden arrays");
+    return errors;
+  }
   for (const pattern of [...spec.files.allowed, ...spec.files.forbidden]) {
-    if (!pattern.trim()) errors.push("File pattern must not be empty");
+    if (typeof pattern !== "string" || !pattern.trim()) errors.push("File pattern must not be empty");
   }
   return errors;
 }
 
 export function validateAcceptance(acceptance: SpecAcceptance[]): string[] {
+  if (!Array.isArray(acceptance)) return ["Acceptance must be an array"];
   const errors: string[] = [];
   const seen = new Set<string>();
   for (const item of acceptance) {
+    if (item === null || typeof item !== "object" || typeof item.id !== "string" || typeof item.text !== "string" || (item.command !== undefined && typeof item.command !== "string") || (item.manual !== undefined && typeof item.manual !== "string")) {
+      errors.push("Acceptance item fields must be strings");
+      continue;
+    }
     const id = item.id.trim();
     if (!id) errors.push("Acceptance item missing id");
     else if (seen.has(id)) errors.push(`Duplicate acceptance id: ${id}`);
     seen.add(id);
+    if (id && !/^[A-Za-z0-9_-]+$/.test(id)) errors.push(`Acceptance id must contain only letters, numbers, underscores, or hyphens: ${id}`);
     if (!item.text.trim()) errors.push(`Acceptance ${id || "?"} missing description`);
     if (/\|\s*(run|manual):/.test(item.text)) {
       errors.push(`Acceptance ${id}: text must not contain "| run:" or "| manual:"`);
     }
     const hasCommand = Boolean(item.command?.trim());
     const hasManual = Boolean(item.manual?.trim());
+    if (hasCommand && hasManual) errors.push(`Acceptance ${id}: choose either a command or a manual reason, not both`);
     if (!hasCommand && !hasManual) {
       errors.push(`Acceptance ${id}: needs an executable command or a "manual: <reason>" annotation`);
     }
@@ -232,7 +255,7 @@ export function validateAcceptance(acceptance: SpecAcceptance[]): string[] {
       errors.push(`Acceptance ${id}: manual reason must not be empty`);
     }
     for (const value of [item.text, item.command ?? "", item.manual ?? ""]) {
-      if (value.includes("\n")) errors.push(`Acceptance ${id}: values must be single-line`);
+      if (/[\r\n]/.test(value)) errors.push(`Acceptance ${id}: values must be single-line`);
     }
   }
   return errors;
@@ -321,8 +344,9 @@ export async function listSpecFiles(vaultFs: VaultFS, specsDir: string): Promise
   try {
     const entries = await vaultFs.list(specsDir, 1);
     return entries.filter((file) => file.endsWith(".md")).sort();
-  } catch {
-    return [];
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e.code === "ENOENT" || e.code === "FILE_NOT_FOUND")) return [];
+    throw e;
   }
 }
 
@@ -352,6 +376,7 @@ export async function resolveSpecPath(vaultFs: VaultFS, specsDir: string, ref: s
 export async function loadSpec(vaultFs: VaultFS, path: string): Promise<LoadedSpec> {
   const content = await vaultFs.read(path);
   const { data, content: body } = parseFrontmatter(content);
+  if (data.type !== "spec") throw new Error(`Not a spec: ${path}`);
   const spec = parseSpec(body);
   const hash = hashSpec(spec);
   const storedHash = typeof data.hash === "string" && data.hash.length > 0 ? data.hash : null;

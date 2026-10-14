@@ -25,7 +25,7 @@ import {
   type GcCandidate,
   type GcPlan,
 } from "./gc.js";
-import { resolveRepoIdentity } from "./paths.js";
+import { resolveRepoIdentity, worktreeKey } from "./paths.js";
 import { readJournal } from "./state.js";
 
 const execFileAsync = promisify(execFile);
@@ -138,17 +138,19 @@ describe("worktree gc", () => {
     });
 
     it("promotes nested cache dirs with dead marker paths to orphaned auto tier", async () => {
-      await mkdir(join(cacheRoot, "repo-a", "cargo-build", "dead1"), { recursive: true });
-      await writeFile(join(cacheRoot, "repo-a", "cargo-build", "dead1", "out"), "d".repeat(128));
+      const missing = join(base, "gone-worktree");
+      const deadKey = worktreeKey(missing);
+      await mkdir(join(cacheRoot, "repo-a", "cargo-build", deadKey), { recursive: true });
+      await writeFile(join(cacheRoot, "repo-a", "cargo-build", deadKey, "out"), "d".repeat(128));
       const markers = join(cacheRoot, "repo-a", ".worktrees");
       await mkdir(markers, { recursive: true });
-      await writeFile(join(markers, "dead1"), join(base, "gone-worktree\n"));
+      await writeFile(join(markers, deadKey), `${missing}\n`, { mode: 0o600 });
       await writeFile(join(markers, "hash1"), `${repo}\n`);
 
       const candidates = await scanCacheRoot({ cacheRoot });
       const byPath = new Map(candidates.map((entry) => [entry.path.slice(cacheRoot.length + 1), entry]));
 
-      expect(byPath.get("repo-a/cargo-build/dead1")).toMatchObject({
+      expect(byPath.get(`repo-a/cargo-build/${deadKey}`)).toMatchObject({
         tool: "rust",
         tier: "auto",
         orphaned: true,
@@ -173,6 +175,19 @@ describe("worktree gc", () => {
       const candidates = await scanCacheRoot({ cacheRoot, repoId: "repo-b" });
       expect(candidates).toHaveLength(1);
       expect(candidates[0].path).toBe(join(cacheRoot, "repo-b", "bundle-cache"));
+    });
+
+    it("caps candidates before size probes and attributes nested node caches", async () => {
+      const node = join(cacheRoot, "node-repo", "pnpm", "pnpm-store");
+      await mkdir(node, { recursive: true });
+      const scoped = await scanCacheRoot({ cacheRoot, repoId: "node-repo", measureSizes: false });
+      expect(scoped.every((entry) => entry.tool === "node")).toBe(true);
+      expect(scoped.every((entry) => entry.bytes === null)).toBe(true);
+      expect(await scanCacheRoot({ cacheRoot, maxCandidates: 1, measureSizes: false })).toHaveLength(1);
+      expect(await scanCacheRoot({ cacheRoot, deadline: 0 })).toEqual([]);
+      await mkdir(join(cacheRoot, "node-repo", "go-build-suffix"));
+      const suffixed = await scanCacheRoot({ cacheRoot, repoId: "node-repo", measureSizes: false });
+      expect(suffixed.find((entry) => entry.path.endsWith("go-build-suffix"))).toMatchObject({ tool: "go", tier: "auto" });
     });
 
     it("returns an empty list for a missing cache root", async () => {
@@ -280,6 +295,13 @@ describe("worktree gc", () => {
       const excluded = filterCandidates([go, node], { exclude: ["go-*"], olderThanDays: 10 });
       expect(excluded.selected.map((entry) => entry.tool)).toEqual(["node"]);
       expect(excluded.skipped.some((entry) => entry.reason.includes("excluded"))).toBe(true);
+    });
+
+    it("matches whole cache paths rather than widening an exact include to prefixes", () => {
+      const exact = candidate();
+      const suffix = candidate({ path: `${exact.path}-other` });
+      const other = candidate({ repoId: "repo-b", path: "/fake/cache/repo-b/go-build" });
+      expect(filterCandidates([exact, suffix, other], { include: ["repo-a/go-build"], olderThanDays: 1 }).selected).toEqual([exact]);
     });
 
     it("skips unknown sizes when a size filter is active", () => {
@@ -461,8 +483,15 @@ describe("worktree gc", () => {
 
       expect(bogus.notes.some((note) => note.includes("worktree not found: ghost"))).toBe(true);
       expect(bogus.selected.every((entry) => entry.repoId !== "ghost")).toBe(true);
-      expect(bogus.selected.map((entry) => entry.path)).toContain(scoped);
-      expect(bogus.selected.map((entry) => entry.path)).toContain(otherScoped);
+      expect(bogus.candidates).toEqual([]);
+      expect(bogus.selected).toEqual([]);
+      const refused = await runGc(
+        { worktree: "ghost", olderThanDays: 30 },
+        { dryRun: false, repoRoot: repo, cacheRoot },
+      );
+      expect(refused.quarantined).toBeUndefined();
+      expect(existsSync(scoped)).toBe(true);
+      expect(existsSync(otherScoped)).toBe(true);
     });
   });
 

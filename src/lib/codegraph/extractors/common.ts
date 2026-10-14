@@ -16,6 +16,7 @@ import type {
 export interface Binding {
   specifier: string;
   name: string;
+  namespace: boolean;
 }
 
 export interface PendingUse {
@@ -59,6 +60,28 @@ export function baseName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
+function boundTree(root: SyntaxNode): void {
+  const cursor = root.walk();
+  let depth = 0;
+  let visits = 0;
+  try {
+    while (true) {
+      visits += 1;
+      if (depth > 256 || visits > 100_000) throw new Error("codegraph: syntax tree exceeds extraction budget");
+      if (cursor.gotoFirstChild()) {
+        depth += 1;
+        continue;
+      }
+      while (!cursor.gotoNextSibling()) {
+        if (!cursor.gotoParent()) return;
+        depth -= 1;
+      }
+    }
+  } finally {
+    cursor.delete();
+  }
+}
+
 /**
  * Accumulates one file's nodes and edges, then resolves identifier uses against
  * the symbols and imports collected in the same file. All cross-file links stay
@@ -70,7 +93,6 @@ export class FileBuilder {
   readonly edges: CodeEdge[] = [];
   readonly moduleId: string;
   readonly uses: PendingUse[] = [];
-  readonly parseErrors: number;
 
   private readonly nodeIds = new Set<string>();
   private readonly edgeKeys = new Set<string>();
@@ -79,15 +101,15 @@ export class FileBuilder {
   private readonly bindingsByName = new Map<string, Binding>();
   private readonly importRefs = new Map<string, ImportRef>();
   private readonly classMembers = new Map<string, CodeNode[]>();
-  private readonly pendingExports: Array<{ name: string; node: SyntaxNode }> = [];
+  private readonly pendingExports: Array<{ name: string; exportedName: string; node: SyntaxNode }> = [];
 
   constructor(
     readonly file: string,
     readonly language: LanguageId,
     root: SyntaxNode,
   ) {
+    boundTree(root);
     this.moduleId = moduleNodeId(file);
-    this.parseErrors = root.hasError ? 1 : 0;
     this.addNode({
       id: this.moduleId,
       kind: "module",
@@ -164,7 +186,7 @@ export class FileBuilder {
     if (!this.classMembers.has(node.id)) this.classMembers.set(node.id, []);
   }
 
-  addImport(specifier: string, binding: string, node: SyntaxNode, localName?: string): void {
+  addImport(specifier: string, binding: string, node: SyntaxNode, localName?: string, namespace = binding === "*"): void {
     const id = externalNodeId(specifier, binding);
     this.addNode({
       id,
@@ -183,7 +205,7 @@ export class FileBuilder {
     }
     const local = localName ?? binding;
     if (local !== "*" && !this.bindingsByName.has(local)) {
-      this.bindingsByName.set(local, { specifier, name: binding });
+      this.bindingsByName.set(local, { specifier, name: binding, namespace });
     }
   }
 
@@ -191,8 +213,8 @@ export class FileBuilder {
     this.uses.push(use);
   }
 
-  addExport(name: string, node: SyntaxNode): void {
-    this.pendingExports.push({ name, node });
+  addExport(name: string, node: SyntaxNode, exportedName = name): void {
+    this.pendingExports.push({ name, exportedName, node });
   }
 
   resolveLocal(name: string): CodeNode | null {
@@ -202,13 +224,15 @@ export class FileBuilder {
 
   finish(): ExtractResult {
     for (const use of this.uses) this.resolveUse(use);
+    const exportAliases: Record<string, string> = Object.create(null) as Record<string, string>;
     for (const pending of this.pendingExports) {
       const symbol = this.symbolsByName.get(pending.name)?.[0];
       if (symbol) {
         this.addEdge(this.moduleId, symbol.id, "exports", "EXTRACTED", pending.node);
+        exportAliases[pending.exportedName] = symbol.id;
       }
     }
-    return { nodes: this.nodes, edges: this.edges, imports: [...this.importRefs.values()] };
+    return { nodes: this.nodes, edges: this.edges, imports: [...this.importRefs.values()], exportAliases };
   }
 
   private resolveUse(use: PendingUse): void {
@@ -229,7 +253,14 @@ export class FileBuilder {
     if (use.qualifier) {
       const binding = this.bindingsByName.get(use.qualifier);
       if (binding) {
-        this.addUseEdge(use, externalNodeId(binding.specifier, binding.name), use.kind);
+        const name = binding.namespace ? use.name : binding.name;
+        const id = externalNodeId(binding.specifier, name);
+        if (binding.namespace) {
+          const ref = this.importRefs.get(binding.specifier);
+          if (ref && !ref.bindings.includes(name)) ref.bindings.push(name);
+          this.addNode({ id, kind: "import-source", name: binding.specifier, file: this.file, language: "external", span: lineSpan(use.node) });
+        }
+        this.addUseEdge(use, id, use.kind);
         return;
       }
       const localQualifier = this.resolveLocal(use.qualifier);
@@ -288,11 +319,4 @@ export function isCTagDeclarationName(node: SyntaxNode): boolean {
     return true;
   }
   return isDeclarationName(node);
-}
-
-export function visitNamed(node: SyntaxNode, visit: (child: SyntaxNode) => boolean | void): void {
-  for (const child of node.namedChildren) {
-    const descend = visit(child);
-    if (descend !== false) visitNamed(child, visit);
-  }
 }

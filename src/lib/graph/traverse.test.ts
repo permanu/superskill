@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { VaultFS } from "../vault-fs.js";
-import { DEFAULT_OPEN_BYTES, openTraverser, traverseTokensForBytes } from "./traverse.js";
+import { DEFAULT_OPEN_BYTES, openTraverser, TRAVERSE_INDEX_VERSION, traverseTokensForBytes } from "./traverse.js";
 
 const SENTINEL = "BORROW BODY SENTINEL";
 
@@ -41,11 +42,33 @@ function createFixture(): Fixture {
   mkdirSync(join(catalogDir, "code"), { recursive: true });
   mkdirSync(join(catalogDir, "review"), { recursive: true });
   mkdirSync(join(catalogDir, "memory"), { recursive: true });
+  mkdirSync(join(catalogDir, "principles"), { recursive: true });
   mkdirSync(join(repo, "src", "lib"), { recursive: true });
+  mkdirSync(join(repo, ".agents", "skills", "group", "nested.name", "references"), { recursive: true });
+  mkdirSync(join(repo, ".agents", "skills", "group", "nested.name", "assets"), { recursive: true });
+  mkdirSync(join(repo, ".superskill", "skill-cache", "owner", "repo.name", "cached.skill", "references"), { recursive: true });
 
   writeFileSync(join(catalogDir, "code", "rust.md"), "---\nname: rust\n---\n# Rust\n");
   writeFileSync(join(catalogDir, "review", "always.md"), "---\nname: always\n---\n# Always review\n");
   writeFileSync(join(catalogDir, "memory", "remember.md"), "---\nname: remember\n---\n# Remember\n");
+  writeFileSync(join(repo, ".agents", "skills", "group", "nested.name", "SKILL.md"), "# Nested native skill\n");
+  writeFileSync(join(repo, ".agents", "skills", "group", "nested.name", "references", "guide.md"), "Nested native reference.\n");
+  writeFileSync(join(repo, ".agents", "skills", "group", "nested.name", "assets", "image.bin"), Buffer.from([0, 255, 1]));
+  writeFileSync(join(repo, ".superskill", "skill-cache", "owner", "repo.name", "cached.skill", "SKILL.md"), "# Cached dotted skill\n");
+  writeFileSync(join(repo, ".superskill", "skill-cache", "owner", "repo.name", "cached.skill", "references", "guide.md"), "Cached reference.\n");
+  writeFileSync(join(catalogDir, "constitution.md"), "# Fixture Constitution\n\nAlways applies.\n");
+  writeFileSync(
+    join(catalogDir, "principles", "boundary-test.md"),
+    "---\nid: principle-boundary-test\ntitle: Boundary test\napply_when: Apply when validating inputs at a boundary.\ntriggers: { keywords: [boundary], files: [], symbols: [JSON.parse] }\nenforce: review\nrelated: []\nsources: [{ title: Source, url: https://example.test } ]\nstatus: verified\n---\n\nValidate at the boundary.\n\n## See Also\n\n- [principle-reference-target](reference-target.md) — one-hop target.\n",
+  );
+  writeFileSync(
+    join(catalogDir, "principles", "reference-target.md"),
+    "---\nid: principle-reference-target\ntitle: Reference target\napply_when: Apply when following references.\ntriggers: { keywords: [nevermatch], files: [], symbols: [] }\nenforce: review\nrelated: [principle-reference-next]\nstatus: verified\n---\n\nReference target body.\n",
+  );
+  writeFileSync(
+    join(catalogDir, "principles", "reference-next.md"),
+    "---\nid: principle-reference-next\ntitle: Reference next\napply_when: Apply when following a second reference.\ntriggers: { keywords: [nevermatch], files: [], symbols: [] }\nenforce: review\nrelated: []\nstatus: verified\n---\n\nSecond-hop reference body.\n",
+  );
 
   writeFileSync(
     join(rustRules, "own-borrow-over-clone.md"),
@@ -61,7 +84,7 @@ function createFixture(): Fixture {
         triggers: { keywords: ["ownership", "borrow", "clone"], files: ["**/*.rs"], symbols: [] },
         related: ["rust-conv-defer-close"],
       },
-      `> ${SENTINEL}\n\nUse references instead of cloning.\n`,
+      `> ${SENTINEL}\n\nUse references instead of cloning; prefer 界.\n`,
     ),
   );
   writeFileSync(
@@ -149,6 +172,34 @@ function createFixture(): Fixture {
         triggers: ["memory"],
         always: true,
         path: "memory/remember.md",
+      },
+      {
+        type: "skill",
+        id: "native/nested.name",
+        source: "native",
+        audits: { gen: "pass", socket: "pass", snyk: "pass" },
+        installs: 0,
+        stars: 0,
+        w: 0.7,
+        ts: 1,
+        pack: "review",
+        langs: [],
+        triggers: ["nested"],
+        always: false,
+      },
+      {
+        type: "skill",
+        id: "owner/repo.name@cached.skill",
+        source: "routed",
+        audits: { gen: "pass", socket: "pass", snyk: "pass" },
+        installs: 0,
+        stars: 0,
+        w: 0.7,
+        ts: 1,
+        pack: "security",
+        langs: [],
+        triggers: ["cached"],
+        always: false,
       },
       { type: "project", id: "project", stack: ["rust"], tools: [], phase: "implement", ts: 1 },
     ],
@@ -328,6 +379,125 @@ describe("traverse index", () => {
     await expect(traverser.open("rule:nope")).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
   });
 
+  it("indexes and opens principle and constitution sources with one-hop principle references", async () => {
+    const traverser = await openTraverser(opts());
+    const principles = traverser.children("principles");
+    expect(principles.children.map(node => node.id)).toContain("principle:principle-boundary-test");
+    const principle = traverser.node("principle:principle-boundary-test")!;
+    expect(principle.meta).toMatchObject({ sourcesCount: 1, related: ["principle-reference-target"] });
+    expect(traverser.node("principle:principle-boundary-test")!.edge_counts.out).toBe(1);
+    const opened = await traverser.open("principle:principle-boundary-test", { full: true });
+    expect(opened.content).toContain("Validate at the boundary.");
+    expect((await traverser.open("constitution", { full: true })).content).toContain("Fixture Constitution");
+
+    const resolved = traverser.resolve("validate boundary inputs");
+    const principleIds = resolved.items.filter(item => item.kind === "principle").map(item => item.id);
+    expect(principleIds).toContain("principle:principle-boundary-test");
+    expect(principleIds).toContain("principle:principle-reference-target");
+    expect(principleIds).not.toContain("principle:principle-reference-next");
+  });
+
+  it("opens nested native and dotted cache skill sources with bounded text and binary references", async () => {
+    const traverser = await openTraverser(opts());
+    const nativeId = "skill:native/nested.name";
+    const native = traverser.node(nativeId)!;
+    expect(native.path).toBe(".agents/skills/group/nested.name/SKILL.md");
+    expect((await traverser.open(nativeId, { full: true })).content).toContain("Nested native skill");
+    const nativeResources = traverser.children(nativeId).children;
+    expect(nativeResources.map(node => node.id)).toContain("skill-resource:native/nested.name:references/guide.md");
+    expect(nativeResources.find(node => node.id.endsWith("assets/image.bin"))?.meta?.text).toBe(false);
+    expect((await traverser.open("skill-resource:native/nested.name:references/guide.md", { full: true })).content).toContain("Nested native reference");
+    await expect(traverser.open("skill-resource:native/nested.name:assets/image.bin")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+
+    const cacheId = "skill:owner/repo.name@cached.skill";
+    expect(traverser.node(cacheId)?.path).toBe(".superskill/skill-cache/owner/repo.name/cached.skill/SKILL.md");
+    expect((await traverser.open(cacheId, { full: true })).content).toContain("Cached dotted skill");
+    expect((await traverser.open("skill-resource:owner/repo.name@cached.skill:references/guide.md", { full: true })).content).toContain("Cached reference");
+  });
+
+  it("rejects symlinked skill resources and forged cached resource owners and paths", async () => {
+    const secret = join(fx.vault, "outside.md");
+    writeFileSync(secret, "PRIVATE_RESOURCE_SENTINEL");
+    const linked = join(fx.repo, ".agents", "skills", "group", "nested.name", "references", "outside.md");
+    symlinkSync(secret, linked);
+    const privateReference = join(fx.repo, ".claude", "skills", "private.name", "references", "private.md");
+    mkdirSync(join(fx.repo, ".claude", "skills", "private.name", "references"), { recursive: true });
+    writeFileSync(privateReference, "PRIVATE_NATIVE_REFERENCE_SENTINEL");
+    symlinkSync(privateReference, join(fx.repo, ".agents", "skills", "group", "nested.name", "references", "private-link.md"));
+    await openTraverser(opts());
+    const resourceId = "skill-resource:native/nested.name:references/guide.md";
+    const cacheFile = join(fx.repo, ".superskill", "traverse.json");
+    const cache = JSON.parse(readFileSync(cacheFile, "utf8"));
+    const forged = cache.sections.rules.nodes.find((node: any) => node.id === resourceId);
+    expect(forged).toBeDefined();
+    forged.meta.owner = "../../outside";
+    forged.path = "../outside.md";
+    forged.file = secret;
+    cache.sections.rules.nodes.push({
+      id: "skill-resource:native/../../outside:outside.md",
+      kind: "skill_resource",
+      label: "outside.md",
+      parent: "skill:native/nested.name",
+      path: "../../outside.md",
+      file: secret,
+      bytes: statSync(secret).size,
+      tokens: traverseTokensForBytes(statSync(secret).size),
+      meta: { owner: "native/nested.name", text: true },
+    });
+    writeFileSync(cacheFile, JSON.stringify(cache));
+
+    const next = await openTraverser(opts());
+    expect(next.node("skill-resource:native/nested.name:references/outside.md")).toBeNull();
+    expect(next.node("skill-resource:native/nested.name:references/private-link.md")).toBeNull();
+    expect(next.node("skill-resource:native/../../outside:outside.md")).toBeNull();
+    expect((await next.open(resourceId, { full: true })).content).not.toContain("PRIVATE_RESOURCE_SENTINEL");
+    const guide = join(fx.repo, ".agents", "skills", "group", "nested.name", "references", "guide.md");
+    unlinkSync(guide);
+    symlinkSync(privateReference, guide);
+    await expect(next.open(resourceId, { full: true })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("reconstructs a 105KB UTF-8 reference exactly from gapless pages", async () => {
+    const path = join(fx.repo, ".agents", "skills", "group", "nested.name", "references", "large.md");
+    const reference = `${"prefix-".repeat(20)}${"α界".repeat(21_000)}\nreference-end\n`;
+    writeFileSync(path, reference);
+    const expected = readFileSync(path, "utf8");
+    const traverser = await openTraverser({ ...opts(), refresh: true });
+    const chunks: string[] = [];
+    let offsetBytes = 0;
+    for (;;) {
+      const page = await traverser.open("skill-resource:native/nested.name:references/large.md", { offsetBytes, maxBytes: 16_384 });
+      expect(page.offset_bytes).toBe(offsetBytes);
+      expect(page.bytes).toBe(Buffer.byteLength(expected, "utf8"));
+      expect(page.content_bytes).toBe(Buffer.byteLength(page.content, "utf8"));
+      expect(page.content_bytes).toBeLessThanOrEqual(16_384);
+      expect(page.truncated).toBe(!page.read_complete);
+      chunks.push(page.content);
+      if (page.read_complete) {
+        expect(page.next_offset_bytes).toBeNull();
+        break;
+      }
+      expect(page.next_offset_bytes).toBe(offsetBytes + page.content_bytes);
+      offsetBytes = page.next_offset_bytes!;
+    }
+    expect(Buffer.byteLength(expected, "utf8")).toBeGreaterThanOrEqual(105_000);
+    expect(chunks.join("")).toBe(expected);
+    expect((await traverser.open("skill-resource:native/nested.name:references/large.md", { full: true })).content).toBe(expected);
+  });
+
+  it("validates paging offsets, UTF-8 boundaries, EOF, and page progress", async () => {
+    const traverser = await openTraverser(opts());
+    const source = readFileSync(join(fx.rulesDir, "rust", "own-borrow-over-clone.md"), "utf8");
+    const unicodeAt = Buffer.from(source, "utf8").indexOf(Buffer.from("界", "utf8"));
+    const eof = Buffer.byteLength(source, "utf8");
+    await expect(traverser.open("rule:rust-own-borrow-over-clone", { offsetBytes: eof + 1 })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(traverser.open("rule:rust-own-borrow-over-clone", { offsetBytes: unicodeAt + 1 })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(traverser.open("rule:rust-own-borrow-over-clone", { offsetBytes: 0, maxBytes: 0 })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(traverser.open("rule:rust-own-borrow-over-clone", { offsetBytes: unicodeAt, maxBytes: 1 })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    const end = await traverser.open("rule:rust-own-borrow-over-clone", { offsetBytes: eof, maxBytes: 5 });
+    expect(end).toMatchObject({ offset_bytes: eof, next_offset_bytes: null, read_complete: true, content_bytes: 0, content: "" });
+  });
+
   it("indexes src code with import edges and directories", async () => {
     const traverser = await openTraverser(opts());
     const node = traverser.node("code:src/a.ts");
@@ -365,6 +535,158 @@ describe("traverse index", () => {
     unlinkSync(path);
     symlinkSync(secret, path);
     await expect(traverser.open("code:src/safe.ts")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it.each(["skill", "rule", "code", "vault"])("rebuilds tampered %s paths instead of reading arbitrary files", async (kind) => {
+    const options = { ...opts(), vaultPath: fx.vault, projectSlug: "testproj" };
+    await openTraverser(options);
+    const cacheFile = join(fx.repo, ".superskill", "traverse.json");
+    const cache = JSON.parse(readFileSync(cacheFile, "utf8"));
+    const section = kind === "code" ? cache.sections.code : kind === "vault" ? cache.sections.vault : cache.sections.rules;
+    const node = section.nodes.find((node: { kind: string }) => node.kind === kind);
+    const id = node.id;
+    const privateFile = join(fx.vault, "private.md");
+    writeFileSync(privateFile, "PRIVATE_SENTINEL");
+    node.file = privateFile;
+    if (kind === "vault") node.path = "../private.md";
+    writeFileSync(cacheFile, JSON.stringify(cache));
+    const next = await openTraverser(options);
+    expect((await next.open(id)).content).not.toContain("PRIVATE_SENTINEL");
+  });
+
+  it.each(["principle", "constitution"])("rebuilds tampered %s sources from their canonical catalog identity", async (kind) => {
+    await openTraverser(opts());
+    const cacheFile = join(fx.repo, ".superskill", "traverse.json");
+    const cache = JSON.parse(readFileSync(cacheFile, "utf8"));
+    const node = cache.sections.rules.nodes.find((candidate: { kind: string }) => candidate.kind === kind);
+    expect(node).toBeDefined();
+    const id = node.id;
+    const privateFile = join(fx.vault, "private.md");
+    writeFileSync(privateFile, "PRIVATE_CATALOG_SENTINEL");
+    node.path = "../private.md";
+    node.file = privateFile;
+    writeFileSync(cacheFile, JSON.stringify(cache));
+
+    const next = await openTraverser(opts());
+    expect(next.node(id)).not.toBeNull();
+    expect((await next.open(id, { full: true })).content).not.toContain("PRIVATE_CATALOG_SENTINEL");
+  });
+
+  it("rejects cyclic cached parents and malformed node and edge shapes", async () => {
+    await openTraverser(opts());
+    const path = join(fx.repo, ".superskill", "traverse.json");
+    const original = readFileSync(path, "utf8");
+    for (const tamper of [
+      (section: any) => { section.nodes.find((node: any) => node.id === "rules:rust").parent = "rules:rust/own"; },
+      (section: any) => { section.nodes.push(null); },
+      (section: any) => { section.nodes.find((node: any) => node.kind === "rule").meta.triggers.keywords = "not-an-array"; },
+      (section: any) => { section.nodes.find((node: any) => node.kind === "rule").bytes = -1; },
+      (section: any) => { section.nodes.find((node: any) => node.kind === "rule").meta.payload = { unexpected: true }; },
+      (section: any) => { section.nodes.find((node: any) => node.kind === "skill").path = "memory/remember.md"; },
+      (section: any) => { section.edges.push({ from: null, to: "rules", type: "unknown" }); },
+    ]) {
+      const cache = JSON.parse(original);
+      tamper(cache.sections.rules);
+      writeFileSync(path, JSON.stringify(cache));
+      const next = await openTraverser(opts());
+      expect(next.resolve("rust ownership").items.some(item => item.id === "rule:rust-own-borrow-over-clone")).toBe(true);
+      expect(next.node("rules:rust")!.parent).toBe("rules");
+    }
+  });
+
+  it.each([".env", ".superskill/private.ts", "ignored/secret.ts"])("rejects forged cache nodes for same-repo secret %s", async (secretPath) => {
+    execFileSync("git", ["init", fx.repo], { stdio: "ignore" });
+    writeFileSync(join(fx.repo, ".gitignore"), "ignored/\n.env\n.superskill/\n");
+    mkdirSync(join(fx.repo, "ignored"));
+    writeFileSync(join(fx.repo, secretPath), "PRIVATE_SAME_REPO_SENTINEL");
+    await openTraverser(opts());
+    const path = join(fx.repo, ".superskill", "traverse.json");
+    const cache = JSON.parse(readFileSync(path, "utf8"));
+    const source = cache.sections.code.nodes.find((node: any) => node.id === "code:src/a.ts");
+    const forged = { ...source, id: `code:${secretPath}`, path: secretPath, file: join(fx.repo, secretPath), parent: "code" };
+    cache.sections.code.nodes.push(forged);
+    writeFileSync(path, JSON.stringify(cache));
+    const next = await openTraverser(opts());
+    expect(next.node(forged.id)).toBeNull();
+    await expect(next.open(forged.id)).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
+  });
+
+  it("rejects source files replaced by symlinks to same-repo secrets", async () => {
+    const path = join(fx.repo, "src", "a.ts");
+    writeFileSync(join(fx.repo, ".env"), "PRIVATE_SAME_REPO_SENTINEL");
+    const traverser = await openTraverser(opts());
+    unlinkSync(path);
+    symlinkSync(join(fx.repo, ".env"), path);
+    await expect(traverser.open("code:src/a.ts")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("rejects files newly ignored after an index was opened", async () => {
+    execFileSync("git", ["init", fx.repo], { stdio: "ignore" });
+    const traverser = await openTraverser(opts());
+    writeFileSync(join(fx.repo, ".gitignore"), "src/a.ts\n");
+    await expect(traverser.open("code:src/a.ts")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("requires cached code ids and language metadata to match the enumerated file", async () => {
+    await openTraverser(opts());
+    const path = join(fx.repo, ".superskill", "traverse.json");
+    const original = readFileSync(path, "utf8");
+    for (const tamper of [
+      (node: any) => { node.path = "src/lib/b.ts"; node.file = join(fx.repo, node.path); },
+      (node: any) => { node.meta.language = "python"; },
+    ]) {
+      const cache = JSON.parse(original);
+      tamper(cache.sections.code.nodes.find((node: any) => node.id === "code:src/a.ts"));
+      writeFileSync(path, JSON.stringify(cache));
+      const next = await openTraverser(opts());
+      expect(next.node("code:src/a.ts")).toMatchObject({ path: "src/a.ts", meta: { language: "typescript" } });
+    }
+  });
+
+  it.each(["rule", "skill"])("resolves cached %s identities through their catalog", async (kind) => {
+    writeFileSync(join(fx.rulesDir, "sources.md"), "RULE_PRIVATE_SENTINEL");
+    await openTraverser(opts());
+    const path = join(fx.repo, ".superskill", "traverse.json");
+    const cache = JSON.parse(readFileSync(path, "utf8"));
+    const node = cache.sections.rules.nodes.find((node: any) => node.id === (kind === "rule" ? "rule:rust-own-borrow-over-clone" : "skill:code/rust"));
+    node.path = kind === "rule" ? "sources.md" : "memory/remember.md";
+    node.file = join(kind === "rule" ? fx.rulesDir : fx.catalogDir, node.path);
+    writeFileSync(path, JSON.stringify(cache));
+    const next = await openTraverser(opts());
+    expect(next.node(node.id)!.path).not.toBe(node.path);
+    expect((await next.open(node.id)).content).not.toContain("PRIVATE_SENTINEL");
+  });
+
+  it.each(["skill", "rule", "vault"])("rejects %s files replaced by escaped symlinks after indexing", async (kind) => {
+    const options = { ...opts(), vaultPath: fx.vault, projectSlug: "testproj" };
+    const traverser = await openTraverser(options);
+    const id = kind === "skill" ? "skill:code/rust" : kind === "rule" ? "rule:rust-own-borrow-over-clone" : "vault:projects/testproj/context.md";
+    const path = kind === "skill" ? join(fx.catalogDir, "code", "rust.md") : kind === "rule" ? join(fx.rulesDir, "rust", "own-borrow-over-clone.md") : join(fx.vault, "projects", "testproj", "context.md");
+    const secret = join(fx.vault, "private.md");
+    writeFileSync(secret, "PRIVATE_SENTINEL");
+    unlinkSync(path);
+    symlinkSync(secret, path);
+    await expect(traverser.open(id)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it.each([NaN, Infinity, 1.5, -1, 1001])("rejects invalid numeric traversal limit %s", async (limit) => {
+    const traverser = await openTraverser(opts());
+    expect(() => traverser.children("graph", { limit })).toThrow(/limit/);
+    expect(() => traverser.resolve("rust", { limit })).toThrow(/limit/);
+    await expect(traverser.open("skill:code/rust", { maxBytes: limit === 1001 ? 8 * 1024 * 1024 + 1 : limit })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
+
+  it("detects nested same-size rule edits even below the newest timestamp", async () => {
+    const target = join(fx.rulesDir, "rust", "conv-defer-close.md");
+    const before = readFileSync(target, "utf8");
+    const future = new Date(Date.now() + 20_000);
+    utimesSync(fx.longRule, future, future);
+    await openTraverser(opts());
+    const stamp = statSync(target);
+    writeFileSync(target, before.replace("Defer close", "Defer flush"));
+    utimesSync(target, stamp.atime, stamp.mtime);
+    const next = await openTraverser(opts());
+    expect(next.node("rule:rust-conv-defer-close")!.label).toBe("Defer flush");
   });
 
   it("discovers Python outside src and opens a symbol without unrelated file content", async () => {
@@ -412,7 +734,7 @@ describe("traverse index", () => {
     const cacheFile = join(fx.repo, ".superskill", "traverse.json");
     expect(existsSync(cacheFile)).toBe(true);
     const cached = JSON.parse(readFileSync(cacheFile, "utf8"));
-    expect(cached.version).toBe(2);
+    expect(cached.version).toBe(TRAVERSE_INDEX_VERSION);
     const fingerprint = cached.fingerprint;
     const builtAt = cached.builtAt;
 
@@ -446,6 +768,14 @@ describe("traverse index", () => {
     expect((node!.meta!.triggers as { keywords: string[] }).keywords).toContain("cleanup-marker");
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).fingerprint).not.toBe(fingerprint);
     expect(first.node("rule:rust-conv-defer-close")).not.toBeNull();
+  });
+
+  it("canonicalizes custom cache parents including not-yet-created directories", async () => {
+    const cacheFile = join(fx.repo, ".cache", "nested", "traverse.json");
+    await openTraverser({ ...opts(), cacheFile });
+    const first = JSON.parse(readFileSync(cacheFile, "utf8"));
+    await openTraverser({ ...opts(), cacheFile });
+    expect(JSON.parse(readFileSync(cacheFile, "utf8")).builtAt).toBe(first.builtAt);
   });
 
   it("rebuilds corrupt cache and honors refresh", async () => {
@@ -534,7 +864,7 @@ describe("traverse index", () => {
       expect(traverser.node("rule:rust-own-borrow-over-clone")).not.toBeNull();
     }
     const parsed = JSON.parse(readFileSync(cacheFile, "utf8"));
-    expect(parsed.version).toBe(2);
+    expect(parsed.version).toBe(TRAVERSE_INDEX_VERSION);
     expect(Array.isArray(parsed.sections.code.nodes)).toBe(true);
     expect(Array.isArray(parsed.sections.rules.nodes)).toBe(true);
     expect(Array.isArray(parsed.sections.vault.nodes)).toBe(true);

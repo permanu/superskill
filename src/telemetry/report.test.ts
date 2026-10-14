@@ -43,16 +43,14 @@ function event(overrides: Partial<Parameters<typeof buildActivationEvent>[0]> = 
 }
 
 describe("readTelemetryEvents", () => {
-  it("reads JSONL and counts malformed lines", async () => {
+  it("reads valid JSONL and rejects malformed data without treating it as empty", async () => {
     const path = join(dir, "events.jsonl");
-    await writeFile(
-      path,
-      [JSON.stringify(event()), "not-json", JSON.stringify({ type: "other" }), ""].join("\n"),
-      "utf-8"
-    );
+    await writeFile(path, [JSON.stringify(event()), ""].join("\n"), "utf-8");
     const result = await readTelemetryEvents(path);
     expect(result.events).toHaveLength(1);
-    expect(result.malformed).toBe(2);
+    expect(result.malformed).toBe(0);
+    await writeFile(path, [JSON.stringify(event()), "not-json", JSON.stringify({ type: "other" })].join("\n"), "utf-8");
+    await expect(readTelemetryEvents(path)).rejects.toMatchObject({ code: "INVALID_DATA" });
   });
 
   it("returns empty results for a missing file", async () => {

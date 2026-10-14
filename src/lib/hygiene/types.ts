@@ -39,6 +39,8 @@ export interface HygieneProbeOptions {
   policy: HygienePolicy;
   /** Injected clock (ms since epoch) for deterministic tests. */
   now: number;
+  deadline?: number;
+  activeWorktreePaths?: string[];
 }
 
 export interface HygieneProbe {

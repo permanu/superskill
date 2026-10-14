@@ -74,6 +74,7 @@ describe("watchdog command", () => {
   let home: string;
   let dataDir: string;
   let oldHome: string | undefined;
+  let oldClaudeProjects: string | undefined;
   let ctx: CommandContext;
 
   beforeEach(async () => {
@@ -81,6 +82,7 @@ describe("watchdog command", () => {
     home = await mkdtemp(join(tmpdir(), "watchdog-cmd-home-"));
     dataDir = await mkdtemp(join(tmpdir(), "watchdog-cmd-oc-"));
     oldHome = process.env.HOME;
+    oldClaudeProjects = process.env.SUPERSKILL_CLAUDE_PROJECTS;
     process.env.HOME = home;
     process.env.SUPERSKILL_OPENCODE_DATA = dataDir;
 
@@ -112,7 +114,10 @@ describe("watchdog command", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     process.env.HOME = oldHome;
+    if (oldClaudeProjects === undefined) delete process.env.SUPERSKILL_CLAUDE_PROJECTS;
+    else process.env.SUPERSKILL_CLAUDE_PROJECTS = oldClaudeProjects;
     delete process.env.SUPERSKILL_OPENCODE_DATA;
     await rm(vaultDir, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
@@ -134,6 +139,63 @@ describe("watchdog command", () => {
     if (status.action !== "status") return;
     expect(status.reports.length).toBe(1);
     expect(status.reports[0].open.length).toBeGreaterThan(0);
+  });
+
+  it("redacts transcript secrets from returned and persisted reports unless opted in", async () => {
+    const secrets = ["hidden-title", "hidden-prompt", "hidden-command", "hidden-failure"];
+    await writeJson(join(dataDir, "storage/session/hash1/ses_cmdtest.json"), {
+      id: "ses_cmdtest", title: secrets[0], directory: process.cwd(), time: { created: 1000, updated: 2000 },
+    });
+    await writeJson(join(dataDir, "storage/part/msg_1/prt_1.json"), { type: "text", text: `no ${secrets[1]}` });
+    await writeJson(join(dataDir, "storage/part/msg_1/prt_2.json"), { type: "text", text: `actually ${secrets[1]}` });
+    for (let i = 0; i < 3; i += 1) await writeJson(join(dataDir, `storage/part/msg_2/prt_${i + 2}.json`), {
+      type: "tool", tool: "bash", state: { status: "error", input: { command: secrets[2] }, output: secrets[3] },
+    });
+    const dig = await watchdogCommand({ action: "dig", sessionId: "opencode:ses_cmdtest" }, ctx);
+    if (dig.action !== "dig") throw new Error("expected dig");
+    const persisted = await ctx.vaultFs.read(dig.persisted_path!);
+    for (const secret of secrets) {
+      expect(JSON.stringify(dig)).not.toContain(secret);
+      expect(persisted).not.toContain(secret);
+    }
+    const explicit = await watchdogCommand({ action: "dig", sessionId: "opencode:ses_cmdtest", includePrompts: true, persist: false }, ctx);
+    for (const secret of secrets) expect(JSON.stringify(explicit)).toContain(secret);
+  });
+
+  it("marks partial window digs incomplete when a native trace source cannot be listed", async () => {
+    const secret = "private trace source contents";
+    const invalidRoot = join(home, "claude-projects-file");
+    await writeFile(invalidRoot, secret);
+    process.env.SUPERSKILL_CLAUDE_PROJECTS = invalidRoot;
+    const oldCodexRoot = process.env.SUPERSKILL_CODEX_SESSIONS;
+    process.env.SUPERSKILL_CODEX_SESSIONS = join(home, "codex-sessions");
+    try {
+      const result = await watchdogCommand({ action: "dig", scope: "window", count: 5 }, ctx);
+      if (result.action !== "dig") throw new Error("expected dig");
+      expect(result.report.sessions).toBeGreaterThan(0);
+      expect(result.report.incomplete).toBe(true);
+      expect(result.report.sourceErrors).toContainEqual({ source: "claude-code", code: "ENOTDIR" });
+      expect(result.rendered).toContain("INCOMPLETE:");
+      expect(result.persisted_path).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(secret);
+    } finally {
+      if (oldCodexRoot === undefined) delete process.env.SUPERSKILL_CODEX_SESSIONS;
+      else process.env.SUPERSKILL_CODEX_SESSIONS = oldCodexRoot;
+    }
+  });
+
+  it("requires boolean confirmation for cross-project history and scopes explicit session ids", async () => {
+    await writeJson(join(dataDir, "storage/session/hash2/ses_elsewhere.json"), {
+      id: "ses_elsewhere", directory: join(home, "other-repo"), time: { created: 1000, updated: 2000 },
+    });
+    await expect(watchdogCommand({ action: "dig", allProjects: true }, ctx)).rejects.toThrow(/confirm/);
+    await expect(watchdogCommand({ action: "dig", allProjects: true, confirm: "true" as never }, ctx)).rejects.toThrow(/confirm/);
+    const scoped = await watchdogCommand({ action: "dig", sessionId: "opencode:ses_elsewhere", persist: false }, ctx);
+    if (scoped.action !== "dig") throw new Error("expected dig");
+    expect(scoped.report.sessions).toBe(0);
+    const confirmed = await watchdogCommand({ action: "dig", sessionId: "opencode:ses_elsewhere", allProjects: true, confirm: true, persist: false }, ctx);
+    if (confirmed.action !== "dig") throw new Error("expected dig");
+    expect(confirmed.report.sessions).toBe(1);
   });
 
   it("fixes a finding (dry-run first, then apply) and quarantines leaked tmp files", async () => {
@@ -317,20 +379,47 @@ describe("watchdog command branch coverage", () => {
     await expect(watchdogCommand({ action: "explode" } as never, ctx)).rejects.toThrow(/Unknown watchdog action/);
   });
 
-  it("uses a scoped VaultFS for another project and persists nothing when asked", async () => {
-    const result = await watchdogCommand(
+  it("rejects a direct project override instead of re-jailing the current workspace to another project", async () => {
+    const beta = new VaultFS(vaultDir, { projectSlug: "otherproj" });
+    await beta.write("watchdog/001-private.md", serializeFrontmatter(createFrontmatter({
+      type: "watchdog", findings: [{ id: "private-beta", title: "BETA_PRIVATE_REPORT", status: "open", severity: "high" }],
+    }), "\n"));
+    await expect(watchdogCommand({ action: "status", project: "otherproj" }, ctx)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(watchdogCommand({ action: "status", project: "otherproj", allProjects: true, confirm: true }, ctx)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(watchdogCommand(
       { action: "dig", scope: "window", project: "otherproj", count: 1, persist: false },
       ctx,
-    );
-    expect(result.action).toBe("dig");
-    if (result.action !== "dig") return;
-    expect(result.report.scope.kind).toBe("window");
-    expect(result.report.sessions).toBe(0);
-    expect(result.persisted_path).toBeUndefined();
+    )).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    const current = await watchdogCommand({ action: "status", project: "testproj", allProjects: true, confirm: true }, ctx);
+    expect(JSON.stringify(current)).not.toContain("BETA_PRIVATE_REPORT");
+  });
+
+  it.each(["opencode", "claude-code", "codex"])("does not read %s traces from a mapped child beneath an unresolved parent", async tool => {
+    const parent = join(home, "parent");
+    const beta = join(parent, "beta");
+    await mkdir(beta, { recursive: true });
+    await writeFile(join(vaultDir, "project-map.json"), JSON.stringify({ [beta]: "beta" }));
+    await writeJson(join(dataDir, "storage/session/beta/ses_beta.json"), { id: "ses_beta", directory: beta, time: { created: 1000, updated: 2000 } });
+    const claudeDir = join(process.env.SUPERSKILL_CLAUDE_PROJECTS!, "beta");
+    await mkdir(claudeDir);
+    await writeFile(join(claudeDir, "ses_beta.jsonl"), JSON.stringify({ type: "user", cwd: beta, message: { content: "beta prompt" } }));
+    const codexDir = join(process.env.SUPERSKILL_CODEX_SESSIONS!, "2026", "10", "14");
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(join(codexDir, "rollout-2026-10-14T00-00-00-beta.jsonl"), JSON.stringify({ type: "session_meta", payload: { cwd: beta } }));
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(parent);
+    const unresolved = { ...ctx, projectSlug: null, workspacePath: undefined, vaultFs: new VaultFS(vaultDir, { projectSlug: null }) };
+    try {
+      const result = await watchdogCommand({ action: "dig", scope: "window", tool, count: 5, persist: false }, unresolved);
+      if (result.action !== "dig") throw new Error("expected dig");
+      expect(result.report.sessions).toBe(0);
+      const confirmed = await watchdogCommand({ action: "dig", scope: "window", tool, count: 5, allProjects: true, confirm: true, persist: false }, ctx);
+      if (confirmed.action !== "dig") throw new Error("expected dig");
+      expect(confirmed.report.sessions).toBeGreaterThan(0);
+    } finally { cwd.mockRestore(); }
   });
 
   it("digs unknown sessions and falls back to vault session notes", async () => {
-    const empty = await watchdogCommand({ action: "dig", sessionId: "missing-session", allProjects: true, persist: false }, ctx);
+    const empty = await watchdogCommand({ action: "dig", sessionId: "missing-session", allProjects: true, confirm: true, persist: false }, ctx);
     expect(empty.action).toBe("dig");
     if (empty.action !== "dig") return;
     expect(empty.report.sessions).toBe(0);

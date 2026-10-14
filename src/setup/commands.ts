@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 import { homedir } from "os";
 import { join } from "path";
 import type { ClientConfig } from "./types.js";
@@ -46,19 +47,19 @@ export function slashCommandSpecs(token: string): SlashCommandSpec[] {
       name: "watchdog",
       description: "superskill watchdog — dig for agent-environment issues, fix what I approve",
       prompt: [
-        `Run a superskill watchdog pass. Input: ${token} (empty = dig the latest session).`,
+        `Run a project-scoped superskill watchdog request. Input: ${token} (empty = dig the latest session).`,
         "",
-        "1. Call the superskill MCP tool `watchdog` with action \"dig\" and the scope implied by the input (session | window --since 7d | env | all). Default: session.",
-        "2. Read catalog/watchdog/dig.md and follow it: verify every finding against this repo before proposing anything; present findings most-severe-first with evidence and a concrete proposal.",
-        "3. For steering/guardrail findings, make the edits yourself (navigation pointers; deterministic checks over prose rules). For mechanical reclamation, call `watchdog fix` — dry-run first, `--apply` only after I confirm.",
-        "4. Close the loop: mark what changed with `watchdog fix --finding <id> --apply` (or --dismiss).",
+        "Use the exact host-discovered MCP tool name. OpenCode Code Mode uses `tools.superskill.watchdog`; Claude Code exposes `mcp__superskill__watchdog`. Other hosts may differ; never guess or rewrite a prefix.",
+        "1. For diagnosis, call the tool with action \"dig\", the scope implied by the input (session | window | env | all; default session), and persist=false. Keep it scoped to the current project; set all_projects=true and confirm=true only when the user explicitly requests and confirms cross-project scope. Include prompts only when explicitly authorized.",
+        "2. For a requested fix, call the tool with action \"fix\" and apply=false. Show the planned actions; use only its reversible quarantine for file reclamation, never direct deletion. Use apply=true only after explicit confirmation. Set dismiss=true only when the user explicitly asks to dismiss.",
+        "3. A generic QA request does not authorize vault, graph, or report writes or fixes. If the MCP tool is unavailable, report that or verify the installed CLI with `superskill watchdog --help`; read-only fallback: `superskill watchdog dig --scope session --no-persist`. Preview with `superskill watchdog fix --finding <id>`; add `--apply` only after explicit confirmation. Use `--dismiss` only when explicitly requested. Do not install or use npx without network approval.",
       ].join("\n"),
     },
     {
       name: "superskill",
       description: "route a task through superskill packs",
       prompt: [
-        `Call the superskill MCP tool with task: ${token}`,
+        `Use the exact host-discovered superskill MCP tool name to route this task: ${token}. OpenCode Code Mode uses tools.superskill.superskill; Claude Code exposes mcp__superskill__superskill. Never guess or rewrite a prefix.`,
         "",
         "Apply the returned system brief, skills, and rules plan. For review/audit tasks also follow the review protocol it returns.",
       ].join("\n"),
@@ -115,21 +116,28 @@ export function installSlashCommands(
   for (const spec of slashCommandSpecs(token)) {
     const file = fileForCommand(dir, spec.name, format);
     const content = renderSlashCommand(spec, format, token);
+    try {
+      assertSafeSetupPath(file);
+    } catch (error) {
+      console.error(`[setup-commands] ${(error as Error).message}`);
+      result.skipped.push(spec.name);
+      continue;
+    }
     if (existsSync(file)) {
       let existing = "";
       try {
-        existing = readFileSync(file, "utf-8");
-      } catch {
+        existing = readSetupText(file) ?? "";
+      } catch (error) {
+        console.error(`[setup-commands] Could not read ${file}: ${(error as Error).message}`);
         existing = "";
       }
       if (!existing.includes("superskill:command")) {
         result.skipped.push(spec.name);
         continue;
       }
-      if (!opts.dryRun && existing !== content) writeFileSync(file, content, "utf-8");
+      if (!opts.dryRun && existing !== content) writeSetupText(file, content, existing);
     } else if (!opts.dryRun) {
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(file, content, "utf-8");
+      writeSetupText(file, content, null);
     }
     result.installed.push(spec.name);
   }
@@ -150,12 +158,15 @@ export function removeSlashCommands(
     const file = fileForCommand(dir, spec.name, format);
     if (!existsSync(file)) continue;
     try {
-      const content = readFileSync(file, "utf-8");
-      if (content.includes("superskill:command")) {
+      assertSafeSetupPath(file);
+      const content = readSetupText(file);
+      if (content === renderSlashCommand(spec, format, token)) {
+        assertSafeSetupPath(file);
         unlinkSync(file);
         removed.push(spec.name);
       }
-    } catch {
+    } catch (error) {
+      console.error(`[setup-commands] Could not remove ${file}: ${(error as Error).message}`);
       continue;
     }
   }

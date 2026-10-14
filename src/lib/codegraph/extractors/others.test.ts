@@ -32,9 +32,11 @@ describe("swift extractor", () => {
 
   it("resolves unqualified method calls to the enclosing class as INFERRED", async () => {
     const result = await extractFixture("swift", "Reporter.swift");
+    const reporter = nodeByName(result, "Reporter", "class")!;
     const report = nodeByName(result, "report", "method")!;
-    const format = nodeByName(result, "format", "method")!;
-    expect(hasEdge(result, report.id, format.id, "calls", "INFERRED")).toBe(true);
+    const format = result.nodes.find(node => node.name === "format" && result.edges.some(edge => edge.from === reporter.id && edge.to === node.id && edge.kind === "defines"));
+    expect(format).toBeDefined();
+    expect(hasEdge(result, report.id, format!.id, "calls", "INFERRED")).toBe(true);
   });
 });
 

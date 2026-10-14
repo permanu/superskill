@@ -2,7 +2,7 @@
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import matter from "gray-matter";
+import matter from "../lib/markdown-matter.js";
 import {
   type BatchStatus,
   type CampaignPlan,

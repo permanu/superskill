@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, lstat, open, readdir, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   cacheNamespace,
+  ensureSafeDirectory,
+  physicalPathInside,
   platformCacheRoot,
+  readRegularText,
   resolveRepoIdentity,
   worktreeKey,
 } from "./paths.js";
@@ -59,11 +63,22 @@ export async function migrateLegacyNamespace(
     note: null,
   };
   if (identity.legacyRepoId === null || identity.legacyRepoId === identity.repoId) return result;
+  if (![identity.repoId, identity.legacyRepoId].every((id) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id))) {
+    result.note = "unsafe cache namespace identity; migration refused";
+    return result;
+  }
   const root = resolve(opts.cacheRoot ?? platformCacheRoot());
   const legacyDir = join(root, identity.legacyRepoId);
   const targetDir = join(root, identity.repoId);
   if (!(await isRealDirectory(legacyDir))) return result;
-  if (await isRealDirectory(targetDir)) {
+  if (!await physicalPathInside(legacyDir, root) || !await physicalPathInside(targetDir, root)) {
+    result.note = "unsafe cache namespace path; migration refused";
+    return result;
+  }
+  let targetExists = false;
+  try { await lstat(targetDir); targetExists = true; }
+  catch (error) { if (errnoCode(error) !== "ENOENT") throw error; }
+  if (targetExists) {
     result.note = `legacy cache namespace ${identity.legacyRepoId} kept: ${identity.repoId} already exists`;
     return result;
   }
@@ -90,20 +105,34 @@ function markerPath(cacheNs: string, key: string): string {
   return join(markersDir(cacheNs), key);
 }
 
-async function atomicWriteMarker(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = join(dirname(path), `.${basename(path)}.tmp-${process.pid}-${Date.now().toString(36)}`);
+async function atomicWriteMarker(path: string, content: string, cacheNs: string): Promise<void> {
+  await ensureSafeDirectory(dirname(cacheNs));
+  if (!await physicalPathInside(path, dirname(cacheNs))) throw new Error(`Unsafe marker path: ${path}`);
+  await ensureSafeDirectory(dirname(path));
+  const tmp = join(dirname(path), `.${basename(path)}.tmp-${process.pid}-${randomUUID()}`);
+  let identity: { dev: number; ino: number } | undefined;
   try {
-    await writeFile(tmp, content, { encoding: "utf-8", mode: 0o600 });
-    await rename(tmp, path);
-  } catch (err) {
-    await rm(tmp, { force: true }).catch((cleanupErr: unknown) => {
+    const file = await open(tmp, "wx", 0o600);
+    try {
+      identity = await file.stat();
+      await file.writeFile(content, "utf-8");
+      await file.sync();
+    } finally { await file.close(); }
+    if (!await physicalPathInside(path, dirname(cacheNs))) throw new Error(`Marker ancestry changed: ${path}`);
+    try { await link(tmp, path); }
+    catch (error) { if (errnoCode(error) !== "EEXIST" || await readRegularText(path, 4096) !== content) throw error; }
+  } finally {
+    try {
+      if (identity && await physicalPathInside(tmp, dirname(cacheNs))) {
+        const current = await lstat(tmp);
+        if (current.dev === identity.dev && current.ino === identity.ino) await unlink(tmp);
+      }
+    } catch (cleanupErr) {
       const code = errnoCode(cleanupErr);
       if (code !== "ENOENT") {
         console.error(`[worktree-namespace] cannot remove temp marker ${tmp}: ${code ?? String(cleanupErr)}`);
       }
-    });
-    throw err;
+    }
   }
 }
 
@@ -112,23 +141,28 @@ export async function recordWorktreeMarker(
   key: string,
   worktreeRoot: string,
 ): Promise<void> {
+  if (key !== worktreeKey(worktreeRoot)) throw new Error("Marker key does not match its worktree path");
   const path = markerPath(cacheNs, key);
   const content = `${resolve(worktreeRoot)}\n`;
   try {
-    const existing = await readFile(path, "utf-8");
+    await lstat(dirname(cacheNs));
+    if (!await physicalPathInside(path, dirname(cacheNs))) throw new Error(`Unsafe marker path: ${path}`);
+  } catch (error) { if (errnoCode(error) !== "ENOENT") throw error; }
+  try {
+    const existing = await readRegularText(path, 4096);
     if (existing === content) return;
+    throw new Error(`Unrecognized worktree marker preserved: ${path}`);
   } catch (err) {
     const code = errnoCode(err);
-    if (code !== "ENOENT" && code !== "EACCES" && code !== "ENOTDIR") {
-      console.error(`[worktree-namespace] cannot read marker ${path}: ${code ?? String(err)}`);
-    }
+    if (code !== "ENOENT") throw err;
   }
-  await atomicWriteMarker(path, content);
+  await atomicWriteMarker(path, content, cacheNs);
 }
 
 export async function readWorktreeMarkers(repoDir: string): Promise<Map<string, string>> {
   const markers = new Map<string, string>();
   const dir = markersDir(repoDir);
+  if (!await physicalPathInside(dir, repoDir)) return markers;
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -140,11 +174,11 @@ export async function readWorktreeMarkers(repoDir: string): Promise<Map<string, 
     return markers;
   }
   for (const entry of entries) {
-    if (entry.startsWith(".")) continue;
+    if (!/^[0-9a-f]{16}$/.test(entry)) continue;
     try {
-      const raw = await readFile(join(dir, entry), "utf-8");
+      const raw = await readRegularText(join(dir, entry), 4096);
       const value = raw.trim();
-      if (value.length > 0) markers.set(entry, value);
+      if (resolve(value) === value && raw === `${value}\n` && worktreeKey(value) === entry) markers.set(entry, value);
     } catch (err) {
       const code = errnoCode(err);
       if (code !== "ENOENT" && code !== "EISDIR" && code !== "EACCES") {
@@ -157,11 +191,11 @@ export async function readWorktreeMarkers(repoDir: string): Promise<Map<string, 
 
 export async function markerTargetMissing(worktreePath: string): Promise<boolean> {
   try {
-    await stat(worktreePath);
+    await lstat(worktreePath);
     return false;
   } catch (err) {
     const code = errnoCode(err);
-    if (code === "ENOENT" || code === "ENOTDIR") return true;
+    if (code === "ENOENT") return true;
     if (code !== "EACCES") {
       console.error(`[worktree-namespace] cannot stat marker target ${worktreePath}: ${code ?? String(err)}`);
     }

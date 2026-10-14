@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
-import { VaultError } from "../lib/vault-fs.js";
+import { VaultError, VaultFS } from "../lib/vault-fs.js";
+import { validateProjectSlug } from "../config.js";
+import { resolveWorkspaceContext } from "../lib/workspace-context.js";
 import { searchText, type SearchResult } from "../lib/search-engine.js";
 import { ensureProjectIndex } from "../lib/knowledge-index.js";
-import { openTraverser } from "../lib/graph/traverse.js";
+import { MAX_OPEN_BYTES, openTraverser } from "../lib/graph/traverse.js";
 import type {
   TraverseChildrenResult,
   TraverseContent,
@@ -19,6 +21,8 @@ export interface GraphTraverseArgs {
   task?: string;
   limit?: number;
   full?: boolean;
+  offsetBytes?: number;
+  maxBytes?: number;
 }
 
 export type GraphTraverseResult =
@@ -31,10 +35,21 @@ export async function graphTraverseCommand(
   args: GraphTraverseArgs,
   ctx: CommandContext,
 ): Promise<GraphTraverseResult> {
+  if (ctx.projectSlug === null) throw new VaultError("PERMISSION_DENIED", "Graph traversal requires a resolved project scope.");
+  if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 1000)) {
+    throw new VaultError("INVALID_ARGUMENT", "limit must be an integer between 1 and 1000");
+  }
+  if (args.offsetBytes !== undefined && (!Number.isSafeInteger(args.offsetBytes) || args.offsetBytes < 0 || args.offsetBytes > MAX_OPEN_BYTES)) {
+    throw new VaultError("INVALID_ARGUMENT", `offsetBytes must be an integer between 0 and ${MAX_OPEN_BYTES}`);
+  }
+  if (args.maxBytes !== undefined && (!Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1 || args.maxBytes > MAX_OPEN_BYTES)) {
+    throw new VaultError("INVALID_ARGUMENT", `maxBytes must be an integer between 1 and ${MAX_OPEN_BYTES}`);
+  }
+  const workspace = await resolveWorkspaceContext(ctx.vaultPath, ctx.workspacePath ?? process.cwd(), ctx.projectSlug ?? undefined);
   const traverser = await openTraverser({
-    root: ctx.workspacePath ?? process.cwd(),
+    root: workspace.workspacePath,
     vaultPath: ctx.vaultPath,
-    projectSlug: ctx.projectSlug ?? undefined,
+    projectSlug: workspace.projectSlug,
     vaultFs: ctx.vaultFs,
   });
 
@@ -57,7 +72,7 @@ export async function graphTraverseCommand(
     }
     case "open": {
       if (!args.id) throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=open requires id");
-      return traverser.open(args.id, { full: args.full });
+      return traverser.open(args.id, { full: args.full, offsetBytes: args.offsetBytes, maxBytes: args.maxBytes });
     }
     default:
       throw new VaultError("INVALID_ARGUMENT", `Unknown graph_traverse action: ${String(args.action)}`);
@@ -70,16 +85,6 @@ export interface GraphResult {
   backlinks: string[];
 }
 
-function extractWikilinks(content: string): string[] {
-  const links: string[] = [];
-  const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-  let match;
-  while ((match = regex.exec(content)) !== null) {
-    links.push(match[1]);
-  }
-  return [...new Set(links)];
-}
-
 export async function graphRelatedCommand(
   args: {
     path: string;
@@ -88,58 +93,24 @@ export async function graphRelatedCommand(
   ctx: CommandContext,
 ): Promise<GraphResult> {
   const { path, hops = 1 } = args;
-  const vaultFs = ctx.vaultFs;
-  const vaultPath = ctx.vaultPath;
-
+  if (!ctx.projectSlug) throw new VaultError("PERMISSION_DENIED", "Related notes require a resolved project scope.");
+  const slug = validateProjectSlug(ctx.projectSlug);
+  if (ctx.vaultFs.projectSlug !== undefined && ctx.vaultFs.projectSlug !== slug) throw new VaultError("PERMISSION_DENIED", "Graph project does not match vault scope.");
+  if (!Number.isInteger(hops) || hops < 1 || hops > 8) throw new VaultError("INVALID_ARGUMENT", "hops must be an integer between 1 and 8");
+  if (typeof path !== "string" || path.length === 0) throw new VaultError("INVALID_ARGUMENT", "path is required");
+  const vaultFs = new VaultFS(ctx.vaultPath, { projectSlug: slug });
   const stored = vaultFs.jailPath(path);
-  const content = await vaultFs.read(path);
-
-  if (ctx.projectSlug) {
-    const idx = ensureProjectIndex(vaultPath, ctx.projectSlug);
-    const depth = hops ?? 1;
-    const outgoing = idx.outgoing(stored);
-    const backlinks = idx.incoming(stored);
-    if (depth > 1) {
-      const near = idx.neighbors(stored, depth);
-      return {
-        note: path,
-        outgoing: [...new Set([...outgoing, ...near.filter((p) => !backlinks.includes(p) && p !== stored)])],
-        backlinks,
-      };
-    }
-    return { note: path, outgoing, backlinks };
-  }
-
-  const outgoing = extractWikilinks(content);
-  const noteName = path.replace(/\.md$/, "");
-  const backlinks: string[] = [];
-  try {
-    const results = await searchText(vaultPath, `[[${noteName}`, { limit: 50 });
-    for (const result of results) {
-      if (result.path !== path) backlinks.push(result.path);
-    }
-  } catch (e: unknown) {
-    if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") { /* expected */ }
-    else if (e instanceof Error && e.message.includes("search")) { /* search engine error */ }
-    else throw e;
-  }
+  if (!await vaultFs.exists(path)) throw new VaultError("FILE_NOT_FOUND", `Not found: ${path}`);
+  const allowed = (target: string): boolean => target !== stored && target.startsWith(`projects/${slug}/`) && !target.split(/[\\/]/).some(part => part === ".." || part === ".");
+  const idx = ensureProjectIndex(ctx.vaultPath, slug);
+  const outgoing = idx.outgoing(stored).filter(allowed);
+  const backlinks = idx.incoming(stored).filter(allowed);
   if (hops > 1) {
-    const extra = new Set<string>();
-    for (const link of outgoing.slice(0, 10)) {
-      const linkPath = link.endsWith(".md") ? link : `${link}.md`;
-      try {
-        const linkContent = await vaultFs.read(linkPath);
-        for (const sub of extractWikilinks(linkContent)) {
-          if (sub !== noteName && !outgoing.includes(sub)) extra.add(sub);
-        }
-      } catch (e: unknown) {
-        if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") continue;
-        else throw e;
-      }
-    }
-    return { note: path, outgoing: [...outgoing, ...extra], backlinks: [...new Set(backlinks)] };
+    const incoming = new Set(backlinks);
+    const near = idx.neighbors(stored, hops).filter(p => allowed(p) && !incoming.has(p));
+    return { note: path, outgoing: [...new Set([...outgoing, ...near])].slice(0, 1000), backlinks };
   }
-  return { note: path, outgoing, backlinks: [...new Set(backlinks)] };
+  return { note: path, outgoing, backlinks };
 }
 
 export async function graphCrossProjectCommand(
@@ -154,6 +125,9 @@ export async function graphCrossProjectCommand(
     throw new VaultError("PERMISSION_DENIED", "graph_cross_project is disabled; search is jailed to one project.");
   }
   const { query, limit = 20 } = args;
+  validateProjectSlug(slug);
+  if (ctx.vaultFs.projectSlug !== undefined && ctx.vaultFs.projectSlug !== slug) throw new VaultError("PERMISSION_DENIED", "Graph project does not match vault scope.");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new VaultError("INVALID_ARGUMENT", "limit must be an integer between 1 and 1000");
   const results = await searchText(ctx.vaultPath, query, { limit, pathFilter: `projects/${slug}` });
   return { [slug]: results };
 }

@@ -6,7 +6,7 @@ import { initProject, type InitResult } from "./init.js";
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph, mutateGraph } from "../../lib/graph/store.js";
 import { matchTask, alwaysOnSkillIds, getPhaseForTask, routingStack } from "../../lib/graph/router.js";
-import { loadNeighborhood, loadContent, formatSystemBrief } from "../../lib/graph/loader.js";
+import { loadNeighborhood, loadContent, formatSystemBrief, parseSkillId } from "../../lib/graph/loader.js";
 import { findNode } from "../../lib/graph/store.js";
 import { planDelegation, type Orchestration } from "../../lib/orchestrate.js";
 import type { ProjectNode, ProjectPhase } from "../../lib/graph/schema.js";
@@ -163,9 +163,8 @@ function layerTokens(items: ReadonlyArray<{ id: string; tokens: number }>, ids: 
 }
 
 export function installedSkillNameForId(skillId: string): string | null {
-  if (skillId.startsWith("native/")) return skillId.slice("native/".length);
-  const at = skillId.indexOf("@");
-  return at === -1 ? null : skillId.slice(at + 1);
+  const parsed = parseSkillId(skillId);
+  return parsed?.source === "native" || parsed?.source === "cache" ? parsed.name : null;
 }
 
 export async function activateSkills(args: ActivateArgs, ctx: CommandContext, options: ActivateOptions = {}): Promise<ActivateResult> {

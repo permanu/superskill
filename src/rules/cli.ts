@@ -7,6 +7,33 @@ import { fileURLToPath } from "node:url";
 import { RULE_LANGUAGES, type ValidationIssue, type ValidationReport } from "./types.js";
 import { validateAll, validatePack } from "./validate.js";
 
+export function applyValidationExitGates(
+  report: ValidationReport,
+  options: { strict?: boolean } = {},
+): ValidationReport {
+  const errors = [...report.errors];
+  if (report.checkedCount === 0 && errors.length === 0) {
+    errors.push({
+      code: "no-rules-checked",
+      message: "no valid rules were checked; verify the requested rules root or pack contains rule files",
+      path: report.warnings[0]?.path ?? "catalog/rules",
+      severity: "error",
+    });
+  }
+  if (options.strict) {
+    const skipped = report.warnings.filter((entry) => entry.code === "compile-skipped");
+    if (skipped.length > 0) {
+      errors.push({
+        code: "compile-skipped-strict",
+        message: `${skipped.length} snippet compile(s) were skipped because a toolchain was missing; install the toolchain or drop --strict`,
+        path: skipped[0].path,
+        severity: "error",
+      });
+    }
+  }
+  return { ...report, errors };
+}
+
 function defaultCatalogRoot(): string {
   return resolve(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "catalog", "rules"));
 }
@@ -47,24 +74,17 @@ async function main(): Promise<void> {
           return;
         }
         const langDir = join(root, options.lang);
-        report = await validatePack(langDir, { compile: options.compile });
+        report = await validatePack(langDir, { compile: options.compile, requireNonEmpty: true });
         label = `Validated ${options.lang} rules in ${langDir}`;
       } else {
-        report = await validateAll(root, { compile: options.compile });
+        report = await validateAll(root, { compile: options.compile, requireNonEmpty: true });
         label = `Validated rules in ${root}`;
       }
+      report = applyValidationExitGates(report, { strict: options.strict });
       if (options.json) {
         console.log(JSON.stringify(report, null, 2));
       } else {
         printReport(report, label);
-      }
-      const skipped = report.warnings.filter((entry) => entry.code === "compile-skipped");
-      if (options.strict && skipped.length > 0) {
-        console.error(
-          `[strict] ${skipped.length} snippet compile(s) skipped because a toolchain was missing; ` +
-            `install the toolchain or drop --strict.`
-        );
-        process.exitCode = 1;
       }
       if (report.errors.length > 0) process.exitCode = 1;
     });
@@ -72,7 +92,10 @@ async function main(): Promise<void> {
   await program.parseAsync(process.argv);
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = 1;
-});
+const entryPath = process.argv[1];
+if (entryPath && resolve(entryPath) === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  });
+}

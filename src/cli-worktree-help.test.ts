@@ -23,6 +23,7 @@ const GC_FLAGS = [
   "--purge",
   "--yes",
   "--undo",
+  "--journal-id",
   "--json",
   "--verbose",
 ];
@@ -94,6 +95,22 @@ describe("worktree CLI help coverage", () => {
     }
   });
 
+  it("documents reversible worktree-local apply undo", () => {
+    const apply = findCommand(worktree(), "apply") as Command;
+    expect(optionFlags(apply)).toContain("--undo");
+    expect(renderHelp(apply)).toContain("apply --undo");
+  });
+
+  it("documents restore consent and bounded environment timeout", () => {
+    const gc = findCommand(worktree(), "gc") as Command;
+    const help = renderHelp(gc);
+    expect(help).toContain("--undo --yes");
+    expect(help).toMatch(/gc --undo \S+ --yes/);
+    const env = findCommand(worktree(), "env") as Command;
+    expect(optionFlags(env)).toContain("--timeout-ms");
+    expect(renderHelp(env)).toContain("30000");
+  });
+
   it("marks worktree bootstrap as internal", () => {
     const bootstrap = findCommand(worktree(), "bootstrap");
     expect(bootstrap, "worktree bootstrap").toBeDefined();
@@ -143,6 +160,7 @@ describe("CLI 0.13.0 surface", () => {
     expect(optionFlags(command(["skill", "install"]))).toContain("--allow-unaudited");
     expect(optionFlags(command(["hygiene"]))).toContain("--due");
     expect(optionFlags(command(["evidence", "add"]))).toContain("--ts");
+    expect(optionFlags(command(["skill", "init"]))).not.toContain("--bridge");
   });
 
   it("describes graph cross-project as project-jailed", () => {

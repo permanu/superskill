@@ -18,6 +18,6 @@ export const claudeAdapter: HostAdapter = createHookAdapter({
       },
     ],
   }),
-  detect: () =>
-    existsSync(join(homedir(), ".claude")) || existsSync(join(process.cwd(), ".claude")),
+  detect: (ctx) =>
+    existsSync(join(homedir(), ".claude")) || existsSync(join(ctx?.repoRoot ?? process.cwd(), ".claude")),
 });

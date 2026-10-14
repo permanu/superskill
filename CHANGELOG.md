@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.15.0] - 2026-10-14
+
+### Added
+- Three cross-language failure-mode principles, verified and routed by the existing principle selector: `principle-budget-retries-against-headroom` (retry amplification, jitter, retry budgets), `principle-propagate-deadlines` (deadline propagation, abandoned work), `principle-bound-queues-and-shed-overload` (bounded queues, backpressure, load shedding). Verification record: `docs/authoring/verification/principles-batch2.md`.
+- Guard assertions in `src/setup/instructions.test.ts` that the session-start instructions name the `session` tool and its `register` action.
+- Native skill validation through `superskill skill validate <path>` and MCP `skill_validate`, with Anthropic/portable metadata profiles, contained required-resource checks, and concision/navigation warnings. CI and release gates validate shipped native skills separately from internal packs and atomic rules.
+- Deterministic graph targets for principles, constitution, and skill resources, with UTF-8 byte paging through CLI `--offset-bytes`/`--max-bytes` and MCP `offset_bytes`/`max_bytes`. Responses expose `read_complete` and `next_offset_bytes` for lossless continuation through transport caps.
+- Three fixture-backed skill-authoring scenarios and an offline protocol CLI for preparing, importing, grading, and comparing no-native-skill, old-source, and improved-source runs without fabricating missing evidence.
+
+### Changed
+- `pipeline/plan` now asks for the load a shared path must survive and what fails first, and names the `brainstorm` tool for open design options.
+- `docs/mcp-tools.md` documents the full `superskill` parameter set and the `session` action parameters.
+- Completed-worktree maintenance now preserves whole eligible checkouts in locked recovery archives with manifests and rescue refs instead of automatically deleting them. Workspace identity and a fresh registry snapshot are required; default-branch integration is no longer hard-coded to `main`.
+- Watchdog reports omit sensitive transcript excerpts by default; explicit excerpt opt-in and confirmed cross-project history reads are available. Telemetry mutations require confirmation, persistent opt-out wins over environment opt-in, and new prompt identities use a private per-install HMAC key.
+- Generated Obsidian notes carry integrity seals: hand-edited and unsealed legacy notes are preserved, while import/backlink-only changes refresh unedited generated notes. Source names are encoded safely and generated counts reflect actual outcomes.
+- Skill installation preserves original `SKILL.md` metadata, formatting, and supporting files from one resolved Git commit rather than reconstructing HTML or replacing descriptions. Separate provenance records installed file hashes and explicitly unversioned skills.sh repository audits, not revision-specific attestations.
+- Scanned UTF-8 support scripts are copied without execution; bounded non-executable PNG, JPEG, GIF, WebP, and PDF assets require matching signatures and extensions. Unsupported binaries, archives, unsafe links, and malformed assets fail closed instead of being silently omitted. Claude-targeted installs require the Anthropic native metadata profile.
+- Default methodology is lean and task-scoped: optional algorithm/systems guidance is not injected for routine documentation edits, and human blocking is limited to evidence-unresolved decisions. Browser/e2e QA routes to UI review rather than generated graph-note mutation.
+- Native skill, setup instructions, slash commands, and authoring templates describe actual host-discovered tool names, dependencies, authorization, safe lifecycle behavior, and bounded retrieval. Existing managed instruction variants remain migratable while custom content is preserved.
+
+### Security
+- Centralized bounded, data-only Markdown metadata parsing. Executable frontmatter engines are rejected before evaluation, including native skills and installed support content; loaders no longer populate gray-matter's global content cache.
+- Hardened filesystem reads, exclusive publication, private state, lock ownership/recovery, skill-id containment, unaudited support-file scanning, and network response budgets. Search rejects explicit escaping symlinks and excludes personal notes; secret snippets redact all recognized credentials on a line.
+- Added runtime MCP argument validation and valid JSON truncation envelopes, separated request budgets, and sanitized unexpected internal errors. Updated the SDK/test dependency lock and pinned workflow actions, Maven artifacts, and vendored grammar verification; one upstream sprintf-js advisory remains in the unused YAML CLI chain.
+- Cached skill links must retain the requested owner/repository/skill identity. Supporting resources are confined to their canonical skill directory; graph opening does not trust forged cached source paths.
+- Explicit audit failures always block installation, including with `--allow-unaudited`. Native validation rejects absolute drive, UNC, and file-URI references before external-URL handling.
+
+### Fixed
+- Session-start instructions no longer say "session register with your tool" — they name the exact `session` tool and `action: "register"`, preventing agents from guessing non-existent tool names (e.g. `workspace_start`). Previously installed instruction texts are recognized and refreshed on the next setup/refresh run (`PREVIOUS_SESSION_INSTRUCTION_TEXT` added to the known-previous set).
+- Fixed mapped-workspace `prune --all`, zero-day retention parsing, OpenCode cache-environment extraction, reclaim undo routing, command validation, template replacement, and preservation of user host configuration and backups.
+- Full context mode now honors an explicit token budget, including freshness warnings; project-local shared context remains first in the bounded output. Evidence gates require current passing evidence for every explicit acceptance command and reject missing or changed spec hashes.
+- Graph I/O failures no longer reset learned state; schema versions, graph contents, weights and session identifiers are validated. Rule queues retain lock ownership across recovery, rule validation matches recursive loading and the authoring contract, and negative code claims remain unverifiable when binding evidence is incomplete.
+- Fixed Java wildcard import bindings, Swift enclosing-class call resolution, phantom Python `from`-import bindings, and missing names in Go multi-variable declarations. Added real-grammar and command/privacy/error-path regression coverage without lowering coverage thresholds.
+- Skill loading no longer elides fenced commands, scripts, examples, or Mermaid content. A shared resolver aligns nested native skills and dotted repository sources across activation and traversal.
+- Setup/startup reconciliation preserves explicit package pins, Git refs, direct binaries, and custom launcher arguments. Doctor diagnostics distinguish intentional configurations, upgrade-supported legacy launchers, foreign entries, and missing entries consistently across JSON and TOML.
+- Telemetry and watchdog distinguish unreadable, malformed, oversized, or incomplete sources from genuinely empty data; required rule/native validation gates reject missing inputs and zero-checked results.
+- Unrelated nearby optional prose cannot waive a required skill reference. Watchdog examples use the actual host-specific route, and generated commands no longer assume checkout-relative catalog files or unsupported bare commands.
+
+### Verification and remaining limits
+- The integrated gate passes 3,905 tests in 218 files, with unchanged thresholds and 93.19% line / 83.08% branch coverage; 43 offline script/protocol tests, shipped native validation, 2,245 structural rule checks, grammar integrity, package boundaries, and version parity also pass.
+- Nine headless behavioral attempts timed out without verifiable session/model evidence. Skill efficacy, natural triggering accuracy, and provider token/cost improvements remain unproven; these attempts are not reported as model or skill passes.
+- The known upstream `sprintf-js` advisory remains as four moderate dependency entries; there are no known high/critical audit findings. Publication does not replace already running or deliberately pinned MCP servers.
+
 ## [0.14.0] - 2026-10-13
 
 ### Added

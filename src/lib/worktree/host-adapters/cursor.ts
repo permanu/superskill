@@ -3,9 +3,10 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  backupOnce,
   containsSuperskillBootstrap,
   isSuperskillBootstrapCommand,
+  quoteCommandPath,
+  readHookConfig,
   readJsonSafe,
   writeJsonAtomic,
 } from "./helpers.js";
@@ -14,7 +15,7 @@ import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.j
 const ADAPTER_ID = "cursor";
 
 function bootstrapCommand(ctx: AdapterContext): string {
-  return `${ctx.superskillCli ?? "superskill-cli"} worktree bootstrap --source session`;
+  return `${quoteCommandPath(ctx.superskillCli ?? "superskill-cli")} worktree bootstrap --source session`;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -50,12 +51,19 @@ function withBootstrapHook(
   command: string,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...existing };
-  if (typeof next.version !== "number") next.version = 1;
+  if (next.version === undefined) next.version = 1;
   const hooks = asRecord(next.hooks) ?? {};
-  const sessionStart = Array.isArray(hooks.sessionStart)
-    ? hooks.sessionStart.filter((entry) => !isOurs(entry))
-    : [];
-  sessionStart.push({ command });
+  const entries = Array.isArray(hooks.sessionStart) ? hooks.sessionStart : [];
+  const sessionStart: unknown[] = [];
+  let inserted = false;
+  for (const entry of entries) {
+    if (!isOurs(entry)) sessionStart.push(entry);
+    else if (!inserted) {
+      sessionStart.push({ command });
+      inserted = true;
+    }
+  }
+  if (!inserted) sessionStart.push({ command });
   next.hooks = { ...hooks, sessionStart };
   return next;
 }
@@ -85,14 +93,14 @@ async function claudeLocalHookDetected(ctx: AdapterContext): Promise<boolean> {
 
 async function apply(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, ".cursor", "hooks.json");
-  const raw = await readJsonSafe(filePath);
-  const existing = asRecord(raw) ?? {};
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "sessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const existing = loaded.value;
   const next = withBootstrapHook(existing, bootstrapCommand(ctx));
   const changed = !sameJson(existing, next);
   const notes: string[] = [];
   if (changed && !dryRun) {
-    if (raw !== null) await backupOnce(filePath);
-    await writeJsonAtomic(filePath, next);
+    await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
   }
   if (await claudeLocalHookDetected(ctx)) {
     notes.push(
@@ -104,8 +112,9 @@ async function apply(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActio
 
 async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, ".cursor", "hooks.json");
-  const raw = await readJsonSafe(filePath);
-  const root = asRecord(raw);
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "sessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const root = loaded.value;
   const hooks = root ? asRecord(root.hooks) : null;
   if (!root || !hooks || !Array.isArray(hooks.sessionStart)) {
     return result(false, dryRun, filePath, []);
@@ -115,8 +124,7 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
   if (kept.length === entries.length) return result(false, dryRun, filePath, []);
   const next = { ...root, hooks: { ...hooks, sessionStart: kept } };
   if (!dryRun) {
-    await backupOnce(filePath);
-    await writeJsonAtomic(filePath, next);
+    await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
   }
   return result(true, dryRun, filePath, []);
 }
@@ -124,9 +132,9 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
 export const cursorAdapter: HostAdapter = {
   id: ADAPTER_ID,
   displayName: "Cursor",
-  async detect(): Promise<boolean> {
+  async detect(ctx): Promise<boolean> {
     if (await pathExists(join(homedir(), ".cursor"))) return true;
-    return pathExists(join(process.cwd(), ".cursor"));
+    return pathExists(join(ctx?.repoRoot ?? process.cwd(), ".cursor"));
   },
   plan: (ctx) => apply(ctx, true),
   install: (ctx) => apply(ctx, false),

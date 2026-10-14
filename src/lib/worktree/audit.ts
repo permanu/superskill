@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveProviders } from "../toolchains/index.js";
@@ -16,11 +16,18 @@ import {
 import type { WorktreeInfo, WorktreeSafetyVerdict } from "./safety.js";
 import { readManifest, readPolicy, verifyManifest } from "./state.js";
 import type { WorktreeManifest, WorktreePolicy } from "./state.js";
+import { mapBounded, probeDeadline } from "../hygiene/budget.js";
+import { isPhysicallyContained } from "./quarantine.js";
 
 const execFileAsync = promisify(execFile);
 const DU_TIMEOUT_MS = 30_000;
 const DU_MAX_BUFFER = 1024 * 1024;
 const MS_PER_DAY = 86_400_000;
+const AGE_ENTRY_CAP = 1024;
+const WORKTREE_CAP = 50;
+const SIZE_CONCURRENCY = 4;
+let activeSizeProbes = 0;
+const sizeWaiters: Array<() => void> = [];
 
 export type AuditItemKind = "policy" | "hook" | "env" | "seed" | "prune";
 
@@ -70,6 +77,7 @@ export interface RepoAudit {
 export interface AuditOptions {
   includeSizes?: boolean;
   worktree?: string;
+  deadline?: number;
 }
 
 async function probeCommandFailure(context: string, err: unknown): Promise<void> {
@@ -79,19 +87,28 @@ async function probeCommandFailure(context: string, err: unknown): Promise<void>
   }
 }
 
-export async function probeDirSize(path: string): Promise<number | null> {
+export async function probeDirSize(path: string, opts: { deadline?: number } = {}): Promise<number | null> {
   if (!existsSync(path)) return null;
+  const deadline = probeDeadline(opts.deadline);
+  if (Date.now() >= deadline || sizeWaiters.length >= 100) return null;
+  if (activeSizeProbes >= SIZE_CONCURRENCY) await new Promise<void>((done) => sizeWaiters.push(done));
+  else activeSizeProbes += 1;
   try {
+    if (Date.now() >= deadline) return null;
     const { stdout } = await execFileAsync("du", ["-sk", path], {
-      timeout: DU_TIMEOUT_MS,
+      timeout: Math.max(1, Math.min(DU_TIMEOUT_MS, deadline - Date.now())),
       maxBuffer: DU_MAX_BUFFER,
       encoding: "utf-8",
     });
     const kb = Number.parseInt(stdout.trim().split("\n")[0] ?? "", 10);
-    return Number.isFinite(kb) ? kb * 1024 : null;
+    return Number.isFinite(kb) && kb >= 0 ? kb * 1024 : null;
   } catch (err) {
     await probeCommandFailure(`du failed for ${path}`, err);
     return null;
+  } finally {
+    const next = sizeWaiters.shift();
+    if (next) next();
+    else activeSizeProbes -= 1;
   }
 }
 
@@ -103,11 +120,12 @@ export async function probeDirAge(path: string): Promise<number | null> {
     await probeCommandFailure(`cannot read ${path}`, err);
     return null;
   }
+  if (entries.length > AGE_ENTRY_CAP) return null;
   let newest = 0;
   let found = false;
   for (const entry of entries) {
     try {
-      const stats = await stat(join(path, entry));
+      const stats = await lstat(join(path, entry));
       if (!found || stats.mtimeMs > newest) {
         newest = stats.mtimeMs;
         found = true;
@@ -161,13 +179,42 @@ function isConservativeEnvelope(verdict: WorktreeSafetyVerdict): boolean {
     verdict.inProgressOps.length === 0 &&
     !verdict.locked &&
     !verdict.hasSubmodules &&
-    !verdict.ignoredTruncated
+    !verdict.ignoredTruncated &&
+    !verdict.reasons.some((reason) => !reason.startsWith("never-touch:") && /unavailable|could not|failed|unknown|unsafe/i.test(reason))
   );
 }
 
-function manifestCoversDir(manifest: WorktreeManifest, rel: string): boolean {
+async function manifestCoversDir(manifest: WorktreeManifest, rel: string, root: string, deadline: number): Promise<boolean> {
   const prefix = `${rel.replace(/\/+$/, "")}/`;
-  return manifest.files.some((entry) => entry.path === prefix || entry.path.startsWith(prefix));
+  if (manifest.files.some((entry) => entry.path === prefix)) return true;
+  const recorded = new Set(manifest.files.filter((entry) => entry.path.startsWith(prefix)).map((entry) => entry.path));
+  if (recorded.size === 0 || recorded.size > 20_000) return false;
+  const recordedDirs = new Set<string>();
+  for (const path of recorded) {
+    for (let index = path.lastIndexOf("/"); index >= prefix.length; index = path.lastIndexOf("/", index - 1)) {
+      recordedDirs.add(path.slice(0, index));
+    }
+  }
+  const pending = [join(root, rel)];
+  let inspected = 0;
+  let found = 0;
+  while (pending.length > 0) {
+    if (Date.now() >= deadline) return false;
+    const dir = pending.pop()!;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      inspected += 1;
+      if (inspected > 20_000) return false;
+      const path = join(dir, entry.name);
+      const name = toPosix(relative(root, path));
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory()) {
+        if (!recordedDirs.has(name)) return false;
+        pending.push(path);
+      } else if (!entry.isFile() || !recorded.has(name)) return false;
+      else found += 1;
+    }
+  }
+  return found === recorded.size;
 }
 
 async function gatherCacheDirs(
@@ -193,16 +240,19 @@ async function gatherCacheDirs(
 async function auditCacheDirs(
   providerDirs: Array<{ providerId: string; spec: CacheDirSpec }>,
   includeSizes: boolean,
+  deadline: number,
 ): Promise<{ cacheDirs: AuditedCacheDir[]; audited: Array<{ providerId: string; dir: AuditedCacheDir }> }> {
-  const audited = await Promise.all(
-    providerDirs.map(async ({ providerId, spec }) => {
+  const audited = await mapBounded(
+    providerDirs,
+    async ({ providerId, spec }) => {
       const exists = existsSync(spec.path);
       const shouldProbe = includeSizes && exists;
       const [bytes, ageDays] = shouldProbe
-        ? await Promise.all([probeDirSize(spec.path), probeDirAge(spec.path)])
+        ? await Promise.all([probeDirSize(spec.path, { deadline }), probeDirAge(spec.path)])
         : [null, null];
       return { providerId, dir: { ...spec, exists, bytes, ageDays } };
-    }),
+    },
+    { deadline, cap: 100 },
   );
   return { cacheDirs: audited.map((entry) => entry.dir), audited };
 }
@@ -215,10 +265,11 @@ interface WorktreeItemsInput {
   verdict: WorktreeSafetyVerdict;
   manifest: WorktreeManifest | null;
   manifestIntact: boolean;
+  deadline: number;
 }
 
 async function collectWorktreeItems(input: WorktreeItemsInput): Promise<AuditItem[]> {
-  const { providers, providerCtx, worktreePath, audited, verdict, manifest, manifestIntact } = input;
+  const { providers, providerCtx, worktreePath, audited, verdict, manifest, manifestIntact, deadline } = input;
   const items: AuditItem[] = [];
   const conservative = isConservativeEnvelope(verdict);
 
@@ -271,9 +322,9 @@ async function collectWorktreeItems(input: WorktreeItemsInput): Promise<AuditIte
 
   if (conservative && manifestIntact && manifest) {
     for (const { providerId, dir } of audited) {
-      if (!dir.exists || !isPathInside(dir.path, worktreePath)) continue;
+      if (!dir.exists || !isPathInside(dir.path, worktreePath) || !(await isPhysicallyContained(dir.path, worktreePath))) continue;
       const rel = toPosix(relative(worktreePath, dir.path));
-      if (!manifestCoversDir(manifest, rel)) continue;
+      if (!(await manifestCoversDir(manifest, rel, worktreePath, deadline))) continue;
       const caveat = dir.autoSafe
         ? "tool-managed cache"
         : "not marked autoSafe; verify contents before consenting";
@@ -281,7 +332,7 @@ async function collectWorktreeItems(input: WorktreeItemsInput): Promise<AuditIte
         id: `reclaim:${providerId}:${dir.id}`,
         kind: "prune",
         title: `Reclaim worktree-local cache ${dir.id}`,
-        detail: `deletes ${dir.path}; proposed only because the worktree is clean and the seed manifest covers it (${caveat}); requires explicit consent`,
+        detail: `quarantines ${dir.path} reversibly; proposed only because the worktree is clean and the seed manifest covers it (${caveat}); requires explicit consent`,
         safe: false,
         consent: true,
       });
@@ -314,14 +365,26 @@ async function readWorktreeManifest(
   return null;
 }
 
+function matchesWorktree(path: string, filter: string): boolean {
+  if (basename(path) === filter || resolve(path) === resolve(filter)) return true;
+  try {
+    return realpathSync(path) === realpathSync(filter);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[worktree-audit] cannot resolve worktree filter ${filter}: ${code ?? String(err)}`);
+    return false;
+  }
+}
+
 export async function auditRepo(worktreeRoot: string, opts: AuditOptions = {}): Promise<RepoAudit> {
+  const deadline = probeDeadline(opts.deadline);
   const built = await buildProviderContext(worktreeRoot);
   const providers = await resolveProviders(built.ctx);
   const mainWorktree = built.repoRoot;
 
   const listed = await listWorktrees(mainWorktree);
   const filter = opts.worktree;
-  const selected = filter ? listed.filter((entry) => basename(entry.path) === filter) : listed;
+  const selected = (filter ? listed.filter((entry) => matchesWorktree(entry.path, filter)) : listed).slice(0, WORKTREE_CAP);
 
   const policy = await readPolicy(mainWorktree);
   const repoItems: AuditItem[] = [policyItem(policy), hookItem(policy)];
@@ -340,12 +403,13 @@ export async function auditRepo(worktreeRoot: string, opts: AuditOptions = {}): 
 
   const worktrees: WorktreeAudit[] = [];
   for (const info of selected) {
+    if (Date.now() >= deadline) break;
     const providerCtx = await contextFor(info.path);
     const [verdict, providerDirs] = await Promise.all([
       auditWorktreeSafety(info.path),
       gatherCacheDirs(providers, providerCtx),
     ]);
-    const { cacheDirs, audited } = await auditCacheDirs(providerDirs, opts.includeSizes === true);
+    const { cacheDirs, audited } = await auditCacheDirs(providerDirs, opts.includeSizes === true, deadline);
 
     const manifest = await readWorktreeManifest(mainWorktree, info.path, worktreeRoot);
     let manifestAudit: ManifestAudit | null = null;
@@ -368,11 +432,13 @@ export async function auditRepo(worktreeRoot: string, opts: AuditOptions = {}): 
       verdict,
       manifest,
       manifestIntact,
+      deadline,
     });
     worktrees.push({ info, verdict, cacheDirs, manifest: manifestAudit, items });
   }
 
   const notes: string[] = [`never-touch rules: ${NEVER_TOUCH_RULES.join("; ")}`];
+  if (selected.length < listed.length || worktrees.length < selected.length) notes.push("worktree audit scope, candidate cap, or time budget limited this report");
   const noteSeen = new Set(notes);
   for (const provider of providers) {
     for (const note of await provider.notes(built.ctx)) {

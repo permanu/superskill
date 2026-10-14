@@ -103,6 +103,66 @@ describe("configureClient", () => {
     configureClient(detected, "/vault");
     const upgraded = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
     expect(upgraded.mcpServers.superskill.args).toEqual(["-y", "--prefer-online", "superskill@latest"]);
+    expect(upgraded.mcpServers.superskill.env.VAULT_PATH).toBe("/vault");
+  });
+
+  it.each([
+    { command: "npx", args: ["-y", "superskill@0.13.0"] },
+    { command: "npx", args: ["-y", "superskill@next"] },
+    { command: "npx", args: ["-y", "superskill", "--custom", "value"] },
+    { command: "superskill", args: ["--custom"] },
+    { command: "/usr/local/bin/superskill" },
+  ])("preserves pinned, customized, and direct launchers by default (%o)", (entry) => {
+    const detected = makeDetected("claude-code");
+    const original = JSON.stringify({ mcpServers: { superskill: { ...entry, env: { VAULT_PATH: "/user/vault", EXTRA: "keep" } } } });
+    writeFileSync(detected.mcpConfigPath, original);
+
+    configureClient(detected, "/new-vault");
+
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).toBe(original);
+  });
+
+  it("allows the existing explicit force option to replace a pinned launcher", () => {
+    const detected = makeDetected("claude-code");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({
+      mcpServers: { superskill: { command: "npx", args: ["-y", "superskill@next"], env: { VAULT_PATH: "/user/vault" } } },
+    }));
+
+    configureClient(detected, "/forced-vault", { force: true });
+
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcpServers.superskill.args).toEqual(["-y", "--prefer-online", "superskill@latest"]);
+    expect(config.mcpServers.superskill.env.VAULT_PATH).toBe("/forced-vault");
+  });
+
+  it("upgrades an exact OpenCode array launcher without replacing its environment", () => {
+    const detected = makeDetected("opencode");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({
+      mcp: {
+        superskill: {
+          command: ["npx", "-y", "superskill"],
+          environment: { VAULT_PATH: "/user/vault", EXTRA: "keep" },
+        },
+      },
+      instructions: [detected.instructionPath],
+    }));
+
+    configureClient(detected, "/new-vault");
+
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+  });
+
+  it("preserves a pinned legacy alias instead of removing it as managed", () => {
+    const detected = makeDetected("claude-code");
+    const alias = { command: "npx", args: ["-y", "superskill@0.13.0"], env: { VAULT_PATH: "/user/vault" } };
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({ mcpServers: { "obsidian-mcp": alias } }));
+
+    configureClient(detected, "/new-vault");
+
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcpServers["obsidian-mcp"]).toEqual(alias);
   });
 
   it("returns error for invalid JSON without touching the file", () => {

@@ -102,6 +102,93 @@ describe("KnowledgeIndex", () => {
     KnowledgeIndex.open(path).close();
   });
 
+  it("rejects future schema versions without changing the database", () => {
+    const path = join(dir, "future.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec("PRAGMA user_version = 99; CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES ('retained')");
+    db.close();
+    expect(() => KnowledgeIndex.open(path)).toThrow(/schema version 99/);
+    const check = new DatabaseSync(path);
+    try {
+      expect(check.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 99 });
+      expect(check.prepare("SELECT value FROM future_data").get()).toMatchObject({ value: "retained" });
+      expect(check.prepare("SELECT name FROM sqlite_master WHERE name = 'notes'").get()).toBeUndefined();
+    } finally { check.close(); }
+  });
+
+  it("checks future schema versions on a cached live handle too", () => {
+    const db = new DatabaseSync(join(dir, "index.sqlite"));
+    try {
+      db.exec("PRAGMA user_version = 99");
+      expect(() => KnowledgeIndex.open(join(dir, "index.sqlite"))).toThrow(/schema version 99/);
+      expect(db.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 99 });
+    } finally { db.close(); }
+  });
+
+  it("migrates an unversioned notes table and rebuilds its FTS entries once", () => {
+    const path = join(dir, "legacy.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE notes(path TEXT PRIMARY KEY, type TEXT, title TEXT, body TEXT NOT NULL); INSERT INTO notes VALUES ('a.md', 'note', 'Legacy', 'legacyneedle')");
+    db.close();
+    const migrated = KnowledgeIndex.open(path);
+    expect(migrated.search("legacyneedle")).toHaveLength(1);
+    migrated.close();
+    const check = new DatabaseSync(path);
+    expect(check.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 1 });
+    check.close();
+    KnowledgeIndex.open(path).close();
+  });
+
+  it("canonicalizes raw path aliases to a single live handle", async () => {
+    const path = join(dir, "index.sqlite");
+    await symlink(path, join(dir, "alias.sqlite"));
+    expect(KnowledgeIndex.open(join(dir, "alias.sqlite"))).toBe(index);
+    expect(KnowledgeIndex.open(join(dir, ".", "index.sqlite"))).toBe(index);
+  });
+
+  it("does not evict an index used by an in-flight transaction", () => {
+    const opened: KnowledgeIndex[] = [];
+    try {
+      index.transaction(() => {
+        for (let i = 0; i < 34; i++) opened.push(KnowledgeIndex.open(join(dir, `busy-${i}.sqlite`)));
+        index.upsert({ path: "retained.md", title: "Retained", type: "note", body: "retainedneedle", related: [] });
+      });
+      expect(index.search("retainedneedle")).toHaveLength(1);
+    } finally { for (const idx of opened) idx.close(); }
+  });
+
+  it("does not return a closed handle when every older cache entry is busy", () => {
+    const opened: KnowledgeIndex[] = [];
+    const nested = (depth: number): void => {
+      const idx = KnowledgeIndex.open(join(dir, `nested-${depth}.sqlite`));
+      opened.push(idx);
+      expect(idx.noteCount()).toBe(0);
+      if (depth < 33) idx.transaction(() => nested(depth + 1));
+    };
+    try { nested(0); }
+    finally { for (const idx of opened) idx.close(); }
+  });
+
+  it("keeps direct code-note upserts metadata-only", () => {
+    index.upsert({ path: "code.md", type: "code", title: "Metadata", body: "visibleword\n~~~ts\nPRIVATEBODY\n~~~", related: [] });
+    expect(index.search("PRIVATEBODY")).toEqual([]);
+    expect(index.search("visibleword")).toHaveLength(1);
+  });
+
+  it.each([NaN, Infinity, 1.5, -1, 1001])("rejects invalid search limit %s", (limit) => {
+    expect(() => index.search("query", limit)).toThrow(/limit/);
+  });
+
+  it("bounds dense cyclic neighborhood queries and excludes the seed", () => {
+    index.upsert({ path: "root", title: "Root", type: "note", body: "", related: Array.from({ length: 1500 }, (_, i) => `node-${i}`) });
+    index.upsert({ path: "node-0", title: "Back", type: "note", body: "", related: ["root"] });
+    const found = index.neighbors("root", 8);
+    expect(found.length).toBeLessThanOrEqual(1000);
+    expect(found).not.toContain("root");
+    expect(new Set(found).size).toBe(found.length);
+    expect(index.outgoing("root").length).toBeLessThanOrEqual(1000);
+  });
+
   it("treats hyphenated queries as tokens, not FTS operators", () => {
     index.upsert({
       path: "projects/p/n.md",
@@ -232,6 +319,49 @@ describe("index freshness", () => {
     await rm(join(vault, "projects", slug), { recursive: true });
     await symlink("beta", join(vault, "projects", slug));
     expect(() => ensureProjectIndex(vault, slug)).toThrow(/escapes project/);
+  });
+
+  it("detects immediate nested edits with unchanged size and restored mtime", async () => {
+    const path = join(vault, "projects", slug, "nested", "note.md");
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "# Beforeword");
+    const index = ensureProjectIndex(vault, slug);
+    const stamp = index.fileStamps().get(`projects/${slug}/nested/note.md`)!;
+    await writeFile(path, "# Afterwords");
+    await utimes(path, new Date(stamp.mtime_ms), new Date(stamp.mtime_ms));
+    expect(ensureProjectIndex(vault, slug).search("Afterwords")).toHaveLength(1);
+    index.close();
+  });
+
+  it("reuses the unchanged index snapshot without fetching every file row again", async () => {
+    await writeFile(join(vault, "projects", slug, "note.md"), "# Stable");
+    const index = ensureProjectIndex(vault, slug);
+    const stamps = vi.spyOn(index, "fileStamps");
+    try {
+      expect(ensureProjectIndex(vault, slug)).toBe(index);
+      expect(stamps).not.toHaveBeenCalled();
+    } finally { stamps.mockRestore(); index.close(); }
+  });
+
+  it("rejects escaped mutation paths and skips symlinked markdown", async () => {
+    await mkdir(join(vault, "projects", "other"));
+    await writeFile(join(vault, "projects", "other", "secret.md"), "privateword");
+    await symlink(join(vault, "projects", "other", "secret.md"), join(vault, "projects", slug, "link.md"));
+    expect(ensureProjectIndex(vault, slug).search("privateword")).toEqual([]);
+    expect(() => upsertVaultFile(vault, `projects/${slug}/../other/secret.md`, "privateword")).toThrow(/escapes project/);
+  });
+
+  it("does not index personal notes within a project", async () => {
+    const personal = join(vault, "projects", slug, "Personal");
+    await mkdir(personal);
+    await writeFile(join(personal, "private.md"), "PERSONAL_PRIVATE_SENTINEL");
+    await writeFile(join(vault, "projects", slug, "public.md"), "# Public");
+    const index = ensureProjectIndex(vault, slug);
+    try {
+      expect(index.search("PERSONAL_PRIVATE_SENTINEL")).toEqual([]);
+      expect(index.graphDump().nodes.map(note => note.id)).toEqual([`projects/${slug}/public.md`]);
+      expect(() => upsertVaultFile(vault, `projects/${slug}/Personal/private.md`, "private")).toThrow(/escapes project/);
+    } finally { index.close(); }
   });
 
   it("rolls back the entire rebuild when an insert fails", async () => {
@@ -484,5 +614,13 @@ describe("edge resolution and code-note bodies", () => {
       idx.close();
     }
   });
-});
 
+  it("does not index source within tilde or longer nested code fences", async () => {
+    await writeFile(join(vault, "projects", slug, "notes", "fences.md"), "---\ntype: code\n---\n# Metadata\n~~~ts\nTILDESECRET\n```\nSTILLSECRET\n~~~\n````ts\nLONGSECRET\n```\nSTILLFENCED\n````\nvisibleword\n");
+    const index = ensureProjectIndex(vault, slug);
+    try {
+      for (const word of ["TILDESECRET", "STILLSECRET", "LONGSECRET", "STILLFENCED"]) expect(index.search(word)).toEqual([]);
+      expect(index.search("visibleword")).toHaveLength(1);
+    } finally { index.close(); }
+  });
+});

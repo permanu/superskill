@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { probeDeadline } from "../budget.js";
 import type {
   HygieneItem,
   HygieneProbe,
@@ -367,7 +368,13 @@ export async function runDockerProbe(
   opts: HygieneProbeOptions,
   deps: DockerProbeDeps = {},
 ): Promise<HygieneProbeResult> {
-  const exec = deps.exec ?? defaultExec;
+  const underlyingExec = deps.exec ?? defaultExec;
+  const deadline = probeDeadline(opts.deadline);
+  const exec: DockerExec = (cmd, args, settings) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return Promise.reject(new Error("docker probe time budget reached"));
+    return underlyingExec(cmd, args, { ...settings, timeout: Math.max(1, Math.min(settings.timeout, remaining)) });
+  };
   try {
     const primary = await runExec(exec, ["system", "df", "-v"], DF_TIMEOUT_MS, DF_MAX_BUFFER);
     if (primary.kind === "missing") return skipped("docker CLI not installed");

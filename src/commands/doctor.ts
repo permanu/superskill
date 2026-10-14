@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync, type Dir, type Stats } from "node:fs";
 import { createRequire } from "node:module";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { CommandContext } from "../core/types.js";
@@ -15,14 +17,15 @@ import { rulesCatalogRoot } from "../rules/loader.js";
 import { validateCatalogCached } from "../rules/validation-cache.js";
 import { getTimeAgo } from "../lib/time-utils.js";
 import { detectClients } from "../setup/detect.js";
-import { readJsonConfig } from "../setup/json-config.js";
-import { isLatestLauncher, isManagedLauncher } from "../setup/launcher.js";
+import { readSetupText } from "../setup/file-safety.js";
+import { isLatestLauncher, isManagedLauncher, isOurTool } from "../setup/launcher.js";
 import type { DetectedClient } from "../setup/types.js";
 import { isTelemetryEnabled, telemetryPaths } from "../telemetry/recorder.js";
 import { readTelemetryEvents } from "../telemetry/report.js";
 import { isHookInstalled } from "../lib/worktree/hooks.js";
 import { platformCacheRoot } from "../lib/worktree/paths.js";
 import { readPolicy } from "../lib/worktree/state.js";
+import { VaultError, type VaultFS } from "../lib/vault-fs.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -82,6 +85,164 @@ function packageVersion(): string {
   }
 }
 
+export async function inspectInstall(root: string, version: string): Promise<{ installedAt: Date | null; check: DoctorCheck }> {
+  try {
+    const installedAt = (await stat(join(root, "package.json"))).mtime;
+    if (!Number.isFinite(installedAt.getTime())) throw new Error("invalid package modification time");
+    return { installedAt, check: check("install", "Install", "ok", `superskill ${version} at ${root} (installed ${installedAt.toISOString()})`) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { installedAt: null, check: check("install", "Install", "warn", `superskill ${version} at ${root} (install time unknown: ${message})`) };
+  }
+}
+
+export async function vaultWritableCheck(vaultFs: VaultFS): Promise<DoctorCheck> {
+  const probe = `doctor-probe-${randomUUID()}.tmp`;
+  const content = `doctor write probe ${randomUUID()}`;
+  let failure: string | undefined;
+  let collision = false;
+  try {
+    await vaultFs.createExclusive(probe, content);
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+    collision = (error as NodeJS.ErrnoException | null)?.code === "EEXIST";
+  } finally {
+    if (!collision) {
+      try {
+        if (await vaultFs.read(probe) === content) await vaultFs.delete(probe);
+        else failure = `${failure ? `${failure}; ` : ""}probe ownership changed; kept ${probe}`;
+      } catch (error) {
+        if (!(error instanceof VaultError && error.code === "FILE_NOT_FOUND")) {
+          const message = error instanceof Error ? error.message : String(error);
+          failure = `${failure ? `${failure}; ` : ""}probe cleanup failed: ${message}`;
+        }
+      }
+    }
+  }
+  return failure === undefined
+    ? check("vault-writable", "Vault write access", "ok", "private write probe succeeded and was removed")
+    : check("vault-writable", "Vault write access", "fail", failure, "check vault permissions; doctor never removes existing notes or locks");
+}
+
+export async function scanVaultMutationLocks(
+  vaultFs: VaultFS,
+  maxEntries = 500,
+  options: { maxDepth?: number; timeoutMs?: number } = {},
+): Promise<{ paths: string[]; scanned: number; truncated: boolean; errors: string[]; assessed: boolean }> {
+  const paths: string[] = [];
+  const errors: string[] = [];
+  let scanned = 0;
+  let truncated = false;
+  const maxDepth = options.maxDepth ?? 6;
+  const timeoutMs = options.timeoutMs ?? 1000;
+  const deadline = performance.now() + timeoutMs;
+  const timeout = () => Object.assign(new Error("vault mutation-lock scan time budget reached"), { code: "DOCTOR_SCAN_TIMEOUT" });
+  const report = (error: unknown): void => {
+    if ((error as NodeJS.ErrnoException | null)?.code === "DOCTOR_SCAN_TIMEOUT") truncated = true;
+    if (errors.length < 8) errors.push(error instanceof Error ? error.message : String(error));
+    else truncated = true;
+  };
+  const close = async (directory: Dir): Promise<void> => {
+    try {
+      await directory.close();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ERR_DIR_CLOSED") report(error);
+    }
+  };
+  const bounded = async <T>(operation: () => Promise<T>, late?: (value: T) => Promise<void>): Promise<T> => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw timeout();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = operation();
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(timeout()), remaining); }),
+      ]);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === "DOCTOR_SCAN_TIMEOUT" && late !== undefined) {
+        void pending.then(late).catch((lateError: unknown) => report(lateError));
+      }
+      throw error;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+  try {
+    if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > 10000 || !Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > 32 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) {
+      throw new Error("invalid vault mutation-lock scan budget");
+    }
+    const scope = typeof vaultFs.projectSlug === "string" ? `projects/${vaultFs.projectSlug}` : ".";
+    await bounded(() => vaultFs.verifyNoSymlinkEscape(scope));
+    const configured = resolve(vaultFs.root);
+    const configuredInfo = await bounded(() => lstat(configured));
+    if (configuredInfo.isSymbolicLink() || !configuredInfo.isDirectory()) throw new Error("vault mutation-lock scan root is not a real directory (symlinks are not followed)");
+    const root = await bounded(() => realpath(configured));
+    const rootInfo = await bounded(() => lstat(root));
+    const same = (first: Stats, second: Stats): boolean => first.dev === second.dev && first.ino === second.ino;
+    if (!same(configuredInfo, rootInfo)) throw new Error("vault mutation-lock scan root changed during canonicalization");
+    const inside = (path: string): boolean => {
+      const rel = relative(root, path);
+      return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+    };
+    const inspect = async (path: string): Promise<Stats> => {
+      if (!inside(path) || !same(rootInfo, await bounded(() => lstat(root)))) throw new Error("vault mutation-lock scan root changed or path escaped");
+      const before = await bounded(() => lstat(path));
+      if (before.isSymbolicLink()) throw new Error(`symlink not inspected: ${relative(root, path)}`);
+      if (await bounded(() => realpath(path)) !== path) throw new Error(`non-canonical path not inspected: ${relative(root, path)}`);
+      const after = await bounded(() => lstat(path));
+      if (after.isSymbolicLink() || !same(before, after)) throw new Error(`path changed while inspecting: ${relative(root, path)}`);
+      return after;
+    };
+    const pending = [{ path: resolve(root, vaultFs.jailPath(scope)), depth: 0 }];
+    while (pending.length > 0) {
+      if (scanned >= maxEntries) { truncated = true; break; }
+      const current = pending.shift()!;
+      let directory: Dir | undefined;
+      try {
+        const before = await inspect(current.path);
+        if (!before.isDirectory()) throw new Error(`scan directory changed: ${relative(root, current.path)}`);
+        directory = await bounded(() => opendir(current.path, { bufferSize: 16 }), close);
+        if (!same(before, await inspect(current.path))) throw new Error(`scan directory changed: ${relative(root, current.path)}`);
+        for (;;) {
+          if (scanned >= maxEntries) { truncated = true; break; }
+          const entry = await bounded(() => directory!.read());
+          if (entry === null) break;
+          scanned += 1;
+          const path = join(current.path, entry.name);
+          try {
+            if (entry.name.toLowerCase() === "personal") throw new Error(`personal metadata not inspected: ${relative(root, path)}`);
+            const info = await inspect(path);
+            if (/^\..+\.lock$/.test(entry.name)) {
+              if (!info.isFile()) throw new Error(`non-file lock not inspected: ${relative(root, path)}`);
+              paths.push(relative(root, path).split(sep).join("/"));
+            } else if (info.isDirectory()) {
+              if (current.depth < maxDepth) pending.push({ path, depth: current.depth + 1 });
+              else { truncated = true; report(new Error(`vault mutation-lock scan depth budget reached: ${relative(root, path)}`)); }
+            }
+          } catch (error) {
+            report(error);
+            if ((error as NodeJS.ErrnoException | null)?.code === "DOCTOR_SCAN_TIMEOUT") throw error;
+          }
+        }
+        const after = await inspect(current.path);
+        if (!same(before, after) || before.mtimeMs !== after.mtimeMs) throw new Error(`directory changed during scan: ${relative(root, current.path)}`);
+      } catch (error) {
+        report(error);
+        if ((error as NodeJS.ErrnoException | null)?.code === "DOCTOR_SCAN_TIMEOUT") break;
+      } finally {
+        if (directory !== undefined) {
+          const closing = close(directory);
+          try { await bounded(() => closing); } catch (error) { report(error); }
+        }
+      }
+    }
+  } catch (error) {
+    report(error);
+  }
+  return { paths: paths.sort(), scanned, truncated, errors, assessed: !truncated && errors.length === 0 };
+}
+
 export function versionParity(root: string, packageVersion: string): { status: CheckStatus; detail: string } {
   const sources: Array<{ label: string; version: string }> = [
     { label: "package.json", version: packageVersion },
@@ -136,44 +297,217 @@ export interface LauncherStaleness {
   stale: string[];
   current: number;
   custom: string[];
+  foreign: string[];
+  missing: string[];
+  unreadable: string[];
+}
+
+type LauncherEntryResult =
+  | { kind: "entry"; entry: unknown; autoUpgradeSupported: boolean }
+  | { kind: "missing" }
+  | { kind: "unreadable" };
+
+function stripTomlComment(value: string): string {
+  let quote: "\"" | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === "\"") {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === "\"") quote = null;
+    } else if (quote === "'") {
+      if (character === "'") quote = null;
+    } else if (character === "\"" || character === "'") {
+      quote = character;
+    } else if (character === "#") {
+      return value.slice(0, index).trimEnd();
+    }
+  }
+  return value.trimEnd();
+}
+
+function parseTomlString(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1);
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseTomlValue(value: string): unknown {
+  const trimmed = stripTomlComment(value).trim();
+  const string = parseTomlString(trimmed);
+  if (string !== null) return string;
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return undefined;
+  const values: string[] = [];
+  let index = 1;
+  while (index < trimmed.length - 1) {
+    while (/\s/.test(trimmed[index] ?? "")) index += 1;
+    if (index >= trimmed.length - 1) break;
+    const quote = trimmed[index];
+    if (quote !== "\"" && quote !== "'") return undefined;
+    const start = index;
+    index += 1;
+    let escaped = false;
+    while (index < trimmed.length - 1) {
+      const character = trimmed[index];
+      if (quote === "\"" && escaped) escaped = false;
+      else if (quote === "\"" && character === "\\") escaped = true;
+      else if (character === quote) break;
+      index += 1;
+    }
+    if (index >= trimmed.length - 1) return undefined;
+    const parsed = parseTomlString(trimmed.slice(start, index + 1));
+    if (parsed === null) return undefined;
+    values.push(parsed);
+    index += 1;
+    while (/\s/.test(trimmed[index] ?? "")) index += 1;
+    if (trimmed[index] === ",") index += 1;
+    else if (index < trimmed.length - 1) return undefined;
+  }
+  return values;
+}
+
+function tomlArrayComplete(value: string): boolean {
+  let quote: "\"" | "'" | null = null;
+  let escaped = false;
+  let depth = 0;
+  for (const character of value) {
+    if (quote === "\"") {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === "\"") quote = null;
+    } else if (quote === "'") {
+      if (character === "'") quote = null;
+    } else if (character === "\"" || character === "'") {
+      quote = character;
+    } else if (character === "[") depth += 1;
+    else if (character === "]") depth -= 1;
+  }
+  return depth === 0;
+}
+
+function tomlUpgradeArraySupported(value: string | undefined): boolean {
+  if (value === undefined || !/^\[[^\]]*\]$/.test(value.trim())) return false;
+  try {
+    const parsed: unknown = JSON.parse(value.trim().replace(/,\s*\]/g, "]"));
+    return Array.isArray(parsed) && parsed.every((token) => typeof token === "string");
+  } catch {
+    return false;
+  }
+}
+
+function tomlUpgradeStringSupported(value: string | undefined): boolean {
+  return value !== undefined && value.trim().startsWith("\"") && parseTomlString(value) !== null;
+}
+
+function readTomlLauncherEntry(text: string): LauncherEntryResult {
+  const lines = text.split(/\r?\n/);
+  const header = lines.findIndex((line) => /^\s*\[mcp_servers\.superskill\]\s*(?:#.*)?$/.test(line));
+  if (header === -1) return { kind: "missing" };
+  const entry: Record<string, unknown> = {};
+  const sourceValues: Record<string, string> = {};
+  let autoUpgradeSupported = true;
+  for (let index = header + 1; index < lines.length; index += 1) {
+    if (/^\s*\[/.test(lines[index])) break;
+    const assignment = /^\s*(command|args)\s*=\s*(.*?)\s*$/.exec(lines[index]);
+    if (!assignment) continue;
+    const key = assignment[1];
+    if (Object.hasOwn(sourceValues, key)) return { kind: "unreadable" };
+    const original = assignment[2];
+    let value = stripTomlComment(original).trim();
+    if (value !== original.trim()) autoUpgradeSupported = false;
+    if (value.startsWith("[") && !tomlArrayComplete(value)) {
+      autoUpgradeSupported = false;
+      while (!tomlArrayComplete(value) && index + 1 < lines.length && !/^\s*\[/.test(lines[index + 1])) {
+        index += 1;
+        const next = stripTomlComment(lines[index]).trim();
+        if (next !== lines[index].trim()) autoUpgradeSupported = false;
+        value += ` ${next}`;
+      }
+    }
+    const parsed = parseTomlValue(value);
+    if (parsed === undefined) return { kind: "unreadable" };
+    sourceValues[key] = value;
+    entry[key] = parsed;
+  }
+  if (typeof entry.command !== "string" && (!Array.isArray(entry.command) || !entry.command.every((token) => typeof token === "string"))) return { kind: "unreadable" };
+  if (entry.args !== undefined && (!Array.isArray(entry.args) || !entry.args.every((token) => typeof token === "string"))) return { kind: "unreadable" };
+  const commandSupported = tomlUpgradeStringSupported(sourceValues.command) || tomlUpgradeArraySupported(sourceValues.command);
+  const argsSupported = entry.args === undefined || tomlUpgradeArraySupported(sourceValues.args);
+  return { kind: "entry", entry, autoUpgradeSupported: autoUpgradeSupported && commandSupported && argsSupported };
+}
+
+function readLauncherEntry(client: DetectedClient): LauncherEntryResult {
+  try {
+    const text = readSetupText(client.mcpConfigPath);
+    if (text === null) return { kind: "missing" };
+    if (client.config.configFormat === "toml") return readTomlLauncherEntry(text);
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { kind: "unreadable" };
+    const root = (parsed as Record<string, unknown>)[client.config.rootKey];
+    if (root === undefined) return { kind: "missing" };
+    if (root === null || typeof root !== "object" || Array.isArray(root)) return { kind: "unreadable" };
+    const entry = (root as Record<string, unknown>).superskill;
+    return entry === undefined ? { kind: "missing" } : { kind: "entry", entry, autoUpgradeSupported: true };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    console.error(`[doctor] launcher probe failed for ${client.config.name}${typeof code === "string" ? ` (${code})` : ""}`);
+    return { kind: "unreadable" };
+  }
 }
 
 export function launcherStaleness(clients: DetectedClient[]): LauncherStaleness {
   const stale: string[] = [];
   const custom: string[] = [];
+  const foreign: string[] = [];
+  const missing: string[] = [];
+  const unreadable: string[] = [];
   let current = 0;
   for (const client of clients) {
-    try {
-      if (client.config.configFormat === "toml") {
-        const text = readFileSync(client.mcpConfigPath, "utf-8");
-        if (!/\[mcp_servers\.superskill(?:\.env)?\]/.test(text)) continue;
-        const launcherToken = '"(?:superskill|superskill-cli)(?:@[^"]+)?"';
-        const staleLauncher =
-          new RegExp(`^\\s*command\\s*=\\s*${launcherToken}\\s*$`, "m").test(text) ||
-          new RegExp(`^\\s*args\\s*=\\s*\\[\\s*"-y"\\s*,\\s*${launcherToken}\\s*\\]\\s*$`, "m").test(text) ||
-          new RegExp(`^\\s*command\\s*=\\s*\\[\\s*"npx"\\s*,\\s*"-y"\\s*,\\s*${launcherToken}\\s*\\]\\s*$`, "m").test(text);
-        if (staleLauncher) stale.push(client.config.name);
-        else current += 1;
-        continue;
-      }
-      const config = readJsonConfig(client.mcpConfigPath);
-      if (config === null) continue;
-      const root = config[client.config.rootKey];
-      const entry = typeof root === "object" && root !== null
-        ? (root as Record<string, unknown>).superskill
-        : undefined;
-      if (entry === undefined) continue;
-      if (!isManagedLauncher(entry)) {
-        custom.push(client.config.name);
-        continue;
-      }
-      if (isLatestLauncher(entry)) current += 1;
-      else stale.push(client.config.name);
-    } catch (e) {
-      console.error(`[doctor] launcher probe failed for ${client.config.name}: ${(e as Error).message}`);
+    const result = readLauncherEntry(client);
+    if (result.kind === "missing") {
+      missing.push(client.config.name);
+      continue;
     }
+    if (result.kind === "unreadable") {
+      unreadable.push(client.config.name);
+      continue;
+    }
+    if (!isOurTool(result.entry)) foreign.push(client.config.name);
+    else if (!isManagedLauncher(result.entry) || (!result.autoUpgradeSupported && !isLatestLauncher(result.entry))) custom.push(client.config.name);
+    else if (isLatestLauncher(result.entry)) current += 1;
+    else stale.push(client.config.name);
   }
-  return { stale, current, custom };
+  return { stale, current, custom, foreign, missing, unreadable };
+}
+
+function boundedClientNames(names: string[]): string {
+  return `${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""}`;
+}
+
+export function launcherStatusCheck(launchers: LauncherStaleness): DoctorCheck {
+  if (launchers.stale.length === 0 && launchers.current === 0 && launchers.custom.length === 0 && launchers.foreign.length === 0 && launchers.missing.length === 0 && launchers.unreadable.length === 0) {
+    return check("launchers", "Launcher staleness", "skip", "no detected MCP clients");
+  }
+
+  const details: string[] = [];
+  if (launchers.current > 0) details.push(`${launchers.current} canonical latest launcher(s) current`);
+  if (launchers.custom.length > 0) details.push(`${boundedClientNames(launchers.custom)} pinned/custom configuration(s) preserved`);
+  if (launchers.stale.length > 0) details.push(`${boundedClientNames(launchers.stale)} use an upgradeable unversioned legacy launcher`);
+  if (launchers.missing.length > 0) details.push(`${boundedClientNames(launchers.missing)} missing the expected superskill server entry`);
+  if (launchers.foreign.length > 0) details.push(`${boundedClientNames(launchers.foreign)} have foreign launcher entries; never replaced automatically`);
+  if (launchers.unreadable.length > 0) details.push(`${boundedClientNames(launchers.unreadable)} have unreadable launcher configuration`);
+
+  const hints: string[] = [];
+  if (launchers.stale.length > 0) hints.push("run `superskill upgrade` to reconcile eligible legacy launchers");
+  if (launchers.missing.length > 0) hints.push("run `superskill-cli setup --dry-run` then `setup` to add missing entries");
+  const needsAttention = launchers.stale.length > 0 || launchers.missing.length > 0 || launchers.foreign.length > 0 || launchers.unreadable.length > 0;
+  return check("launchers", "Launcher staleness", needsAttention ? "warn" : "ok", details.join("; "), hints.length > 0 ? hints.join("; ") : undefined);
 }
 
 export function backupResidue(clients: DetectedClient[]): string[] {
@@ -200,16 +534,45 @@ export interface McpProcess {
 }
 
 /** Parse `ps -axo lstart=,pid=,command=` output for running MCP servers. */
-export function parseMcpProcesses(psOutput: string): McpProcess[] {
+function isMcpCommand(command: string, root: string): boolean {
+  const tokens = [...command.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((match) => match[1] ?? match[2] ?? match[3]);
+  const executable = basename(tokens[0] ?? "");
+  if (executable === "superskill" || executable === "superskill-cli") return tokens.length === 1;
+  if (!/^(?:node(?:js)?|node\d+)$/.test(executable)) return false;
+  let index = 1;
+  const valuedOptions = new Set(["--import", "--require", "-r", "--loader", "--experimental-loader"]);
+  while (index < tokens.length && tokens[index].startsWith("-")) {
+    if (/^(?:-[ep]|--(?:eval|print|test)(?:=|$))/.test(tokens[index])) return false;
+    index += valuedOptions.has(tokens[index]) ? 2 : 1;
+  }
+  let entry = tokens[index] ?? "";
+  let args = tokens.slice(index + 1);
+  for (const file of ["dist/main.js", "dist/mcp-server.js", "src/main.ts", "src/mcp-server.ts"]) {
+    const known = join(root, file);
+    const remainder = tokens.slice(index).join(" ");
+    if (remainder === known || remainder.startsWith(`${known} `)) {
+      entry = known;
+      args = remainder.slice(known.length).trim().split(/\s+/).filter(Boolean);
+      break;
+    }
+  }
+  if (basename(entry) === "superskill" || basename(entry) === "superskill-cli") return args.length === 0;
+  const knownEntry = ["dist/main.js", "dist/mcp-server.js", "src/main.ts", "src/mcp-server.ts"].some((file) => entry === join(root, file));
+  const packageEntry = /\/node_modules\/superskill(?:-cli)?\/(?:dist|src)\/(?:main|mcp-server)\.(?:js|ts)$/.test(entry);
+  if (!knownEntry && !packageEntry) return false;
+  return /\/mcp-server\.(?:js|ts)$/.test(entry) || args.length === 0;
+}
+
+export function parseMcpProcesses(psOutput: string, root = packageRoot()): McpProcess[] {
   const out: McpProcess[] = [];
   for (const line of psOutput.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "") continue;
     const tokens = trimmed.split(/\s+/);
     if (tokens.length < 7) continue;
-    const command = tokens.slice(6).join(" ");
-    const last = command.split(/\s+/).pop() ?? "";
-    if (last !== "superskill" && !last.endsWith("/superskill")) continue;
+    if (!/^[1-9]\d*$/.test(tokens[5])) continue;
+    const command = /^(?:\S+\s+){6}(.+)$/.exec(trimmed)?.[1] ?? "";
+    if (!isMcpCommand(command, root)) continue;
     const started = new Date(tokens.slice(0, 5).join(" "));
     if (Number.isNaN(started.getTime())) continue;
     out.push({ pid: tokens[5], started, command });
@@ -234,21 +597,6 @@ async function git(cwd: string, args: string[]): Promise<{ code: number; stdout:
   } catch (e) {
     const err = e as { code?: unknown; stdout?: string };
     return { code: typeof err.code === "number" ? err.code : 1, stdout: err.stdout ?? "" };
-  }
-}
-
-function clientHasSuperskillEntry(client: DetectedClient): boolean {
-  try {
-    if (client.config.configFormat === "toml") {
-      const text = readFileSync(client.mcpConfigPath, "utf-8");
-      return /\[mcp_servers\.superskill\]/.test(text);
-    }
-    const config = readJsonConfig(client.mcpConfigPath);
-    if (config === null) return false;
-    const root = config[client.config.rootKey];
-    return typeof root === "object" && root !== null && "superskill" in (root as Record<string, unknown>);
-  } catch {
-    return false;
   }
 }
 
@@ -306,15 +654,30 @@ export async function worktreeDoctorChecks(cwd: string): Promise<DoctorCheck[]> 
   const cacheRoot = platformCacheRoot();
   let cacheWritable = false;
   let cacheError: string | undefined;
+  const probe = join(cacheRoot, `.doctor-probe-${randomUUID()}`);
+  let probeCreated = false;
   try {
     await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-    const probe = join(cacheRoot, `.doctor-probe-${process.pid}-${Date.now().toString(36)}`);
-    await writeFile(probe, "probe", { flag: "wx", mode: 0o600 });
-    await rm(probe, { force: true });
+    const handle = await open(probe, "wx", 0o600);
+    probeCreated = true;
+    try {
+      await handle.writeFile("probe");
+    } finally {
+      await handle.close();
+    }
     cacheWritable = true;
   } catch (e) {
     cacheError = (e as Error).message;
     console.error(`[doctor] cache-root probe failed: ${cacheError}`);
+  } finally {
+    if (probeCreated) {
+      try {
+        await rm(probe);
+      } catch (error) {
+        cacheWritable = false;
+        cacheError = `probe cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
   }
 
   const cacheIssues: string[] = [];
@@ -347,7 +710,7 @@ export async function worktreeDoctorChecks(cwd: string): Promise<DoctorCheck[]> 
  * project-local), rules catalog, compile toolchains, telemetry, MCP clients.
  */
 export async function doctorCommand(
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
   ctx: CommandContext,
   options: DoctorOptions = {}
 ): Promise<DoctorResult> {
@@ -371,13 +734,9 @@ export async function doctorCommand(
   );
 
   const root = packageRoot();
-  let installedAt = new Date(0);
-  try {
-    installedAt = (await stat(join(root, "package.json"))).mtime;
-  } catch {
-    // keep epoch; freshness check will report unknown-vintage installs as stale
-  }
-  checks.push(check("install", "Install", "ok", `superskill ${version} at ${root} (installed ${installedAt.toISOString()})`));
+  const install = await inspectInstall(root, version);
+  const installedAt = install.installedAt;
+  checks.push(install.check);
 
   const parity = versionParity(root, version);
   checks.push(
@@ -393,6 +752,8 @@ export async function doctorCommand(
   const processes = await listMcpProcesses();
   if (processes.length === 0) {
     checks.push(check("mcp-freshness", "MCP server freshness", "skip", "no running superskill MCP server found"));
+  } else if (installedAt === null) {
+    checks.push(check("mcp-freshness", "MCP server freshness", "warn", `${processes.length} server(s); freshness unknown because install metadata is unavailable`));
   } else {
     const stale = processes.filter((entry) => entry.started.getTime() < installedAt.getTime());
     checks.push(
@@ -408,7 +769,7 @@ export async function doctorCommand(
     );
   }
 
-  const vaultPath = ctx.config.vaultPath;
+  const vaultPath = ctx.vaultPath;
   const vaultExists = existsSync(vaultPath);
   if (!vaultExists) {
     checks.push(check("vault", "Vault", "fail", `${vaultPath} not found`, "run `superskill-cli onboard` or set VAULT_PATH"));
@@ -428,6 +789,9 @@ export async function doctorCommand(
       checks.push(check("vault", "Vault", "ok", `${vaultPath} (${projectCount} project(s), not a git work tree)`));
     }
   }
+  checks.push(vaultExists
+    ? await vaultWritableCheck(ctx.vaultFs)
+    : check("vault-writable", "Vault write access", "skip", "no vault"));
 
   let mappedSlug: string | null = null;
   if (!vaultExists) {
@@ -490,7 +854,7 @@ export async function doctorCommand(
     checks.push(check("graph-sharing", "Graph isolation", "skip", "not a git repository"));
   }
 
-  if (options.skipCatalog === true) {
+  if (options.skipCatalog === true || args.fast === true) {
     checks.push(check("catalog", "Rules catalog", "skip", "skipped"));
   } else {
     try {
@@ -513,7 +877,7 @@ export async function doctorCommand(
     }
   }
 
-  if (options.skipToolchains === true) {
+  if (options.skipToolchains === true || args.fast === true) {
     checks.push(check("toolchains", "Compile toolchains", "skip", "skipped"));
   } else {
     const probes = await Promise.all(
@@ -543,34 +907,19 @@ export async function doctorCommand(
   );
 
   const clients = detectClients();
+  const launchers = launcherStaleness(clients);
   if (clients.length === 0) {
     checks.push(check("clients", "MCP clients", "skip", "no AI clients detected"));
   } else {
-    const configured = clients.filter(clientHasSuperskillEntry);
+    const configured = launchers.stale.length + launchers.current + launchers.custom.length;
     checks.push(
-      configured.length > 0
-        ? check("clients", "MCP clients", "ok", `${configured.length}/${clients.length} detected client(s) have a superskill MCP entry`)
+      configured > 0
+        ? check("clients", "MCP clients", "ok", `${configured}/${clients.length} detected client(s) have a superskill MCP entry`)
         : check("clients", "MCP clients", "warn", `0/${clients.length} detected client(s) configured`, "run `superskill-cli setup --dry-run` then `setup`")
     );
   }
 
-  const launchers = launcherStaleness(clients);
-  if (launchers.stale.length === 0 && launchers.current === 0 && launchers.custom.length === 0) {
-    checks.push(check("launchers", "Launcher staleness", "skip", "no managed superskill launcher found"));
-  } else if (launchers.stale.length > 0) {
-    checks.push(
-      check(
-        "launchers",
-        "Launcher staleness",
-        "warn",
-        `${launchers.stale.join(", ")} still use a non-latest launcher`,
-        "run `superskill upgrade` (or `superskill-cli setup`) to reconcile managed launchers"
-      )
-    );
-  } else {
-    const custom = launchers.custom.length > 0 ? `, ${launchers.custom.length} custom entr${launchers.custom.length === 1 ? "y" : "ies"} preserved` : "";
-    checks.push(check("launchers", "Launcher staleness", "ok", `${launchers.current} managed launcher(s) current${custom}`));
-  }
+  checks.push(launcherStatusCheck(launchers));
 
   const residues = backupResidue(clients);
   checks.push(
@@ -603,16 +952,23 @@ export async function doctorCommand(
     if (age > STALE_LOCK_MS) staleLocks.push(`${lock.label} (${lock.path}, ${Math.round(age / 60000)}m old)`);
     else heldLocks.push(lock.label);
   }
+  const mutationLocks = vaultExists ? await scanVaultMutationLocks(ctx.vaultFs) : null;
+  const mutationIssues = mutationLocks === null ? ["vault mutation locks unassessed: no vault"] : [
+    ...mutationLocks.paths.map((path) => `vault mutation lock (${path}, owner unverified)`),
+    ...(!mutationLocks.assessed ? ["vault mutation locks unassessed or partially assessed"] : []),
+    ...(mutationLocks.truncated ? [`vault mutation-lock scan truncated after ${mutationLocks.scanned} entries (entry/depth/time budget)`] : []),
+    ...mutationLocks.errors.slice(0, 3).map((error) => `vault lock scan incomplete: ${error}`),
+  ];
   checks.push(
-    staleLocks.length > 0
+    staleLocks.length > 0 || mutationIssues.length > 0
       ? check(
           "locks",
           "Locks",
           "warn",
-          `stale lock(s): ${staleLocks.join("; ")}`,
-          "confirm no superskill process is running, then remove the stale lock file"
+          [...staleLocks.map((lock) => `old lock, owner unverified: ${lock}`), ...mutationIssues].join("; "),
+          "report only: lock age is not proof of abandonment; verify the exact owner has stopped before manual recovery"
         )
-      : check("locks", "Locks", "ok", heldLocks.length > 0 ? `held (in use): ${heldLocks.join(", ")}` : "no superskill locks held")
+      : check("locks", "Locks", "ok", `${heldLocks.length > 0 ? `held (in use): ${heldLocks.join(", ")}` : "no superskill lock files observed"}; mutation scan assessed ${mutationLocks?.scanned ?? 0} entries`)
   );
 
   if (!vaultExists) {
@@ -683,14 +1039,14 @@ export async function doctorCommand(
       checks.push(
         userVersion === null
           ? check("index", "Knowledge index", "warn", `cannot read schema version of ${indexPath}`, "it will be rebuilt on the next search")
-          : userVersion >= EXPECTED_INDEX_USER_VERSION
+          : userVersion === EXPECTED_INDEX_USER_VERSION
             ? check("index", "Knowledge index", "ok", `schema v${userVersion} current for ${mappedSlug}`)
             : check(
                 "index",
                 "Knowledge index",
                 "warn",
-                `schema v${userVersion} older than v${EXPECTED_INDEX_USER_VERSION} for ${mappedSlug}`,
-                "it will be rebuilt on the next search"
+                `schema v${userVersion} ${userVersion > EXPECTED_INDEX_USER_VERSION ? "newer" : "older"} than v${EXPECTED_INDEX_USER_VERSION} for ${mappedSlug}`,
+                userVersion > EXPECTED_INDEX_USER_VERSION ? "upgrade superskill to read this newer index; doctor leaves it unchanged" : "it will be rebuilt on the next search"
               )
       );
     }

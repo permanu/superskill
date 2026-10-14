@@ -26,11 +26,12 @@ function isExported(node: SyntaxNode): boolean {
 function walk(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
   switch (node.type) {
     case "import_declaration": {
-      const name = node.namedChildren.find((child) => child.type === "scoped_identifier");
+      const wildcard = node.namedChildren.some((child) => child.type === "asterisk");
+      const name = node.namedChildren.find((child) => child.type === "scoped_identifier" || (wildcard && child.type === "identifier"));
       if (!name) return;
       const text = name.text;
-      if (text.endsWith(".*")) {
-        builder.addImport(text.slice(0, -2), "*", node);
+      if (wildcard) {
+        builder.addImport(text, "*", node);
         return;
       }
       const segments = text.split(".");

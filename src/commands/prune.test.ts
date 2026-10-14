@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { pruneCommand, statsCommand } from "./prune.js";
 import { createTestVault, createCommandContext } from "../test-helpers.js";
 import { createFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
+import { VaultFS } from "../lib/vault-fs.js";
 
 vi.mock("../lib/knowledge-index.js", () => ({
   removeVaultFileFromIndex: vi.fn(),
@@ -87,6 +88,58 @@ describe("pruneCommand", () => {
     expect(await ctx.vaultFs.exists(sessionPath)).toBe(true);
     expect(mockedRemoveFromIndex).not.toHaveBeenCalled();
     expect(mockedUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each(["dry-run", "archive", "delete"] as const)("allows an explicit all %s operation without widening the caller's filesystem", async (mode) => {
+    const { ctx, sessionPath } = await setupProject();
+    const otherPath = sessionPath.replace("my-project", "other-project");
+    await ctx.vaultFs.write(otherPath, await ctx.vaultFs.read(sessionPath));
+    const scoped = createCommandContext(new VaultFS(ctx.vaultPath, { projectSlug: "my-project" }), { projectSlug: "my-project" });
+
+    const results = await pruneCommand({ mode, all: true }, scoped);
+
+    expect(results.map((result) => result.project).sort()).toEqual(["my-project", "other-project"]);
+    expect(results.flatMap((result) => mode === "delete" ? result.deleted : result.archived.map((entry) => entry.from)).sort()).toEqual([sessionPath, otherPath].sort());
+    await expect(scoped.vaultFs.read(otherPath)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(await ctx.vaultFs.exists(otherPath)).toBe(mode === "dry-run");
+  });
+
+  it("rejects truthy non-boolean all requests without expanding scope", async () => {
+    const { ctx, sessionPath } = await setupProject();
+    await expect(pruneCommand({ mode: "delete", all: "false" as never }, ctx)).rejects.toThrow("all must be a boolean");
+    expect(await ctx.vaultFs.exists(sessionPath)).toBe(true);
+  });
+
+  it("never broadens an unresolved MCP context, even for explicit all", async () => {
+    const { ctx, sessionPath } = await setupProject();
+    for (const vaultFs of [ctx.vaultFs, new VaultFS(ctx.vaultPath, { projectSlug: null })]) {
+      const unresolved = createCommandContext(vaultFs, { projectSlug: null });
+      await expect(pruneCommand({ mode: "delete", all: true }, unresolved)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    }
+    expect(await ctx.vaultFs.exists(sessionPath)).toBe(true);
+  });
+
+  it("keeps ordinary project pruning jailed and treats retention zero as disabled", async () => {
+    const { ctx, sessionPath } = await setupProject();
+    const otherPath = sessionPath.replace("my-project", "other-project");
+    await ctx.vaultFs.write(otherPath, await ctx.vaultFs.read(sessionPath));
+    const scoped = createCommandContext(new VaultFS(ctx.vaultPath, { projectSlug: "my-project" }), { projectSlug: "my-project" });
+    const results = await pruneCommand({ mode: "delete", project: "my-project", policy: { sessions: 0, doneTasks: 0 } }, scoped);
+    expect(results).toMatchObject([{ project: "my-project", deleted: [], archived: [], stats: { sessions_scanned: 0, tasks_scanned: 0 } }]);
+    await expect(pruneCommand({ mode: "delete", project: "other-project" }, scoped)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(await ctx.vaultFs.exists(sessionPath)).toBe(true);
+    expect(await ctx.vaultFs.exists(otherPath)).toBe(true);
+  });
+
+  it("surfaces unexpected scan and mutation failures instead of reporting success", async () => {
+    const { ctx, sessionPath } = await setupProject();
+    const failure = new Error("disk unavailable");
+    const listing = vi.spyOn(ctx.vaultFs, "list").mockRejectedValueOnce(failure);
+    await expect(pruneCommand({ mode: "delete", project: "my-project" }, ctx)).rejects.toThrow("disk unavailable");
+    listing.mockRestore();
+    vi.spyOn(ctx.vaultFs, "delete").mockRejectedValueOnce(failure);
+    await expect(pruneCommand({ mode: "delete", project: "my-project" }, ctx)).rejects.toThrow("disk unavailable");
+    expect(await ctx.vaultFs.exists(sessionPath)).toBe(true);
   });
 
   it("keeps archive behavior unchanged", async () => {

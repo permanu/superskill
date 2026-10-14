@@ -18,6 +18,9 @@ import {
   MARKER_START_HTML,
   PREVIOUS_INSTRUCTION_TEXT,
   PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT,
+  PREVIOUS_SESSION_INSTRUCTION_TEXT,
+  PREVIOUS_CLEANUP_INSTRUCTION_TEXT,
+  PREVIOUS_ARCHIVE_INSTRUCTION_TEXT,
 } from "./types.js";
 
 const roots: string[] = [];
@@ -38,29 +41,57 @@ function marked(text: string, open = MARKER_BEGIN_HTML): string {
 const previousInstruction = PREVIOUS_INSTRUCTION_TEXT;
 
 describe("INSTRUCTION_TEXT", () => {
-  it("states the minimal harness rules", () => {
-    expect(INSTRUCTION_TEXT).toContain("superskill` tool with your task");
-    expect(INSTRUCTION_TEXT).toContain("gate check");
-    expect(INSTRUCTION_TEXT).toContain("session");
-    expect(INSTRUCTION_TEXT).toContain("explore|implement|review|ship");
-    expect(INSTRUCTION_TEXT).toContain("before verification or completion");
-    expect(INSTRUCTION_TEXT).toContain("worktree assessment");
-    expect(INSTRUCTION_TEXT).toContain("local stack");
-    expect(INSTRUCTION_TEXT).toContain("At every session start");
-    expect(INSTRUCTION_TEXT).toContain("register tool with path");
-    expect(INSTRUCTION_TEXT).toContain("initializes a missing graph");
-    expect(INSTRUCTION_TEXT).toContain("proven merged into main");
+  it("keeps the managed instructions concise, scoped, and safe", () => {
+    expect(INSTRUCTION_TEXT.length).toBeLessThan(2000);
+    expect(INSTRUCTION_TEXT).toContain("host-configured, project-scoped MCP");
+    expect(INSTRUCTION_TEXT).toContain("tools.superskill.<tool>");
+    expect(INSTRUCTION_TEXT).toContain('session tool (action: "register"');
+    expect(INSTRUCTION_TEXT).toContain("session_id");
+    expect(INSTRUCTION_TEXT).toContain("Call the superskill tool with task, repo-relative files");
+    expect(INSTRUCTION_TEXT).toContain("reroute only when task, files, or phase meaningfully change");
+    expect(INSTRUCTION_TEXT).toContain("Simple/read-only work needs no session/plan");
+    expect(INSTRUCTION_TEXT).toContain("redact prompts by default");
+    expect(INSTRUCTION_TEXT).toContain("include_prompts only for bounded current-project excerpts explicitly requested and needed");
+    expect(INSTRUCTION_TEXT).toContain("Registration/completion are coordination bookkeeping for authorized nontrivial work");
+    expect(INSTRUCTION_TEXT).toContain("completion persists a session note");
+    expect(INSTRUCTION_TEXT).toContain("Additional ADR/learning/task/report writes need a request or project policy");
+    expect(INSTRUCTION_TEXT).toContain("if read_complete is false, continue at next_offset_bytes");
+    expect(INSTRUCTION_TEXT).toContain("worktree_env before installs/builds");
+    expect(INSTRUCTION_TEXT).toContain("Built-in session maintenance may automatically quarantine eligible clean, idle, session-owned checkouts after session completion");
+    expect(INSTRUCTION_TEXT).toContain("locked recovery archive with metadata; it never deletes");
+    expect(INSTRUCTION_TEXT).toContain("Assessment alone does not authorize manual actions");
+    expect(INSTRUCTION_TEXT).toContain("manual cleanup/cache apply/GC/permanent removal/config/install requires explicit approval");
     expect(INSTRUCTION_TEXT).toContain("Only verified rules are injected by default");
-    expect(INSTRUCTION_TEXT).toContain("catalog/constitution.md");
+    expect(INSTRUCTION_TEXT).not.toMatch(/never expose secrets, prompts, or unrelated history/i);
+    expect(INSTRUCTION_TEXT).not.toContain("catalog/");
+    expect(INSTRUCTION_TEXT).not.toContain(MARKER_BEGIN_HTML);
   });
 });
 
 describe("writeMarkdownInstruction", () => {
-  it.each([previousInstruction, PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT])("refreshes a known managed block in place without force", previous => {
+  it.each([
+    previousInstruction,
+    PREVIOUS_LIFECYCLE_INSTRUCTION_TEXT,
+    PREVIOUS_SESSION_INSTRUCTION_TEXT,
+    PREVIOUS_CLEANUP_INSTRUCTION_TEXT,
+    PREVIOUS_ARCHIVE_INSTRUCTION_TEXT,
+  ])("refreshes a known managed block in place without force", previous => {
     const path = tempFile();
     const before = "# Personal\n\n\n";
     const after = "\n\n# Keep exactly\n\n";
     writeFileSync(path, `${before}${marked(previous)}${after}`);
+    expect(writeMarkdownInstruction(path)).toBe("appended");
+    expect(readFileSync(path, "utf-8")).toBe(`${before}${marked(INSTRUCTION_TEXT)}${after}`);
+  });
+
+  it("upgrades the exact archive-era block and preserves surrounding user bytes", () => {
+    const path = tempFile();
+    const before = "# Personal bytes stay\n\n";
+    const after = "\n\n## User section\nKeep this exactly.\n";
+    expect(PREVIOUS_ARCHIVE_INSTRUCTION_TEXT).toContain("cleanup may relocate only clean, idle, session-owned worktrees proven integrated into the repository's default branch");
+    expect(PREVIOUS_ARCHIVE_INSTRUCTION_TEXT).toContain("It never automatically deletes a checkout; inspect the returned recovery metadata.");
+    writeFileSync(path, `${before}${marked(PREVIOUS_ARCHIVE_INSTRUCTION_TEXT)}${after}`);
+
     expect(writeMarkdownInstruction(path)).toBe("appended");
     expect(readFileSync(path, "utf-8")).toBe(`${before}${marked(INSTRUCTION_TEXT)}${after}`);
   });
@@ -77,6 +108,7 @@ describe("writeMarkdownInstruction", () => {
 
   it.each([
     marked(`${previousInstruction}\nMy custom instruction`),
+    marked(`${PREVIOUS_ARCHIVE_INSTRUCTION_TEXT}\nMy custom instruction`),
     `${MARKER_BEGIN_HTML}\n${previousInstruction}`,
     `${marked(previousInstruction)}\n${marked("custom")}`,
     marked(INSTRUCTION_TEXT),
@@ -93,8 +125,8 @@ describe("writeMarkdownInstruction", () => {
     const written = readFileSync(path, "utf-8");
     expect(written).toContain(MARKER_BEGIN_HTML);
     expect(written).toContain(MARKER_END_HTML);
-    expect(written).toContain("gate check");
-    expect(written).toContain("catalog/constitution.md");
+    expect(written).toContain("tools.superskill.<tool>");
+    expect(written).toContain("next_offset_bytes");
   });
 
   it("appends to an existing file and preserves user content outside the block", () => {
@@ -174,8 +206,8 @@ describe("writeMdcInstruction", () => {
     expect(written).toContain("description: SuperSkill knowledge base integration");
     expect(written).toContain("alwaysApply: true");
     expect(written).toContain(MARKER_BEGIN_HTML);
-    expect(written).toContain("gate check");
-    expect(written).toContain("catalog/constitution.md");
+    expect(written).toContain("tools.superskill.<tool>");
+    expect(written).toContain("next_offset_bytes");
   });
 
   it("preserves user content outside the marked block", () => {

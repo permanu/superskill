@@ -281,8 +281,8 @@ const TEMPLATES: Record<string, { frontmatter: Record<string, unknown>; body: st
 
 export function getTemplate(type: string): { frontmatter: Record<string, unknown>; body: string } | null {
   const normalized = type.toLowerCase().replace(/[^a-z0-9]/g, "-");
-  if (TEMPLATES[normalized]) return TEMPLATES[normalized];
-  if (TEMPLATES[type]) return TEMPLATES[type];
+  if (Object.hasOwn(TEMPLATES, normalized)) return TEMPLATES[normalized];
+  if (Object.hasOwn(TEMPLATES, type)) return TEMPLATES[type];
   return null;
 }
 
@@ -299,7 +299,7 @@ export function applyTemplate(
 
   let body = template.body;
   for (const [key, value] of Object.entries(variables)) {
-    body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+    body = body.split(`{{${key}}}`).join(value);
   }
 
   return { frontmatter: { ...template.frontmatter }, body };

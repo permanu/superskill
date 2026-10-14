@@ -14,11 +14,11 @@ function auditValues(audits: AuditResult | null | undefined): AuditValue[] {
  * (pass/warn) blocks. Unknown or missing audits block until verified.
  */
 export function auditIsBlocked(audits: AuditResult | null | undefined): boolean {
-  return auditValues(audits).some((v) => v === "fail" || v === "unknown" || v === undefined || v === null);
+  return auditValues(audits).some((v) => v !== "pass" && v !== "warn");
 }
 
 export function auditIsUnknown(audits: AuditResult | null | undefined): boolean {
-  return auditValues(audits).some((v) => v === "unknown" || v === undefined || v === null);
+  return auditValues(audits).some((v) => v !== "pass" && v !== "warn" && v !== "fail");
 }
 
 export function auditHasFailure(audits: AuditResult | null | undefined): boolean {

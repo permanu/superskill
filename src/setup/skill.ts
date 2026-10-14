@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, rmdirSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 
 export const SKILL_NAME = "superskill";
 export const SKILL_MARKER = "<!-- superskill:skill -->";
@@ -35,13 +36,20 @@ export function installSharedSkill(
 ): SkillInstallResult {
   const file = sharedSkillFile(opts.homeDir);
   const result: SkillInstallResult = { installed: false, path: file };
+  try {
+    assertSafeSetupPath(file);
+  } catch (error) {
+    result.skipped = (error as Error).message;
+    return result;
+  }
 
   if (existsSync(file)) {
     let existing = "";
     try {
-      existing = readFileSync(file, "utf-8");
-    } catch {
-      existing = "";
+      existing = readSetupText(file) ?? "";
+    } catch (error) {
+      result.skipped = `could not read existing skill: ${(error as Error).message}`;
+      return result;
     }
     if (!existing.includes(SKILL_MARKER)) {
       result.skipped = "existing SKILL.md is not superskill-managed";
@@ -49,15 +57,14 @@ export function installSharedSkill(
     }
     const content = skillContent();
     if (!opts.dryRun && existing !== content) {
-      writeFileSync(file, content, "utf-8");
+      writeSetupText(file, content, existing);
     }
     result.installed = true;
     return result;
   }
 
   if (!opts.dryRun) {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, skillContent(), "utf-8");
+    writeSetupText(file, skillContent(), null);
   }
   result.installed = true;
   return result;
@@ -67,17 +74,24 @@ export function removeSharedSkill(
   opts: { dryRun?: boolean; homeDir?: string } = {}
 ): { removed: boolean; path: string } {
   const file = sharedSkillFile(opts.homeDir);
+  try {
+    assertSafeSetupPath(file);
+  } catch (error) {
+    console.error(`[setup-skill] ${(error as Error).message}`);
+    return { removed: false, path: file };
+  }
   if (!existsSync(file)) return { removed: false, path: file };
 
   let content = "";
   try {
-    content = readFileSync(file, "utf-8");
+    content = readSetupText(file) ?? "";
   } catch {
     return { removed: false, path: file };
   }
-  if (!content.includes(SKILL_MARKER)) return { removed: false, path: file };
+  if (content !== skillContent()) return { removed: false, path: file };
 
   if (!opts.dryRun) {
+    assertSafeSetupPath(file);
     unlinkSync(file);
     try {
       rmdirSync(dirname(file));

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph } from "../../lib/graph/store.js";
 import { findNodes, findNode } from "../../lib/graph/store.js";
 import { listInstalledSkills } from "../../lib/skill-installer.js";
+import { readBoundedSkillFile } from "../../lib/catalog.js";
 import type { SkillNode, ProjectNode, SessionNode } from "../../lib/graph/schema.js";
 
 export const UNAUDITED_MARKER = ".unaudited-superskill";
@@ -66,13 +67,14 @@ function auditSummary(audits: AuditLike): string {
 async function readMarker(dir: string): Promise<Record<string, unknown> | null> {
   let raw: string;
   try {
-    raw = await readFile(join(dir, UNAUDITED_MARKER), "utf-8");
+    const { bytes } = await readBoundedSkillFile(join(dir, UNAUDITED_MARKER), [await realpath(dir)], 64 * 1024);
+    raw = bytes.toString("utf-8");
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
       console.error(`[skill-status] failed to read ${UNAUDITED_MARKER} in ${dir}: ${(err as Error).message}`);
     }
-    return null;
+    return code === "ENOENT" ? null : {};
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -110,7 +112,7 @@ export async function statusCommand(
   _args: Record<string, unknown>,
   ctx: CommandContext,
 ): Promise<StatusResult> {
-  const projectDir = process.cwd();
+  const projectDir = ctx.workspacePath ?? process.cwd();
   const graph = await loadGraph(projectDir);
   const installedSkills = await listInstalledSkillProvenance();
   const unauditedSkills = installedSkills.filter((skill) => skill.unaudited).map((skill) => skill.name);

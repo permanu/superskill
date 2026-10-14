@@ -2,7 +2,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import matter from "gray-matter";
+import matter from "../lib/markdown-matter.js";
 import { estimateTokens } from "../lib/token-estimator.js";
 import { loadRules, rulesCatalogRoot } from "./loader.js";
 import type { ParsedRule } from "./loader.js";

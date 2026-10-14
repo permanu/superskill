@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { chmod, mkdtemp, mkdir, rm, writeFile, stat, utimes } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, unlink, writeFile, stat, utimes } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   WorkstreamQueue,
@@ -13,6 +14,7 @@ import {
   resolveWorkstreamsDir,
   stateFile,
   stateFromPlan,
+  writePlanFile,
   writeStateFile,
   type CampaignPlan,
   type CampaignState,
@@ -62,6 +64,7 @@ describe("WorkstreamQueue", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -180,6 +183,118 @@ describe("WorkstreamQueue", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("lock-timeout");
     expect(await stateFileExists(workstreamsDir)).toBe(false);
+  });
+
+  it("never steals an aged lock from a live local pid", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    const raw = JSON.stringify({ pid: process.pid, host: hostname(), token: "other" });
+    await writeFile(lockPath, raw);
+    const old = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, old, old);
+
+    expect(await queue({ retries: 2, retryDelayMs: 1 }).claim("rust/own")).toEqual({ ok: false, reason: "lock-timeout" });
+    expect(await readFile(lockPath, "utf-8")).toBe(raw);
+    expect(await readState(workstreamsDir)).toBeNull();
+  });
+
+  it("does not infer a remote owner's death from its local pid or age", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    const raw = JSON.stringify({ pid: 999999, host: `${hostname()}-remote`, token: "remote" });
+    await writeFile(lockPath, raw);
+    const old = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, old, old);
+
+    expect(await queue({ retries: 2, retryDelayMs: 1 }).claim("rust/own")).toEqual({ ok: false, reason: "lock-timeout" });
+    expect(await readFile(lockPath, "utf-8")).toBe(raw);
+  });
+
+  it("treats permission-denied pid probes as live owners, not expired locks", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    const raw = JSON.stringify({ pid: 999999, host: hostname(), token: "permission-denied" });
+    await writeFile(lockPath, raw);
+    const old = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, old, old);
+    vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EPERM" }); });
+    expect(await queue({ retries: 2, retryDelayMs: 0 }).claim("rust/own")).toEqual({ ok: false, reason: "lock-timeout" });
+    expect(await readFile(lockPath, "utf-8")).toBe(raw);
+  });
+
+  it("recovers a fresh lock when its local pid is confirmed dead", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    await writeFile(lockPath, JSON.stringify({ pid: 999999, host: hostname(), token: "dead" }));
+    vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("gone"), { code: "ESRCH" }); });
+    expect((await queue({ retries: 2 }).claim("rust/own")).ok).toBe(true);
+  });
+
+  it("bounds exponential retry delays and never waits after the final attempt", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid }));
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    expect(await queue({ retries: 5, retryDelayMs: 100 }).claim("rust/own")).toEqual({ ok: false, reason: "lock-timeout" });
+    expect(timer.mock.calls.map((call) => call[1])).toEqual([100, 200, 250, 250]);
+  });
+
+  it("releases a partially written lock when acquisition metadata fails", async () => {
+    await expect(queue({ now: () => { throw new Error("clock failed"); } }).claim("rust/own")).rejects.toThrow("clock failed");
+    await expect(stat(join(workstreamsDir, "locks/state.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await queue().claim("rust/own")).ok).toBe(true);
+  });
+
+  it.each(["token", "inode"])("does not release a replacement lock with a different %s", async (changed) => {
+    const q = queue();
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    let replacement = "";
+    await q["withStateLock"](async () => {
+      const metadata = JSON.parse(await readFile(lockPath, "utf-8"));
+      expect(metadata.host).toBe(hostname());
+      expect(metadata.token).toEqual(expect.any(String));
+      if (changed === "inode") await unlink(lockPath);
+      replacement = JSON.stringify({ ...metadata, token: changed === "token" ? "replacement" : metadata.token });
+      await writeFile(lockPath, replacement);
+    });
+    expect(await readFile(lockPath, "utf-8")).toBe(replacement);
+  });
+
+  it("rechecks ownership when recovering an abandoned lock", async () => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    await writeFile(lockPath, JSON.stringify({ pid: 999999, token: "dead" }));
+    const old = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, old, old);
+    const replacement = JSON.stringify({ pid: process.pid, host: hostname(), token: "live" });
+    vi.spyOn(process, "kill").mockImplementationOnce(() => {
+      unlinkSync(lockPath);
+      writeFileSync(lockPath, replacement);
+      throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+    });
+
+    expect(await queue({ retries: 2, retryDelayMs: 1 }).claim("rust/own")).toEqual({ ok: false, reason: "lock-timeout" });
+    expect(await readFile(lockPath, "utf-8")).toBe(replacement);
+  });
+
+  it.each(["list", "stats"] as const)("locks %s snapshots without initializing state behind another writer", async (method) => {
+    const lockPath = join(workstreamsDir, "locks/state.lock");
+    await mkdir(join(workstreamsDir, "locks"));
+    await writeFile(lockPath, JSON.stringify({ pid: process.pid, host: hostname() }));
+    await expect(queue({ retries: 1, retryDelayMs: 0 })[method]()).rejects.toThrow(/could not acquire lock/);
+    expect(await readState(workstreamsDir)).toBeNull();
+  });
+
+  it("serializes first-read initialization with claims", async () => {
+    await Promise.all([queue().list(), queue().stats(), queue().claim("rust/own")]);
+    expect((await readState(workstreamsDir))?.batches["rust/own"].status).toBe("claimed");
+  });
+
+  it.each([
+    { retries: Infinity }, { retries: NaN }, { retries: 1.5 }, { retries: -1 },
+    { retryDelayMs: Infinity }, { retryDelayMs: -1 }, { staleMs: NaN }, { staleMs: -1 },
+  ])("rejects unbounded or invalid lock options %j", (options) => {
+    expect(() => queue(options)).toThrow(/finite|integer|non-negative/);
   });
 
   it("serializes concurrent claims to exactly one winner", async () => {
@@ -350,6 +465,35 @@ describe("WorkstreamQueue", () => {
     await writeFile(join(workstreamsDir, "plan.json"), JSON.stringify(fixturePlan()), "utf-8");
     await writeFile(join(workstreamsDir, "state.json"), JSON.stringify({ batches: 7 }), "utf-8");
     await expect(readState(workstreamsDir)).rejects.toThrow(/malformed state/);
+  });
+
+  it.each(["batch", "workstream", "cross-kind"])("rejects duplicate %s ids before creating state", async (kind) => {
+    const plan = fixturePlan();
+    if (kind === "batch") plan.batches.push({ ...plan.batches[0] });
+    if (kind === "workstream") plan.nonContent.push({ ...plan.nonContent[0] });
+    if (kind === "cross-kind") plan.nonContent[0].id = plan.batches[0].id;
+    await writeFile(planFile(workstreamsDir), JSON.stringify(plan));
+    await expect(queue().claim("rust/own")).rejects.toThrow(/duplicate.*id/);
+    expect(await readState(workstreamsDir)).toBeNull();
+    expect(() => stateFromPlan(plan)).toThrow(/duplicate.*id/);
+  });
+
+  it.each(["", "__proto__", " rust/own "])("rejects unsafe plan ids %j", async (id) => {
+    const plan = fixturePlan();
+    plan.batches[0].id = id;
+    await expect(writePlanFile(workstreamsDir, plan)).rejects.toThrow(/invalid.*id/);
+    await writeFile(planFile(workstreamsDir), JSON.stringify(plan));
+    await expect(loadPlan(workstreamsDir)).rejects.toThrow(/invalid.*id/);
+  });
+
+  it.each(["state", "plan"])("cleans up temporary %s files after a failed atomic rename", async (kind) => {
+    const target = kind === "state" ? stateFile(workstreamsDir) : planFile(workstreamsDir);
+    await rm(target, { force: true });
+    await mkdir(target);
+    await expect(kind === "state"
+      ? writeStateFile(workstreamsDir, stateFromPlan(fixturePlan()))
+      : writePlanFile(workstreamsDir, fixturePlan())).rejects.toBeDefined();
+    expect((await readdir(workstreamsDir)).filter((name) => name.includes(".tmp-"))).toEqual([]);
   });
 
   it("propagates non-ENOENT state read errors", async () => {

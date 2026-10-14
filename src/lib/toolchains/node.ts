@@ -52,7 +52,7 @@ function detectPackageManager(ctx: ProviderContext): PackageManager {
 
 export const nodeProvider: ToolchainProvider = {
   id: "node",
-  languages: ["typescript"],
+  languages: ["typescript", "javascript"],
 
   async detect(ctx: ProviderContext): Promise<boolean> {
     return existsSync(join(ctx.projectRoot, "package.json"));

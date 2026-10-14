@@ -1,9 +1,27 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile, utimes, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { catalogFile } from "../catalog.js";
 import type { Graph, SkillNode, SessionNode } from "./schema.js";
 import { loadIndex, loadNeighborhood, loadContent, formatSystemBrief } from "./loader.js";
+
+const home = vi.hoisted(() => ({ path: undefined as string | undefined }));
+const catalogOverride = vi.hoisted(() => ({ root: undefined as string | undefined, file: undefined as string | undefined }));
+vi.mock("node:os", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:os")>();
+  return { ...original, homedir: () => home.path ?? original.homedir() };
+});
+vi.mock("../catalog.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../catalog.js")>();
+  return {
+    ...original,
+    catalogRoot: () => catalogOverride.root ?? original.catalogRoot(),
+    catalogFile: (id: string) => id === "pipeline/lossless" && catalogOverride.file
+      ? catalogOverride.file
+      : original.catalogFile(id),
+  };
+});
 
 function makeProjectNode() {
   return {
@@ -40,6 +58,46 @@ function makeSessionNode(id: string, ts: number, skills: string[]) {
     insights: ["pattern 1"],
     ts,
   };
+}
+
+function fencedSkillContent(): string {
+  return [
+    "# Exact source",
+    "",
+    "```sh",
+    "set -e",
+    "printf 'first\\n'",
+    "printf 'second\\n'",
+    "```",
+    "",
+    "```mermaid",
+    "flowchart TD",
+    "  A --> B",
+    "  B --> C",
+    "  C --> D",
+    "```",
+    "",
+    "```json",
+    "{",
+    '  "steps": [',
+    '    {"run": "echo first"},',
+    '    {"run": "echo second"}',
+    "  ]",
+    "}",
+    "```",
+    "",
+    "```markdown",
+    "Nested fence example:",
+    "```sh",
+    "echo nested",
+    "```",
+    "End of nested example.",
+    "```",
+    "",
+    "  trailing spaces  ",
+    "",
+    "",
+  ].join("\r\n") + "\r\n";
 }
 
 describe("loadIndex", () => {
@@ -242,14 +300,35 @@ describe("loadContent", () => {
   });
 
   afterEach(async () => {
+    home.path = undefined;
     await rm(testDir, { recursive: true, force: true });
   });
 
-  it("reads catalog skills and compresses long code blocks", async () => {
-    const result = await loadContent(testDir, ["code/typescript"]);
+  it("preserves catalog skill source bytes, including multiline Mermaid", async () => {
+    const source = await readFile(catalogFile("pipeline/delivery"), "utf-8");
+    const result = await loadContent(testDir, ["pipeline/delivery"]);
     expect(result.skills).toHaveLength(1);
-    expect(result.skills[0].id).toBe("code/typescript");
-    expect(result.skills[0].content).toContain("TypeScript");
+    expect(result.skills[0].id).toBe("pipeline/delivery");
+    expect(result.skills[0].content).toBe(source);
+    expect(result.skills[0].content).toContain("  Specs --> QA");
+  });
+
+  it("preserves fenced commands, Mermaid, JSON, nested fences, and whitespace in catalog skills", async () => {
+    const root = join(testDir, "test-catalog");
+    const file = join(root, "pipeline", "lossless.md");
+    const source = fencedSkillContent();
+    await mkdir(join(root, "pipeline"), { recursive: true });
+    await writeFile(file, source, "utf-8");
+    catalogOverride.root = root;
+    catalogOverride.file = file;
+    try {
+      const result = await loadContent(testDir, ["pipeline/lossless"]);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.content).toBe(source);
+    } finally {
+      catalogOverride.root = undefined;
+      catalogOverride.file = undefined;
+    }
   });
 
   it("reads SKILL.md from local skill-cache", async () => {
@@ -299,16 +378,13 @@ describe("loadContent", () => {
     ]);
   });
 
-  it("compresses long code blocks in local cache", async () => {
+  it("preserves fenced commands, Mermaid, JSON, nested fences, and whitespace in local cache", async () => {
     const localCacheDir = join(testDir, ".superskill", "skill-cache", "owner", "repo", "my-skill");
     await mkdir(localCacheDir, { recursive: true });
-    const longBlock = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
-    await writeFile(join(localCacheDir, "SKILL.md"), `# My Skill\n\nSome rules here.\n\`\`\`js\n${longBlock}\n\`\`\`\n\nMore text.`, "utf-8");
+    const source = fencedSkillContent();
+    await writeFile(join(localCacheDir, "SKILL.md"), source, "utf-8");
     const result = await loadContent(testDir, ["owner/repo@my-skill"]);
-    expect(result.skills[0].content).toContain("Some rules here.");
-    expect(result.skills[0].content).toContain("// ... (8 lines truncated)");
-    expect(result.skills[0].content).toContain("line 1");
-    expect(result.skills[0].content).not.toContain("line 10");
+    expect(result.skills[0].content).toBe(source);
   });
 
   it("returns empty skills array for invalid skill ID format", async () => {
@@ -319,6 +395,87 @@ describe("loadContent", () => {
   it("handles missing content gracefully", async () => {
     const result = await loadContent(testDir, ["owner/repo@nonexistent"]);
     expect(result.skills).toHaveLength(0);
+  });
+
+  it.each(["native/../../outside", "owner/repo@../../../../outside", "owner/../repo@outside", "owner/repo@outside@extra", "code/../../package"])("rejects untrusted id %s", async (id) => {
+    const result = await loadContent(testDir, [id]);
+    expect(result.skills).toHaveLength(0);
+    expect(result.warnings.join(" ")).toMatch(/invalid.*id/i);
+  });
+
+  it.each(["native", "cache", "cache-root", "native-root"])("rejects %s symlinks outside their source root", async (kind) => {
+    const outside = join(testDir, "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, "SKILL.md"), "# Outside secret");
+    const root = kind.startsWith("native") ? join(testDir, ".agents", "skills") : join(testDir, ".superskill", "skill-cache");
+    await mkdir(join(root, "owner", "repo"), { recursive: true });
+    if (kind.endsWith("root")) {
+      await rm(root, { recursive: true });
+      await symlink(outside, root);
+      await mkdir(join(outside, "owner", "repo", "escape"), { recursive: true });
+      await mkdir(join(outside, "escape"));
+      await writeFile(join(outside, "owner", "repo", "escape", "SKILL.md"), "# Outside secret");
+      await writeFile(join(outside, "escape", "SKILL.md"), "# Outside secret");
+    } else {
+      await symlink(outside, kind === "native" ? join(root, "escape") : join(root, "owner", "repo", "escape"));
+    }
+    const result = await loadContent(testDir, [kind.startsWith("native") ? "native/escape" : "owner/repo@escape"]);
+    expect(result.skills).toEqual([]);
+  });
+
+  it("rejects oversized skill content before reading it", async () => {
+    const root = join(testDir, ".superskill", "skill-cache", "owner", "repo", "huge");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "SKILL.md"), "# Huge");
+    await truncate(join(root, "SKILL.md"), 64 * 1024 * 1024);
+    const result = await loadContent(testDir, ["owner/repo@huge"]);
+    expect(result.skills).toHaveLength(0);
+    expect(result.warnings.join(" ")).toMatch(/size|large|limit/i);
+  });
+
+  it.each(["skill", "root"])("permits intended global cache %s symlinks", async (kind) => {
+    home.path = testDir;
+    const globalRoot = join(testDir, ".superskill", "skills");
+    const globalSkill = join(globalRoot, "owner", "repo", "shared");
+    const localRoot = join(testDir, ".superskill", "skill-cache");
+    await mkdir(globalSkill, { recursive: true });
+    await writeFile(join(globalSkill, "SKILL.md"), "# Trusted shared cache");
+    if (kind === "root") await symlink(globalRoot, localRoot);
+    else {
+      await mkdir(join(localRoot, "owner", "repo"), { recursive: true });
+      await symlink(globalSkill, join(localRoot, "owner", "repo", "shared"));
+    }
+    const result = await loadContent(testDir, ["owner/repo@shared"]);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].id).toBe("owner/repo@shared");
+    expect(result.skills[0].content).toBe("# Trusted shared cache");
+  });
+
+  it("does not trust a global cache root redirected to another source", async () => {
+    home.path = testDir;
+    const outside = join(testDir, "outside");
+    await mkdir(join(outside, "owner", "repo", "shared"), { recursive: true });
+    await writeFile(join(outside, "owner", "repo", "shared", "SKILL.md"), "# Outside");
+    await mkdir(join(testDir, ".superskill"));
+    await symlink(outside, join(testDir, ".superskill", "skills"));
+    await symlink(outside, join(testDir, ".superskill", "skill-cache"));
+    expect((await loadContent(testDir, ["owner/repo@shared"])).skills).toHaveLength(0);
+  });
+
+  it("bounds aggregate content and the number of requested ids", async () => {
+    const ids: string[] = [];
+    for (let index = 0; index < 9; index++) {
+      const dir = join(testDir, ".superskill", "skill-cache", "owner", "repo", `large-${index}`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "SKILL.md"), "a".repeat(1024 * 1024));
+      ids.push(`owner/repo@large-${index}`);
+    }
+    const result = await loadContent(testDir, ids);
+    expect(result.skills).toHaveLength(8);
+    expect(result.warnings.join(" ")).toMatch(/total size limit/);
+    const capped = await loadContent(testDir, Array.from({ length: 129 }, (_, index) => `invalid-${index}`));
+    expect(capped.warnings.join(" ")).toMatch(/request limit/);
+    expect(capped.warnings).toHaveLength(129);
   });
 });
 
@@ -341,6 +498,15 @@ describe("loadContent native skills", () => {
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0]?.id).toBe("native/demo");
     expect(result.skills[0]?.content).toContain("Body text.");
+  });
+
+  it("preserves fenced commands, Mermaid, JSON, nested fences, and whitespace in native skills", async () => {
+    const skillDir = join(dir, ".agents", "skills", "demo");
+    const source = fencedSkillContent();
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), source, "utf-8");
+    const result = await loadContent(dir, ["native/demo"]);
+    expect(result.skills[0]?.content).toBe(source);
   });
 
   it("finds native skills nested under marketplace directories", async () => {

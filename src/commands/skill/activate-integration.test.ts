@@ -126,8 +126,8 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     await writeFile(join(workspacePath, ".superskill"), "not a directory");
     const result = await activateSkills({ task: "implement a function" }, { ...createMockCtx(projectDir), workspacePath, projectSlug: "blocked" });
     expect(result.success).toBe(false);
-    expect(result.error).toContain("initialization failed");
-    expect(result.initialization?.success).toBe(false);
+    expect(result.error).toContain("Graph directory is not a directory");
+    expect(result.initialization).toBeUndefined();
   });
 
   it.each([undefined, "old-release"])("refreshes catalog version %s only on its first activation", async (catalogVersion) => {
@@ -365,7 +365,8 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
   it("maps skill ids to installed skill directory names", () => {
     expect(installedSkillNameForId("native/marked-native")).toBe("marked-native");
     expect(installedSkillNameForId("owner/repo@unaudited-skill")).toBe("unaudited-skill");
-    expect(installedSkillNameForId("owner/repo@nested@name")).toBe("nested@name");
+    expect(installedSkillNameForId("owner/repo@nested@name")).toBeNull();
+    expect(installedSkillNameForId("native/../../outside")).toBeNull();
     expect(installedSkillNameForId("code/react-patterns")).toBeNull();
   });
 });

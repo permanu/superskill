@@ -5,6 +5,17 @@ import { scanForSecrets, formatSecretWarnings } from "./secret-scanner.js";
 const UUID = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("scanForSecrets", () => {
+  it("redacts every recognized secret from every snippet on a multi-secret line", () => {
+    const openai = `sk-${"x".repeat(35)}`;
+    const aws = `AKIA${"A".repeat(16)}`;
+    const matches = scanForSecrets(`${openai} ${aws}`);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+    for (const match of matches) {
+      expect(match.snippet).not.toContain(openai);
+      expect(match.snippet).not.toContain(aws);
+    }
+  });
+
   it("passes notes that merely contain a UUID", () => {
     expect(scanForSecrets(`Related id: ${UUID}`)).toEqual([]);
     expect(scanForSecrets(`See ticket ${UUID} for background context.`)).toEqual([]);

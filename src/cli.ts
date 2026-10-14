@@ -5,7 +5,8 @@ import { Command } from "commander";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { readCommand, listCommand } from "./commands/read.js";
+import { listCommand } from "./commands/read.js";
+import { boundReadContent, createRegistry, GRAPH_OPEN_MAX_BYTES, validateWorkspaceRelativePath } from "./core/registry.js";
 import { writeCommand } from "./commands/write.js";
 import { searchCommand } from "./commands/search.js";
 import { contextCommand } from "./commands/context.js";
@@ -54,6 +55,7 @@ import { registerSetupCommands } from "./setup/index.js";
 import { initProject } from "./commands/skill/init.js";
 import { activateSkills, compactActivationResult, type ActivateArgs } from "./commands/skill/activate.js";
 import { statusCommand } from "./commands/skill/status.js";
+import { validateNativeSkillCommand } from "./commands/skill/validate.js";
 import { installSkills, listInstalledSkills, removeSkill, parseSource } from "./lib/skill-installer.js";
 import { getTimeAgo } from "./lib/time-utils.js";
 
@@ -61,8 +63,33 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
 
+function parseInteger(raw: string, flag: string, minimum = 0, maximum?: number): number {
+  const value = Number(raw);
+  if (raw.trim() === "" || !Number.isInteger(value) || value < minimum || (maximum !== undefined && value > maximum)) {
+    const range = maximum !== undefined
+      ? `an integer between ${minimum} and ${maximum}`
+      : minimum === 0 ? "a non-negative integer" : minimum === 1 ? "a positive integer" : "an integer";
+    throw new Error(`${flag} must be ${range}`);
+  }
+  return value;
+}
+
+function nativeValidationPassed(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  const summary = typeof result.summary === "object" && result.summary !== null
+    ? result.summary as Record<string, unknown>
+    : {};
+  const checkedCount = result.checkedCount ?? result.checked_count ?? result.checked ??
+    summary.checkedCount ?? summary.checked_count ?? summary.checked ??
+    (Array.isArray(result.checked_paths) ? result.checked_paths.length : undefined);
+  return (result.valid === true || result.success === true) && result.valid !== false && result.success !== false &&
+    typeof checkedCount === "number" && Number.isFinite(checkedCount) && checkedCount > 0;
+}
+
 export function createProgram(): Command {
   const program = new Command();
+  const registry = createRegistry();
 
   program
     .name("superskill")
@@ -77,15 +104,26 @@ export function createProgram(): Command {
   // ── read ──────────────────────────────────────────────
   program
     .command("read <path>")
-    .description("Read a vault note")
-    .action(async (path: string) => {
+    .description("Read a vault note or directory")
+    .option("-d, --depth <number>", "Directory listing depth", "1")
+    .option("--max-bytes <number>", "Max file bytes (default 65536, cap 10485760)")
+    .action(async (path: string, opts: { depth: string; maxBytes?: string }) => {
       try {
-        const content = await readCommand({ path }, await createScopedCtx());
-        process.stdout.write(content);
+        const depth = parseInteger(opts.depth, "--depth", 1);
+        const maxBytes = opts.maxBytes === undefined ? undefined : parseInteger(opts.maxBytes, "--max-bytes", 1);
+        const ctx = await createScopedCtx();
+        let content: unknown;
+        try {
+          content = await registry.execute("read", { path, depth, max_bytes: maxBytes }, ctx);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException | null)?.code !== "EISDIR") throw error;
+          content = boundReadContent((await listCommand({ path, depth }, ctx)).join("\n"), maxBytes);
+        }
+        process.stdout.write(content as string);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -96,10 +134,7 @@ export function createProgram(): Command {
     .option("-d, --depth <number>", "Listing depth", "1")
     .action(async (path: string, opts: { depth: string }) => {
       try {
-        const depth = parseInt(opts.depth, 10);
-        if (Number.isNaN(depth) || depth < 1) {
-          throw new Error("--depth must be a positive integer");
-        }
+        const depth = parseInteger(opts.depth, "--depth", 1);
         const entries = await listCommand({ path, depth }, await createScopedCtx());
         for (const entry of entries) {
           console.log(entry);
@@ -107,7 +142,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -142,7 +177,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -158,7 +193,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -171,10 +206,7 @@ export function createProgram(): Command {
     .option("-s, --structured", "Structured frontmatter search")
     .action(async (query: string, opts: { project?: string; limit: string; structured?: boolean }) => {
       try {
-        const limit = parseInt(opts.limit, 10);
-        if (Number.isNaN(limit) || limit < 1) {
-          throw new Error("--limit must be a positive integer");
-        }
+        const limit = parseInteger(opts.limit, "--limit");
         const results = await searchCommand({
           query,
           project: opts.project,
@@ -185,7 +217,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -195,7 +227,8 @@ export function createProgram(): Command {
     .description("Get project context (auto-detects from cwd)")
     .option("-p, --project <slug>", "Project slug")
     .option("-d, --detail <level>", "Detail level: summary|full", "summary")
-    .action(async (opts: { project?: string; detail: string }) => {
+    .option("--max-tokens <number>", "Estimated content token budget (256–50000)")
+    .action(async (opts: { project?: string; detail: string; maxTokens?: string }) => {
       try {
         const validDetails = ["summary", "full"] as const;
         if (!validDetails.includes(opts.detail as any)) {
@@ -204,12 +237,13 @@ export function createProgram(): Command {
         const result = await contextCommand({
           project: opts.project,
           detailLevel: opts.detail as "summary" | "full",
+          maxTokens: opts.maxTokens === undefined ? undefined : parseInteger(opts.maxTokens, "--max-tokens", 256, 50000),
         }, await createScopedCtx());
         console.log(result.context_md);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -231,7 +265,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -286,7 +320,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -302,7 +336,8 @@ export function createProgram(): Command {
     .option("-s, --status <status>", "Filter by status")
     .option("--priority <level>", "Filter by priority")
     .option("--assigned-to <tool>", "Filter by assignee")
-    .action(async (opts: { project?: string; status?: string; priority?: string; assignedTo?: string }) => {
+    .option("-l, --limit <number>", "Max tasks (default 50, cap 500)")
+    .action(async (opts: { project?: string; status?: string; priority?: string; assignedTo?: string; limit?: string }) => {
       try {
         const validPriorities = ["p0", "p1", "p2"] as const;
         const validStatuses = ["backlog", "in-progress", "blocked", "done", "cancelled"] as const;
@@ -312,13 +347,14 @@ export function createProgram(): Command {
         if (opts.status && !validStatuses.includes(opts.status as any)) {
           throw new Error(`--status must be one of: ${validStatuses.join(", ")}`);
         }
-        const result = await taskCommand({
+        const result = await registry.execute("task", {
           action: "list",
           project: opts.project,
           status: opts.status as TaskStatus | undefined,
           priority: opts.priority as TaskPriority | undefined,
-          assignedTo: opts.assignedTo,
-        }, await createScopedCtx());
+          assigned_to: opts.assignedTo,
+          limit: opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit"),
+        }, await createScopedCtx()) as Awaited<ReturnType<typeof taskCommand>>;
         if (!result.tasks?.length) {
           console.log("No tasks found.");
           return;
@@ -330,7 +366,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -341,8 +377,9 @@ export function createProgram(): Command {
     .option("--priority <level>", "Priority: p0|p1|p2", "p1")
     .option("--blocked-by <ids...>", "Task IDs that block this task")
     .option("--assigned-to <tool>", "Assignee: claude-code|opencode|codex|human")
+    .option("--sprint <name>", "Sprint name")
     .option("--tags <tags>", "Comma-separated tags")
-    .action(async (title: string, opts: { project?: string; priority: string; blockedBy?: string[]; assignedTo?: string; tags?: string }) => {
+    .action(async (title: string, opts: { project?: string; priority: string; blockedBy?: string[]; assignedTo?: string; sprint?: string; tags?: string }) => {
       try {
         const validPriorities = ["p0", "p1", "p2"] as const;
         if (!validPriorities.includes(opts.priority as any)) {
@@ -356,13 +393,14 @@ export function createProgram(): Command {
           priority: opts.priority as TaskPriority,
           blockedBy: opts.blockedBy,
           assignedTo: opts.assignedTo,
+          sprint: opts.sprint,
           tags,
         }, await createScopedCtx());
         console.log(JSON.stringify({ task_id: result.task_id, path: result.path }));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -374,8 +412,9 @@ export function createProgram(): Command {
     .option("--priority <level>", "New priority")
     .option("--blocked-by <ids...>", "New blocked-by list")
     .option("--assigned-to <tool>", "New assignee")
+    .option("--sprint <name>", "New sprint")
     .option("-t, --title <text>", "New title")
-    .action(async (taskId: string, opts: { project?: string; status?: string; priority?: string; blockedBy?: string[]; assignedTo?: string; title?: string }) => {
+    .action(async (taskId: string, opts: { project?: string; status?: string; priority?: string; blockedBy?: string[]; assignedTo?: string; sprint?: string; title?: string }) => {
       try {
         const validPriorities = ["p0", "p1", "p2"] as const;
         const validStatuses = ["backlog", "in-progress", "blocked", "done", "cancelled"] as const;
@@ -393,13 +432,14 @@ export function createProgram(): Command {
           priority: opts.priority as TaskPriority | undefined,
           blockedBy: opts.blockedBy,
           assignedTo: opts.assignedTo,
+          sprint: opts.sprint,
           title: opts.title,
         }, await createScopedCtx());
         console.log(JSON.stringify({ task_id: result.task_id, updated_fields: result.updated_fields }));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -407,12 +447,14 @@ export function createProgram(): Command {
     .command("board")
     .description("Show task board (kanban view)")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
+    .option("-l, --limit <number>", "Max tasks (default 50, cap 500)")
+    .action(async (opts: { project?: string; limit?: string }) => {
       try {
-        const result = await taskCommand({
+        const result = await registry.execute("task", {
           action: "board",
           project: opts.project,
-        }, await createScopedCtx());
+          limit: opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit"),
+        }, await createScopedCtx()) as Awaited<ReturnType<typeof taskCommand>>;
         if (!result.board) return;
 
         for (const [status, tasks] of Object.entries(result.board)) {
@@ -427,7 +469,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -445,7 +487,8 @@ export function createProgram(): Command {
     .option("--tags <tags>", "Comma-separated tags")
     .option("--confidence <level>", "Confidence: high|medium|low", "medium")
     .option("--source <tool>", "Source tool")
-    .action(async (opts: { title: string; discovery: string; project?: string; tags?: string; confidence: string; source?: string }) => {
+    .option("--session-id <id>", "Session that captured this learning")
+    .action(async (opts: { title: string; discovery: string; project?: string; tags?: string; confidence: string; source?: string; sessionId?: string }) => {
       try {
         const validConfidences = ["high", "medium", "low"] as const;
         if (!validConfidences.includes(opts.confidence as any)) {
@@ -460,12 +503,13 @@ export function createProgram(): Command {
           tags,
           confidence: opts.confidence as Confidence,
           source: opts.source,
+          sessionId: opts.sessionId,
         }, await createScopedCtx());
         console.log(JSON.stringify({ learning_id: result.learning_id, path: result.path }));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -474,13 +518,15 @@ export function createProgram(): Command {
     .description("List learnings")
     .option("-p, --project <slug>", "Project slug")
     .option("--tag <tag>", "Filter by tag")
-    .action(async (opts: { project?: string; tag?: string }) => {
+    .option("-l, --limit <number>", "Max learnings (default 50, cap 500)")
+    .action(async (opts: { project?: string; tag?: string; limit?: string }) => {
       try {
-        const result = await learnCommand({
+        const result = await registry.execute("learn", {
           action: "list",
           project: opts.project,
           tag: opts.tag,
-        }, await createScopedCtx());
+          limit: opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit"),
+        }, await createScopedCtx()) as Awaited<ReturnType<typeof learnCommand>>;
         if (!result.learnings?.length) {
           console.log(JSON.stringify({ learnings: [] }));
           return;
@@ -496,7 +542,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -517,7 +563,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -550,7 +596,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -565,7 +611,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -576,11 +622,13 @@ export function createProgram(): Command {
     .option("--outcome <text>", "Session outcome")
     .option("--files <paths...>", "Files touched during session")
     .option("--tasks <ids...>", "Task IDs completed")
+    .option("--completed <items...>", "Completed work items")
     .option("--blocked <items...>", "Items that blocked completion")
     .option("--partially-completed <items...>", "Items partially completed")
     .option("--verification-run <text>", "Verification command(s) run")
+    .option("--commands-to-resume <commands...>", "Commands to resume remaining work")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (sessionId: string, opts: { summary?: string; outcome?: string; files?: string[]; tasks?: string[]; blocked?: string[]; partiallyCompleted?: string[]; verificationRun?: string; project?: string }) => {
+    .action(async (sessionId: string, opts: { summary?: string; outcome?: string; files?: string[]; tasks?: string[]; completed?: string[]; blocked?: string[]; partiallyCompleted?: string[]; verificationRun?: string; commandsToResume?: string[]; project?: string }) => {
       try {
         const result = await sessionCommand({
           action: "complete",
@@ -589,9 +637,11 @@ export function createProgram(): Command {
           outcome: opts.outcome,
           filesTouched: opts.files,
           tasksCompleted: opts.tasks,
+          completed: opts.completed,
           blocked: opts.blocked,
           partiallyCompleted: opts.partiallyCompleted,
           verificationRun: opts.verificationRun,
+          commandsToResume: opts.commandsToResume,
           project: opts.project,
         }, await createScopedCtx());
         console.log("Session completed");
@@ -601,7 +651,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -621,7 +671,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -642,7 +692,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -679,7 +729,7 @@ export function createProgram(): Command {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Error: ${msg}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
   };
 
@@ -705,16 +755,13 @@ export function createProgram(): Command {
     .option("--hops <number>", "Traversal depth", "1")
     .action(async (path: string, opts: { hops: string }) => {
       try {
-        const hops = parseInt(opts.hops, 10);
-        if (Number.isNaN(hops) || hops < 1) {
-          throw new Error("--hops must be a positive integer");
-        }
+        const hops = parseInteger(opts.hops, "--hops", 1);
         const result = await graphRelatedCommand({ path, hops }, await createScopedCtx());
         console.log(JSON.stringify(result, null, 2));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -724,10 +771,7 @@ export function createProgram(): Command {
     .option("-l, --limit <number>", "Max results", "20")
     .action(async (query: string, opts: { limit: string }) => {
       try {
-        const limit = parseInt(opts.limit, 10);
-        if (Number.isNaN(limit) || limit < 1) {
-          throw new Error("--limit must be a positive integer");
-        }
+        const limit = parseInteger(opts.limit, "--limit");
         const grouped = await graphCrossProjectCommand({ query, limit }, await createScopedCtx());
         for (const [project, results] of Object.entries(grouped)) {
           console.log(`\n${project} (${results.length} matches):`);
@@ -738,7 +782,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -787,7 +831,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -798,17 +842,14 @@ export function createProgram(): Command {
     .option("--json", "Print raw JSON")
     .action(async (id: string, opts: { limit: string; json?: boolean }) => {
       try {
-        const limit = parseInt(opts.limit, 10);
-        if (Number.isNaN(limit) || limit < 1) {
-          throw new Error("--limit must be a positive integer");
-        }
+        const limit = parseInteger(opts.limit, "--limit");
         const result = await graphTraverseCommand({ action: "children", id, limit }, await createScopedCtx());
         if (opts.json) console.log(JSON.stringify(result, null, 2));
         else printTraverseChildren(result as TraverseChildrenResult);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -819,28 +860,33 @@ export function createProgram(): Command {
     .option("--json", "Print raw JSON")
     .action(async (task: string, opts: { limit: string; json?: boolean }) => {
       try {
-        const limit = parseInt(opts.limit, 10);
-        if (Number.isNaN(limit) || limit < 1) {
-          throw new Error("--limit must be a positive integer");
-        }
+        const limit = parseInteger(opts.limit, "--limit");
         const result = await graphTraverseCommand({ action: "resolve", task, limit }, await createScopedCtx());
         if (opts.json) console.log(JSON.stringify(result, null, 2));
         else printTraverseResolve(result as TraverseResolveResult);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
   graphCmd
     .command("open <id>")
-    .description("Open a node's content (capped at 4KB unless --full)")
+    .description("Open node content in UTF-8 byte pages (default 4KB)")
     .option("--full", "Return the whole file")
+    .option("--offset-bytes <number>", "UTF-8 byte offset for the next page")
+    .option("--max-bytes <number>", "Maximum UTF-8 content bytes in the page")
     .option("--json", "Print raw JSON")
-    .action(async (id: string, opts: { full?: boolean; json?: boolean }) => {
+    .action(async (id: string, opts: { full?: boolean; offsetBytes?: string; maxBytes?: string; json?: boolean }) => {
       try {
-        const result = await graphTraverseCommand({ action: "open", id, full: opts.full }, await createScopedCtx());
+        const offsetBytes = opts.offsetBytes === undefined
+          ? undefined
+          : parseInteger(opts.offsetBytes, "--offset-bytes", 0, GRAPH_OPEN_MAX_BYTES);
+        const maxBytes = opts.maxBytes === undefined
+          ? undefined
+          : parseInteger(opts.maxBytes, "--max-bytes", 1, GRAPH_OPEN_MAX_BYTES);
+        const result = await graphTraverseCommand({ action: "open", id, full: opts.full, offsetBytes, maxBytes }, await createScopedCtx());
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
           return;
@@ -849,12 +895,12 @@ export function createProgram(): Command {
         process.stdout.write(content.content);
         if (!content.content.endsWith("\n")) process.stdout.write("\n");
         if (content.truncated) {
-          console.error(`[truncated at ${content.content.length} of ${content.bytes} bytes — use --full]`);
+          console.error(`[truncated at ${content.content_bytes} of ${content.bytes} bytes; continue with --offset-bytes ${content.next_offset_bytes}]`);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -887,7 +933,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -906,7 +952,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -931,7 +977,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -961,7 +1007,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -986,7 +1032,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1014,7 +1060,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1030,7 +1076,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1058,7 +1104,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1074,7 +1120,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1103,7 +1149,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1119,7 +1165,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1139,7 +1185,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1159,8 +1205,8 @@ export function createProgram(): Command {
           throw new Error(`--mode must be one of: ${validModes.join(", ")}`);
         }
         const policy: Partial<RetentionPolicy> = {
-          sessions: parseInt(opts.sessions, 10) || 30,
-          doneTasks: parseInt(opts.doneTasks, 10) || 30,
+          sessions: parseInteger(opts.sessions, "--sessions"),
+          doneTasks: parseInteger(opts.doneTasks, "--done-tasks"),
         };
         const results = await pruneCommand({
           project: opts.project,
@@ -1186,7 +1232,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1208,7 +1254,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1224,7 +1270,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1237,11 +1283,8 @@ export function createProgram(): Command {
     .option("--json", "Output as JSON instead of markdown")
     .action(async (opts: { project?: string; limit: string; json?: boolean }) => {
       try {
-        const limit = parseInt(opts.limit, 10);
-        if (Number.isNaN(limit) || limit < 1) {
-          throw new Error("--limit must be a positive integer");
-        }
-        const result = await resumeCommand({ project: opts.project, limit }, await createScopedCtx());
+        const limit = parseInteger(opts.limit, "--limit");
+        const result = await registry.execute("resume", { project: opts.project, limit }, await createScopedCtx()) as Awaited<ReturnType<typeof resumeCommand>>;
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
         } else {
@@ -1250,7 +1293,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1262,11 +1305,10 @@ export function createProgram(): Command {
   skillCmd
     .command("init")
     .description("Initialize superskill for the current project")
-    .option("--bridge", "Enable native skill bridge (replaces native skill files with superskill redirects)")
     .option("--slug <name>", "Vault project slug for auto-detection (default: repo directory name)")
-    .action(async (opts: { bridge?: boolean; slug?: string }) => {
+    .action(async (opts: { slug?: string }) => {
       try {
-        const result = await initProject({ bridge: opts.bridge, slug: opts.slug }, await createScopedCtx());
+        const result = await initProject({ slug: opts.slug }, await createScopedCtx());
         if (result.success) {
           console.log(`Initialized superskill graph:`);
           console.log(`  Stack: ${result.project_stack.join(", ") || "(none detected)"}`);
@@ -1282,12 +1324,32 @@ export function createProgram(): Command {
           }
         } else {
           console.error(`Init failed: ${result.error}`);
-          process.exit(1);
+          process.exitCode = 1;
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
+      }
+    });
+
+  skillCmd
+    .command("validate <path>")
+    .description("Validate a workspace-relative native skill file")
+    .option("--profile <profile>", "Validation profile: anthropic|portable", "anthropic")
+    .action(async (path: string, opts: { profile: string }) => {
+      try {
+        if (opts.profile !== "anthropic" && opts.profile !== "portable") {
+          throw new Error("--profile must be one of: anthropic, portable");
+        }
+        const safePath = validateWorkspaceRelativePath(path);
+        const result = await validateNativeSkillCommand({ path: safePath, profile: opts.profile as "anthropic" | "portable" }, await createScopedCtx());
+        console.log(JSON.stringify(result, null, 2));
+        if (!nativeValidationPassed(result)) process.exitCode = 1;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Error: ${msg}`);
+        process.exitCode = 1;
       }
     });
 
@@ -1297,14 +1359,15 @@ export function createProgram(): Command {
     .option("--skill-id <id>", "Load a specific skill by ID")
     .option("--phase <phase>", "Current phase: explore, implement, review, ship")
     .option("--files <paths...>", "Repo-relative files for skill and rule routing")
-    .option("--max-tokens <n>", "Estimated content token budget (256–50000)", Number)
+    .option("--max-tokens <n>", "Estimated content token budget (256–50000)")
     .option("--session-id <id>", "Registered coordination session ID")
     .option("--json", "Print structured activation result")
     .option("--detail <level>", "JSON detail: compact or full", "compact")
-    .action(async (task: string | undefined, opts: { skillId?: string; phase?: ActivateArgs["phase"]; files?: string[]; maxTokens?: number; sessionId?: string; json?: boolean; detail?: string }) => {
+    .action(async (task: string | undefined, opts: { skillId?: string; phase?: ActivateArgs["phase"]; files?: string[]; maxTokens?: string; sessionId?: string; json?: boolean; detail?: string }) => {
       try {
         if (opts.detail !== "compact" && opts.detail !== "full") throw new Error("detail must be compact or full");
-        const result = await activateSkills({ task, skill_id: opts.skillId, phase: opts.phase, files: opts.files, max_tokens: opts.maxTokens, session_id: opts.sessionId }, await createScopedCtx());
+        const maxTokens = opts.maxTokens === undefined ? undefined : parseInteger(opts.maxTokens, "--max-tokens", 256, 50000);
+        const result = await activateSkills({ task, skill_id: opts.skillId, phase: opts.phase, files: opts.files, max_tokens: maxTokens, session_id: opts.sessionId }, await createScopedCtx());
         if (opts.json) {
           console.log(JSON.stringify(opts.detail === "full" ? result : compactActivationResult(result), null, opts.detail === "full" ? 2 : undefined));
           if (!result.success) process.exitCode = 1;
@@ -1315,10 +1378,11 @@ export function createProgram(): Command {
             process.stderr.write(`${warning}\n`);
           }
         };
-        if (!result.success && result.error) {
+        if (!result.success) {
           writeWarnings();
-          process.stderr.write(`Error: ${result.error}\n`);
-          process.exit(1);
+          process.stderr.write(`Error: ${result.error ?? "Skill activation failed"}\n`);
+          process.exitCode = 1;
+          return;
         }
         if (result.skills_loaded.length === 0) {
           process.stderr.write(result.content ? result.content + "\n" : `No skills matched for: "${task}"\n`);
@@ -1335,7 +1399,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         process.stderr.write(`Error: ${msg}\n`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1349,7 +1413,8 @@ export function createProgram(): Command {
         const parsed = parseSource(source);
         if (!parsed) {
           console.error(`Invalid source: "${source}". Use owner/repo or a GitHub URL.`);
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         console.log(`Cloning ${parsed.owner}/${parsed.repo}...`);
         const selectSkills = opts.select ? opts.select.split(",").map((s) => s.trim()) : undefined;
@@ -1376,12 +1441,12 @@ export function createProgram(): Command {
           for (const err of result.errors) {
             console.error(`  - ${err}`);
           }
-          process.exit(1);
+          process.exitCode = 1;
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1402,7 +1467,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1416,12 +1481,12 @@ export function createProgram(): Command {
           console.log(`Removed skill: ${name}`);
         } else {
           console.error(`Error: ${result.error}`);
-          process.exit(1);
+          process.exitCode = 1;
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1462,7 +1527,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1517,7 +1582,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1532,7 +1597,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1547,7 +1612,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1562,7 +1627,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1583,7 +1648,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1638,7 +1703,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1646,9 +1711,11 @@ export function createProgram(): Command {
     .command("list")
     .description("List tickets")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
+    .option("-l, --limit <number>", "Max tickets (default 50, cap 500)")
+    .action(async (opts: { project?: string; limit?: string }) => {
       try {
-        const result = await ticketsCommand({ action: "list", project: opts.project }, await createScopedCtx());
+        const limit = opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit");
+        const result = await registry.execute("tickets", { action: "list", project: opts.project, limit }, await createScopedCtx()) as Awaited<ReturnType<typeof ticketsCommand>>;
         if (!result.tickets?.length) {
           console.log("No tickets found.");
           return;
@@ -1661,7 +1728,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1669,9 +1736,11 @@ export function createProgram(): Command {
     .command("board")
     .description("Show ticket board")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
+    .option("-l, --limit <number>", "Max tickets (default 50, cap 500)")
+    .action(async (opts: { project?: string; limit?: string }) => {
       try {
-        const result = await ticketsCommand({ action: "board", project: opts.project }, await createScopedCtx());
+        const limit = opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit");
+        const result = await registry.execute("tickets", { action: "board", project: opts.project, limit }, await createScopedCtx()) as Awaited<ReturnType<typeof ticketsCommand>>;
         if (!result.board) return;
         for (const [status, tickets] of Object.entries(result.board)) {
           if (tickets.length === 0) continue;
@@ -1683,7 +1752,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1691,9 +1760,11 @@ export function createProgram(): Command {
     .command("ready")
     .description("List unblocked tickets in deterministic topological order")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (opts: { project?: string }) => {
+    .option("-l, --limit <number>", "Max tickets (default 50, cap 500)")
+    .action(async (opts: { project?: string; limit?: string }) => {
       try {
-        const result = await ticketsCommand({ action: "ready", project: opts.project }, await createScopedCtx());
+        const limit = opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit");
+        const result = await registry.execute("tickets", { action: "ready", project: opts.project, limit }, await createScopedCtx()) as Awaited<ReturnType<typeof ticketsCommand>>;
         if (!result.ready?.length) {
           console.log("No ready tickets.");
           return;
@@ -1704,7 +1775,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1729,7 +1800,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1750,8 +1821,7 @@ export function createProgram(): Command {
     .option("-p, --project <slug>", "Project slug")
     .action(async (ticket: string, opts: { command: string; exit: string; output: string; commit?: string; cwd?: string; ts?: string; project?: string }) => {
       try {
-        const exitCode = parseInt(opts.exit, 10);
-        if (Number.isNaN(exitCode)) throw new Error("--exit must be a number");
+        const exitCode = parseInteger(opts.exit, "--exit", Number.NEGATIVE_INFINITY);
         const result = await evidenceCommand({
           action: "add",
           ticket,
@@ -1767,7 +1837,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1775,14 +1845,16 @@ export function createProgram(): Command {
     .command("list <ticket>")
     .description("List evidence records for a ticket")
     .option("-p, --project <slug>", "Project slug")
-    .action(async (ticket: string, opts: { project?: string }) => {
+    .option("-l, --limit <number>", "Max records (default 50, cap 500)")
+    .action(async (ticket: string, opts: { project?: string; limit?: string }) => {
       try {
-        const result = await evidenceCommand({ action: "list", ticket, project: opts.project }, await createScopedCtx());
+        const limit = opts.limit === undefined ? undefined : parseInteger(opts.limit, "--limit");
+        const result = await registry.execute("evidence", { action: "list", ticket, project: opts.project, limit }, await createScopedCtx()) as Awaited<ReturnType<typeof evidenceCommand>>;
         console.log(JSON.stringify({ ticket: result.ticket, path: result.path, count: result.count, evidence: result.evidence }, null, 2));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1816,7 +1888,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1833,7 +1905,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1857,7 +1929,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1866,15 +1938,19 @@ export function createProgram(): Command {
     .command("telemetry")
     .description("Local, opt-in telemetry for rule-selection effectiveness");
 
-  async function runTelemetry(action: TelemetryAction, top?: number): Promise<void> {
+  async function runTelemetry(action: TelemetryAction, rawTop?: string, confirm?: boolean): Promise<void> {
     try {
-      const result = await telemetryCommand({ action, top }, await createScopedCtx());
+      if ((action === "enable" || action === "disable" || action === "clear") && confirm !== true) {
+        throw new Error(`telemetry ${action} requires --confirm`);
+      }
+      const args = { action, top: rawTop === undefined ? undefined : parseInteger(rawTop, "--top"), confirm };
+      const result = await telemetryCommand(args, await createScopedCtx());
       if (result.report) console.log(result.report);
       console.log(result.message);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Error: ${msg}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
   }
 
@@ -1888,15 +1964,17 @@ export function createProgram(): Command {
   telemetryCmd
     .command("enable")
     .description("Opt in: record rule-selection events locally (never uploaded)")
-    .action(async () => {
-      await runTelemetry("enable");
+    .option("--confirm", "Authorize enabling local telemetry")
+    .action(async (opts: { confirm?: boolean }) => {
+      await runTelemetry("enable", undefined, opts.confirm);
     });
 
   telemetryCmd
     .command("disable")
     .description("Opt out: stop recording events; existing events stay on disk")
-    .action(async () => {
-      await runTelemetry("disable");
+    .option("--confirm", "Authorize disabling local telemetry")
+    .action(async (opts: { confirm?: boolean }) => {
+      await runTelemetry("disable", undefined, opts.confirm);
     });
 
   telemetryCmd
@@ -1904,19 +1982,15 @@ export function createProgram(): Command {
     .description("Aggregate local events: top-selected, most-dropped, never-selected rules")
     .option("--top <n>", "Rows per selection/drop list", "20")
     .action(async (opts: { top: string }) => {
-      const top = parseInt(opts.top, 10);
-      if (Number.isNaN(top) || top < 0) {
-        console.error("Error: --top must be a non-negative integer");
-        process.exit(1);
-      }
-      await runTelemetry("report", top);
+      await runTelemetry("report", opts.top);
     });
 
   telemetryCmd
     .command("clear")
     .description("Delete all local telemetry events")
-    .action(async () => {
-      await runTelemetry("clear");
+    .option("--confirm", "Authorize deleting local telemetry events")
+    .action(async (opts: { confirm?: boolean }) => {
+      await runTelemetry("clear", undefined, opts.confirm);
     });
 
   // ── register ─────────────────────────────────────────
@@ -1935,7 +2009,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1963,7 +2037,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -1984,12 +2058,13 @@ export function createProgram(): Command {
     .option("--json", "Print the full result as JSON instead of shell exports")
     .option("--shell <shell>", "Shell syntax: sh|fish|powershell (default: sh)")
     .option("--providers <ids...>", "Only emit variables for these providers (space or comma separated)")
+    .option("--timeout-ms <number>", "Environment probe timeout in milliseconds (1–30000, default 10000)")
     .option("--eval", "Print export statements (default; explicit for shell integration)")
     .addHelpText(
       "after",
       "\nExamples:\n  $ superskill worktree env\n  $ eval \"$(superskill worktree env --eval)\"\n  $ superskill worktree env --shell fish --providers rust,node"
     )
-    .action(async (opts: { json?: boolean; shell?: string; providers?: string[]; eval?: boolean }) => {
+    .action(async (opts: { json?: boolean; shell?: string; providers?: string[]; timeoutMs?: string; eval?: boolean }) => {
       try {
         const validShells = ["sh", "fish", "powershell"] as const;
         if (opts.shell !== undefined && !validShells.includes(opts.shell as (typeof validShells)[number])) {
@@ -2003,6 +2078,7 @@ export function createProgram(): Command {
           json: opts.json,
           shell: opts.shell as "sh" | "fish" | "powershell" | undefined,
           providers: providers && providers.length > 0 ? providers : undefined,
+          timeoutMs: opts.timeoutMs === undefined ? undefined : parseInteger(opts.timeoutMs, "--timeout-ms", 1, 30000),
         }, await createScopedCtx());
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
@@ -2012,7 +2088,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2041,7 +2117,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2068,14 +2144,14 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
   worktreeCmd
     .command("gc")
     .description(
-      "Garbage-collect worktree caches: plan by default, quarantine with --apply, permanently purge quarantined dirs with --purge --yes, restore with --undo (nothing is deleted outright)"
+      "Garbage-collect worktree caches: plan by default, quarantine with --apply, permanently purge quarantined dirs with --purge --yes, restore with --undo --yes (without --yes, undo only previews)"
     )
     .option("--all", "Plan across every repo in the cache root instead of just the current repo")
     .option("--worktree <name>", "Operate on this worktree path (default: current directory)")
@@ -2092,13 +2168,14 @@ export function createProgram(): Command {
     .option("--keep-latest <n>", "Always keep the N most recent dirs per tool")
     .option("--apply", "Quarantine the selected dirs (reversible; journaled)")
     .option("--purge", "Permanently delete quarantined dirs older than 14 days")
-    .option("--yes", "Confirm a destructive step (required with --purge)")
-    .option("--undo <journalId>", "Restore a previous quarantine journal")
+    .option("--yes", "Authorize purge or restore (without it, --purge and --undo only preview)")
+    .option("--undo <journalId>", "Preview a quarantine restore; add --yes to restore data")
+    .option("--journal-id <id>", "Restrict --purge to this quarantine journal")
     .option("--json", "Print the full result as JSON")
     .option("--verbose", "Show per-path skip reasons instead of summaries")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill worktree gc --tool rust --older-than 30d --apply\n  $ superskill worktree gc --all --min-size 500M --json\n  $ superskill worktree gc --undo 2026-10-05T14-22-01.000Z-a1b2c3d4"
+      "\nExamples:\n  $ superskill worktree gc --tool rust --older-than 30d --apply\n  $ superskill worktree gc --all --min-size 500M --json\n  $ superskill worktree gc --undo 2026-10-05T14-22-01.000Z-a1b2c3d4 --yes\n  $ superskill worktree gc --purge --journal-id <journal-id> --yes"
     )
     .action(async (opts: {
       all?: boolean;
@@ -2118,6 +2195,7 @@ export function createProgram(): Command {
       purge?: boolean;
       yes?: boolean;
       undo?: string;
+      journalId?: string;
       json?: boolean;
       verbose?: boolean;
     }) => {
@@ -2128,10 +2206,7 @@ export function createProgram(): Command {
         }
         let keepLatest: number | undefined;
         if (opts.keepLatest !== undefined) {
-          keepLatest = parseInt(opts.keepLatest, 10);
-          if (Number.isNaN(keepLatest) || keepLatest < 0) {
-            throw new Error("--keep-latest must be a non-negative integer");
-          }
+          keepLatest = parseInteger(opts.keepLatest, "--keep-latest");
         }
         const tools = opts.tool
           ?.flatMap((tool) => tool.split(","))
@@ -2154,6 +2229,7 @@ export function createProgram(): Command {
           purge: opts.purge,
           yes: opts.yes,
           undo: opts.undo,
+          journalId: opts.journalId,
           json: opts.json,
           verbose: opts.verbose,
         }, await createScopedCtx());
@@ -2165,7 +2241,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2214,22 +2290,23 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
   worktreeCmd
     .command("apply")
-    .description("Apply audit items (--item or --all-safe): plan by default, execute with --yes")
+    .description("Apply audit items (--item or --all-safe), or restore a quarantine with --undo: plan by default, execute with --yes")
     .option("--item <id...>", "Audit item id(s) to apply (space or comma separated)")
     .option("--all-safe", "Apply every safe item; consent items still need --item and --yes")
     .option("--yes", "Execute the plan (without it, apply only prints a plan)")
+    .option("--undo <journal-id>", "Restore a worktree-local quarantine journal (requires --yes)")
     .option("--json", "Print the plan/result as JSON")
     .addHelpText(
       "after",
-      "\nExamples:\n  $ superskill worktree apply --all-safe\n  $ superskill worktree apply --item seed --yes\n  $ superskill worktree apply --all-safe --yes --json"
+      "\nExamples:\n  $ superskill worktree apply --all-safe\n  $ superskill worktree apply --item seed --yes\n  $ superskill worktree apply --all-safe --yes --json\n  $ superskill worktree apply --undo <journal-id> --yes"
     )
-    .action(async (opts: { item?: string[]; allSafe?: boolean; yes?: boolean; json?: boolean }) => {
+    .action(async (opts: { item?: string[]; allSafe?: boolean; yes?: boolean; undo?: string; json?: boolean }) => {
       try {
         const items = opts.item
           ?.flatMap((id) => id.split(","))
@@ -2239,6 +2316,7 @@ export function createProgram(): Command {
           item: items && items.length > 0 ? items : undefined,
           allSafe: opts.allSafe,
           yes: opts.yes,
+          undo: opts.undo,
           json: opts.json,
         }, await createScopedCtx());
         if (opts.json) {
@@ -2249,7 +2327,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2278,7 +2356,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2350,7 +2428,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2367,6 +2445,8 @@ export function createProgram(): Command {
     .option("--since <duration>", "Window start: 7d, 24h, or ISO date")
     .option("--count <n>", "Max sessions in a window (default 20)")
     .option("--all-projects", "Review sessions across all projects (ignore the current project filter)")
+    .option("--confirm", "Authorize reviewing traces across all projects")
+    .option("--include-prompts", "Explicitly include prompt text in the report")
     .option("-p, --project <slug>", "Target a vault project (default: auto-detect)")
     .option("--tool <name>", "Restrict to a harness: opencode | claude-code | codex")
     .option("--no-persist", "Return the report without writing it to the vault")
@@ -2375,27 +2455,28 @@ export function createProgram(): Command {
       "after",
       "\nExamples:\n  $ superskill watchdog dig\n  $ superskill watchdog dig --scope window --since 7d\n  $ superskill watchdog dig --scope env\n  $ superskill watchdog dig --session opencode:ses_abc123",
     )
-    .action(async (opts: { session?: string; scope?: string; since?: string; count?: string; allProjects?: boolean; project?: string; tool?: string; persist?: boolean; json?: boolean }) => {
+    .action(async (opts: { session?: string; scope?: string; since?: string; count?: string; allProjects?: boolean; confirm?: boolean; includePrompts?: boolean; project?: string; tool?: string; persist?: boolean; json?: boolean }) => {
       try {
+        if (opts.allProjects && opts.confirm !== true) throw new Error("--all-projects requires --confirm");
         let count: number | undefined;
         if (opts.count !== undefined) {
-          count = parseInt(opts.count, 10);
-          if (Number.isNaN(count) || count < 1) {
-            throw new Error("--count must be a positive integer");
-          }
+          count = parseInteger(opts.count, "--count", 1);
         }
+        const args = {
+          action: "dig" as const,
+          sessionId: opts.session,
+          scope: opts.scope as "session" | "window" | "env" | "all" | undefined,
+          since: opts.since,
+          count,
+          allProjects: opts.allProjects,
+          confirm: opts.confirm,
+          includePrompts: opts.includePrompts,
+          project: opts.project,
+          tool: opts.tool,
+          persist: opts.persist,
+        };
         const result = await watchdogCommand(
-          {
-            action: "dig",
-            sessionId: opts.session,
-            scope: opts.scope as "session" | "window" | "env" | "all" | undefined,
-            since: opts.since,
-            count,
-            allProjects: opts.allProjects,
-            project: opts.project,
-            tool: opts.tool,
-            persist: opts.persist,
-          },
+          args,
           await createScopedCtx(),
         );
         if (opts.json) {
@@ -2408,7 +2489,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2454,7 +2535,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2479,7 +2560,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2517,7 +2598,7 @@ export function createProgram(): Command {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`Error: ${msg}`);
-        process.exit(1);
+        process.exitCode = 1;
       }
     });
 
@@ -2541,10 +2622,8 @@ export function isMainEntry(argv1: string | undefined, moduleUrl: string): boole
 const isMain = isMainEntry(process.argv[1], import.meta.url);
 
 if (isMain) {
-  createProgram().parseAsync();
+  Promise.resolve().then(() => createProgram().parseAsync()).catch((error: unknown) => {
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
 }
-
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection:", reason);
-  process.exit(1);
-});

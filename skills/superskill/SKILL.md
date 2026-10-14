@@ -1,45 +1,36 @@
 ---
 name: superskill
-description: Use when superskill MCP tools are available or this repo uses a superskill vault — load project context at session start, search decisions/learnings/tasks before planning or review, register/close sessions, reroute on meaningful task or phase changes, and consume worktree lifecycle assessments so concurrent agents stay coordinated.
+description: Routes authorized coding work through the superskill project knowledge graph and verified rules. Use when this host exposes superskill MCP tools or a repository is initialized with superskill, for project-scoped context, task routing, rules, review, or lifecycle operations.
 ---
 
 <!-- superskill:skill -->
 
 # SuperSkill
 
-SuperSkill is the shared project memory served by the `superskill` MCP server. Tool names carry the harness prefix (for example `superskill_project_context` or `mcp__superskill__project_context`).
+SuperSkill is a consumer skill for a host-configured `superskill` MCP server, not a standalone API or offline service. Use only tool names actually exposed by the host: OpenCode Code Mode uses `tools.superskill.<tool>`, while Claude Code exposes `mcp__superskill__<tool>`. Other hosts may differ; never guess or mechanically rewrite a tool name. If a tool is unavailable, report that or use an already-installed CLI after verifying it with `superskill --help`. Do not install tools or use `npx` unless network use is explicitly approved.
 
-## Session loop
+## Scope and authorization
 
-At every session start, establish the actual checkout and invoke SuperSkill in the first phase before project work:
+- Treat a coding request as authorization for its specified project and changes only. Establish the actual checkout and project; never guess a project slug. If mapping is needed for authorized work, call `register` with the absolute checkout path and use its returned slug.
+- Session registration and completion are coordination bookkeeping for authorized nontrivial code work; completion persists a session note. This does not authorize additional ADRs, learnings, tasks, or reports unless requested or required by project policy.
+- Keep data scoped to the named project; access other project history only with explicit scope and authorization. Redact prompt text by default; use `include_prompts` only for bounded excerpts from the current project when explicitly requested and needed. Never expose secrets, credentials, or unrelated history.
+- Do not infer permission for network access, installs, global configuration, fixes, dismissals, manual cleanup/cache apply/GC, publishing, or destructive changes. The built-in session-maintenance preservation path below is the exception; preview manual actions and proceed only with explicit authorization.
 
-1. **Resolve the project and load context** — if the checkout is unmapped, call the `register` tool with `path` set to its absolute path. Use the returned project slug for `project_context` and subsequent project-scoped calls; never invent a slug or borrow another project's knowledge. If no context exists yet, say so and continue with the new mapping.
-2. **Search before deciding** — call `search` before planning, large edits, or review; reuse relevant decisions and learnings.
-3. **Coordinate** — call `session` with `action: register`, your tool, project and absolute `workspace_path`. Retain the returned `session_id`; do not reuse another thread's ID.
-4. **Initialize and route the current work** — immediately call `superskill` with `task`, repo-relative `files`, `session_id`, `workspace_path`, and explicit `phase` (`explore|implement|review|ship`). This first activation initializes a missing graph from the local catalog for the mapped workspace. Repeat when the task, affected files or phase meaningfully change and before verification or completion. Reuse the current result within the same work phase instead of rerouting every tool call.
-5. **Consume the worktree assessment** — inspect `result.worktree` from session registration and activation. Follow its next steps before dependency installs/builds and at completion. Run `worktree_env` or `worktree_audit` in the exact returned workspace; use the CLI with that working directory when a tool cannot accept an explicit path. Never assume the MCP server's startup directory is the current thread's checkout.
-6. **Close the loop** — record durable decisions, learnings and follow-up tasks, then call `session` with `action: complete`, the same session ID, project and workspace, a concise outcome and verification evidence. Report unresolved worktree actions rather than silently treating them as complete.
+## Workflow
 
-Worktree inspection is the default. Use the built-in completed-session cleanup only for clean, idle, session-owned worktrees proven merged into main and reported eligible by the lifecycle checks. Keep anything ineligible, uncertain or still in use; report why. Do not force removal or substitute a shell cleanup. Other policy activation, cache apply/GC and manual removals require existing user authorization for that scope; do not infer permission from an assessment. These instructions guide the host: the MCP server cannot force a harness to call tools or infer an unreported task/phase change.
+- Use the smallest workflow that fits. Simple questions and read-only lookups need no session, plan, HLD/LLD, or human-question ritual; ask only when scope, authorization, or risk is genuinely unclear.
+- For nontrivial authorized code work, load `project_context` and search relevant project notes before planning. Register once with the `session` tool using `action: "register"`, tool, project, and absolute `workspace_path`; retain `session_id`.
+- Route with `superskill` using task, repo-relative files, `session_id`, `workspace_path`, and phase (`explore|implement|review|ship`). Reuse the same session; reroute when task, files, or phase meaningfully change. Complete that session with the outcome and verification evidence.
+- Inspect the returned worktree assessment. Use `worktree_env` before installs/builds. Built-in session maintenance may automatically quarantine or relocate eligible clean, idle, session-owned checkouts after session completion once they are proven integrated into the repository's actual default branch; it preserves the whole checkout in a locked recovery archive, returns recovery metadata, and never deletes it. An assessment alone does not authorize manual actions. Manual cleanup, cache apply/GC, permanent removal, policy/config changes, and installs require explicit authorization; never force-remove a checkout.
 
-Run setup once to migrate older managed launchers. Subsequent MCP starts select the stable latest package and refresh existing managed shared skills and recognized Markdown blocks. Start a new host session to load refreshed context. Pinned launchers, custom instructions, and already running servers remain unchanged.
+## Retrieve only what is needed
 
-## Local integration before publishing
+- Start with graph metadata (`graph_traverse` `resolve`, `children`, or `node`); budget by the returned size estimates, then open only relevant notes, skills, rules, or symbols. Use graph IDs such as `constitution` and `principle:<existing-id>`; resolve references through the graph rather than guessing package-relative paths. Only verified rules are injected by default.
+- For paged reads, use `offset_bytes` and bounded `max_bytes`. If `read_complete` is false, continue at `next_offset_bytes` until complete; never rely on a partial instruction or unsafe content.
+- If a required tool or dependency is missing, report it or choose an already-available transport. A CLI fallback must be verified installed; never claim an offline API or install/use `npx` without explicit network approval.
 
-The coordinator keeps related dependent changes in an ordered local stack of branches/PR layers, integrates worker results, and validates each layer plus the combined top before a batch push. Workers do not independently push or create PRs by default. Keep independent parallel changes separate; do not stack unrelated work just to reduce branch count. Publish or merge remotely only when authorized, preserving required review and CI. After merge into main, complete the owning sessions and consume lifecycle cleanup eligibility; do not leave eligible completed worktrees behind or remove active ones.
+## Examples
 
-## Lazy retrieval — never bulk-load
-
-Reach content through the graph instead of loading everything:
-
-1. **Resolve** — `graph_traverse` with `action: "resolve"` and your task: returns the proposed load path (matched skills, rules, notes) as `{ id, path, bytes, tokens, reason }` — **no content**.
-2. **Descend** — `action: "children"` one level at a time (`rules` → `rules:rust` → `rules:rust/own` → rule ids), or `action: "node"` for metadata + edges.
-3. **Open** — `action: "open"` pulls exactly one file's content (capped ~4KB; `full: true` for all) only when you actually need it.
-
-Id prefixes: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`; containers like `rules:<lang>/<prefix>`. Budget first (tokens ≈ bytes/4), open second. CLI: `superskill graph resolve|children|node|open`.
-
-## Rules
-
-- The vault is jailed to `VAULT_PATH`; only the superskill MCP tools and the `superskill` CLI touch it.
-- No "done" without evidence — run the checks the repo defines and report their results.
-- If the project has no vault context yet, say so plainly instead of inventing history.
+- **Normal work:** Route a requested code change with its task, files, and phase; reuse the registered session, inspect graph metadata first, then open only the relevant source or rule.
+- **Read-only question:** Answer from the smallest relevant lookup; do not create a session, plan, or memory entry when none is needed.
+- **Risky watchdog action:** Call the host-discovered `watchdog` MCP tool by its exact exposed name (OpenCode Code Mode: `tools.superskill.watchdog`; Claude Code: `mcp__superskill__watchdog`) with `action: "dig"`, current-project scope, and `persist: false`. Preview fixes with `apply: false`, show the actions, and wait for explicit confirmation before `apply: true`. Set `dismiss: true` only when dismissal is explicitly requested.

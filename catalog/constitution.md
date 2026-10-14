@@ -1,6 +1,6 @@
 # SuperSkill Constitution (T0)
 
-Always injected. Parentheses name the enforcing mechanism.
+Not auto-loaded by MCP: a host may use the optional session-start hook or explicit graph-constitution request. Catalog presence is not loading; normal token budgets apply. Parentheses name enforcers.
 
 - P-01 evidence-before-done: never claim done without `gate check` evidence. (gate check)
 - P-02 parse-at-boundaries: validate external input at the edge; trust internals. (review)

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "generation": 42,
+  "records": [
+    {"id": "pub-104", "title": "Public note A"},
+    {"id": "pub-104", "title": "Public note A (duplicate)"},
+    {"id": "pub-205", "title": "Public note B"}
+  ]
+}

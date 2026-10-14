@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { isSuperskillLauncherToken } from "./launcher.js";
+import { isManagedLauncher, isOurTool } from "./launcher.js";
 import { MARKER_START_TOML, MARKER_END_TOML } from "./types.js";
 
 const TABLE = "mcp_servers.superskill";
@@ -43,7 +43,7 @@ function superskillTableSpan(content: string): TomlSpan | null {
   const main = findTable(content, TABLE);
   if (!main) return null;
   const env = findTable(content, `${TABLE}.env`);
-  if (env && env.start >= main.end) {
+  if (env && env.start === main.end) {
     return { start: main.start, end: env.end, text: content.slice(main.start, env.end) };
   }
   return main;
@@ -70,30 +70,26 @@ function parseStringArray(body: string, key: string): string[] | null {
   }
 }
 
-function managedArgs(args: readonly string[]): boolean {
-  const positional = args.filter((token) => !token.startsWith("-"));
-  return positional.length === 1 && isSuperskillLauncherToken(positional[0]);
+function tableLauncher(body: string): Record<string, unknown> | null {
+  const command = parseString(body, "command");
+  if (command !== null) {
+    const args = parseStringArray(body, "args");
+    return { command, ...(args === null ? {} : { args }) };
+  }
+  const commandArray = parseStringArray(body, "command");
+  return commandArray === null ? null : { command: commandArray };
 }
 
 function isOwnedTable(body: string): boolean {
-  const command = parseString(body, "command");
-  if (command === "superskill" || command === "superskill-cli") return true;
-  if (command === "npx") {
-    const args = parseStringArray(body, "args");
-    return args !== null && managedArgs(args);
-  }
-  const commandArray = parseStringArray(body, "command");
-  if (commandArray !== null) {
-    const [first, ...rest] = commandArray;
-    if (first === "superskill" || first === "superskill-cli") return true;
-    if (first === "npx") return managedArgs(rest);
-  }
-  return false;
+  const launcher = tableLauncher(body);
+  return launcher !== null && isOurTool(launcher);
 }
 
 function upgradeTable(content: string, span: TomlSpan, force: boolean): string | null {
   const body = span.text;
-  if (!isOwnedTable(body)) return null;
+  const launcher = tableLauncher(body);
+  if (launcher === null || !isOurTool(launcher)) return null;
+  if (!force && !isManagedLauncher(launcher)) return null;
 
   const command = parseString(body, "command");
   const commandArray = parseStringArray(body, "command");
@@ -105,16 +101,20 @@ function upgradeTable(content: string, span: TomlSpan, force: boolean): string |
     const current = args.join(" ");
     if (current === LATEST_ARGS.join(" ")) return null;
     if (!force && current !== OLD_ARGS.join(" ")) return null;
-    updated = updated.replace(/^\s*args\s*=\s*\[[^\]]*\]\s*$/m, LATEST_ARGS_LINE);
+    updated = updated.replace(/^[ \t]*args[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARGS_LINE);
   } else if (command === "superskill" || command === "superskill-cli") {
     if (!force) return null;
-    updated = updated
-      .replace(/^(\s*)command\s*=\s*"superskill(?:-cli)?"\s*$/m, `$1command = "npx"`)
-      .replace(/^(\s*)command\s*=\s*"npx"\s*$/m, `$1command = "npx"\n$1${LATEST_ARGS_LINE}`);
+    updated = updated.replace(/^([ \t]*)command[ \t]*=[ \t]*"superskill(?:-cli)?"[ \t]*$/m, "$1command = \"npx\"");
+    if (/^[ \t]*args[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m.test(updated)) {
+      updated = updated.replace(/^[ \t]*args[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARGS_LINE);
+    } else {
+      updated = updated.replace(/^([ \t]*)command[ \t]*=[ \t]*"npx"[ \t]*$/m, `$1command = "npx"\n$1${LATEST_ARGS_LINE}`);
+    }
   } else if (commandArray !== null) {
-    const isOldGenerated = commandArray.join(" ") === ["npx", ...OLD_ARGS].join(" ");
-    if (!force && !isOldGenerated) return null;
-    updated = updated.replace(/^\s*command\s*=\s*\[[^\]]*\]\s*$/m, LATEST_ARRAY_LINE);
+    const isNpx = commandArray[0] === "npx";
+    if (!force && (!isNpx || commandArray.join(" ") !== ["npx", ...OLD_ARGS].join(" "))) return null;
+    if (!force && commandArray.join(" ") === ["npx", ...LATEST_ARGS].join(" ")) return null;
+    updated = updated.replace(/^[ \t]*command[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARRAY_LINE);
   } else {
     return null;
   }
@@ -130,6 +130,13 @@ export function insertTomlBlock(
 ): string | null {
   const hasBlock =
     content.includes(MARKER_START_TOML) && content.includes(MARKER_END_TOML);
+
+  if (hasBlock && force) {
+    const blocks = [...content.matchAll(new RegExp(`${escapeRegex(MARKER_START_TOML)}\\n([\\s\\S]*?)\\n${escapeRegex(MARKER_END_TOML)}`, "g"))];
+    if (blocks.length !== 1) return null;
+    const launcher = tableLauncher(blocks[0][1]);
+    if (launcher !== null && !isOurTool(launcher)) return null;
+  }
 
   if (hasBlock && !force) {
     const blocks = [...content.matchAll(new RegExp(`${escapeRegex(MARKER_START_TOML)}\\n([\\s\\S]*?)\\n${escapeRegex(MARKER_END_TOML)}`, "g"))];
@@ -183,7 +190,9 @@ export function removeTomlBlock(content: string): {
 
   const span = superskillTableSpan(result);
   if (span && isOwnedTable(span.text)) {
-    const joined = result.slice(0, span.start) + result.slice(span.end);
+    let joined = result.slice(0, span.start) + result.slice(span.end);
+    const env = findTable(joined, `${TABLE}.env`);
+    if (env) joined = joined.slice(0, env.start) + joined.slice(env.end);
     result = joined.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
     return { content: result, removed: true };
   }

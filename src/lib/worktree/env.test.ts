@@ -132,6 +132,12 @@ describe("resolveWorktreeEnv", () => {
     expect(none.providers).toEqual([]);
     expect(none.vars).toEqual([]);
   });
+
+  it("bounds env probe latency and validates caller budgets", async () => {
+    await expect(resolveWorktreeEnv(repo, { timeoutMs: 1 })).rejects.toThrow(/time budget/);
+    await expect(resolveWorktreeEnv(repo, { timeoutMs: 0 })).rejects.toThrow(/timeout/);
+    await expect(resolveWorktreeEnv(repo, { timeoutMs: 30_001 })).rejects.toThrow(/timeout/);
+  });
 });
 
 describe("mergeEnvVars", () => {
@@ -240,6 +246,13 @@ describe("renderEnvText", () => {
     expect(
       renderEnvText([{ name: "ONLY", value: "x\ny", mode: "set", provider: "test" }]),
     ).toBe("");
+  });
+
+  it("rejects shell variable-name injection and NUL values", () => {
+    expect(renderEnvText([
+      { name: "X; touch injected", value: "x", mode: "set", provider: "test" },
+      { name: "NULL", value: "x\0y", mode: "set", provider: "test" },
+    ])).toBe("");
   });
 });
 

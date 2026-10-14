@@ -47,20 +47,26 @@ export async function taskCommand(
   tasks?: TaskItem[];
   board?: Record<string, TaskItem[]>;
 }> {
+  if (args.status !== undefined && !VALID_TASK_STATUSES.includes(args.status)) {
+    throw new Error(`Invalid status "${args.status}". Must be one of: ${VALID_TASK_STATUSES.join(", ")}`);
+  }
+  if (args.priority !== undefined && !VALID_TASK_PRIORITIES.includes(args.priority)) {
+    throw new Error(`Invalid priority "${args.priority}". Must be one of: ${VALID_TASK_PRIORITIES.join(", ")}`);
+  }
+  if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 0 || args.limit > 500)) {
+    throw new Error("limit must be an integer between 0 and 500");
+  }
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const vaultFs = ctx.vaultFs;
   const tasksDir = `projects/${projectSlug}/tasks`;
 
   switch (args.action) {
     case "add": {
-      if (!args.title) throw new Error("Title required for add");
+      if (typeof args.title !== "string" || !args.title.trim()) throw new Error("Title required for add");
 
       const titleSlug = slugify(args.title);
 
       const priority = args.priority ?? "p1";
-      if (!VALID_TASK_PRIORITIES.includes(priority)) {
-        throw new Error(`Invalid priority "${priority}". Must be one of: ${VALID_TASK_PRIORITIES.join(", ")}`);
-      }
 
       const fm = createFrontmatter({
         type: "task",
@@ -91,9 +97,7 @@ export async function taskCommand(
       if (args.assignedTo) {
         filtered = filtered.filter((t) => t.assigned_to === args.assignedTo);
       }
-      if (args.limit !== undefined) {
-        filtered = filtered.slice(0, args.limit);
-      }
+      filtered = filtered.slice(0, args.limit ?? 50);
 
       return { tasks: filtered };
     }
@@ -110,16 +114,10 @@ export async function taskCommand(
         const { data, content: body } = parseFrontmatter(content);
 
         if (args.status) {
-          if (!VALID_TASK_STATUSES.includes(args.status)) {
-            throw new Error(`Invalid status "${args.status}". Must be one of: ${VALID_TASK_STATUSES.join(", ")}`);
-          }
           data.status = args.status;
           updatedFields.push("status");
         }
         if (args.priority) {
-          if (!VALID_TASK_PRIORITIES.includes(args.priority)) {
-            throw new Error(`Invalid priority "${args.priority}". Must be one of: ${VALID_TASK_PRIORITIES.join(", ")}`);
-          }
           data.priority = args.priority;
           updatedFields.push("priority");
         }
@@ -132,7 +130,7 @@ export async function taskCommand(
           updatedFields.push("assigned_to");
         }
         if (args.title) {
-          const newBody = body.replace(/^# .+$/m, `# ${args.title}`);
+          const newBody = body.replace(/^# .+$/m, () => `# ${args.title}`);
           const updated = mergeFrontmatter(data, {});
           updatedFields.push("title");
           return serializeFrontmatter(updated, newBody);
@@ -151,7 +149,7 @@ export async function taskCommand(
 
       for (const col of STATUS_COLUMNS) {
         const columnTasks = tasks.filter((t) => t.status === col);
-        board[col] = args.limit !== undefined ? columnTasks.slice(0, args.limit) : columnTasks;
+        board[col] = columnTasks.slice(0, args.limit ?? 50);
       }
 
       return { board };

@@ -7,14 +7,14 @@ triggers: [grill, hitl, human in the loop, design review, unclear, tradeoff]
 
 # Grill (human in the loop)
 
-Learned from Matt’s grill: unresolved design branches stay bugs. SuperSkill **stops and asks**. One question at a time. Offer a recommended answer. Do not proceed on a guess.
+Learned from Matt’s grill: an unresolved decision can become a bug. Pause only for a specific decision that changes acceptance or the safe solution and cannot be resolved from repository evidence, tests, or an available authority. Name the missing decision and why evidence cannot settle it. One question at a time; offer a recommendation. Continue independent work while the blocked branch waits.
 
 ## When
-- Review axis you cannot honestly `n/a`
-- New stock/flow (new table, new MCP tool, new tenant path)
-- Security / money / identity
+- A named review finding whose resolution depends on a decision no evidence can settle
+- A new stock/flow (table, MCP tool, tenant path) whose safe shape remains undecided after inspecting the repository and evidence
+- Security / money / identity when authorization, ownership, or acceptance remains unknown after evidence checks
 - The user is choosing among architectures
-Skip: typo, proven one-line, they already answered.
+An applicable review axis is not itself an open decision; inspect evidence first. Skip: typo, proven one-line, evidence-resolved questions, or a branch the user already closed.
 
 ## How
 Ask until the branch is closed. Max 5 questions per pause, then wait.

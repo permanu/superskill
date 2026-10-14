@@ -31,10 +31,28 @@ export type Middleware = (
   next: () => Promise<unknown>
 ) => Promise<unknown>;
 
+export interface InputSchema extends Record<string, unknown> {
+  type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+  properties?: Record<string, InputSchema>;
+  required?: string[];
+  enum?: Array<string | number | boolean | null>;
+  items?: InputSchema;
+  additionalProperties?: boolean | InputSchema;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  minItems?: number;
+  maxItems?: number;
+}
+
 export interface MCPToolDefinition {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: InputSchema;
   annotations?: {
     readOnlyHint?: boolean;
     destructiveHint?: boolean;
@@ -52,4 +70,5 @@ export interface CommandRegistration<TArgs = unknown, TResult = unknown> {
   handler: CommandHandler<TArgs, TResult>;
   toolDef: MCPToolDefinition;
   adaptArgs?: (raw: Record<string, unknown>) => TArgs;
+  rateLimit?: "read" | "write" | "expensive";
 }

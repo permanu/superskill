@@ -6,6 +6,11 @@ Last verified: 2026-10-05
 
 Source snapshot (traceability only, never pinned in rules): the cited docs.python.org pages currently serve the 3.14.x documentation; PEP and Ruff pages are versionless. Compile checks during authoring ran on the local CPython 3.14.6.
 
+## Contents
+
+- [Primary](#primary)
+- [Further reading](#further-reading)
+
 ## Primary
 
 1. [The Python Tutorial](https://docs.python.org/3/tutorial/index.html) - baseline idioms and language tour (conv, style, data, io)

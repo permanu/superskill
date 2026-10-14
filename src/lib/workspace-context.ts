@@ -17,7 +17,9 @@ const execFileAsync = promisify(execFile);
 async function gitOutput(cwd: string, args: string[]): Promise<string | null> {
   try {
     return (await execFileAsync("git", args, { cwd, timeout: 3000, maxBuffer: 1024 * 1024 })).stdout;
-  } catch {
+  } catch (error) {
+    const failure = error as { stderr?: string };
+    if (!failure.stderr?.includes("not a git repository")) console.error(`[workspace-context] git ${args.join(" ")} failed in ${cwd}:`, error);
     return null;
   }
 }
@@ -50,7 +52,9 @@ export async function resolveWorkspaceContext(
   try {
     canonical = await realpath(workspacePath);
     if (!(await stat(canonical)).isDirectory()) throw new Error("not a directory");
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR" && code !== undefined) console.error(`[workspace-context] cannot access ${workspacePath}:`, error);
     throw new Error("workspace_path must be an absolute existing directory");
   }
   if (explicitSlug !== undefined && explicitSlug !== "") validateProjectSlug(explicitSlug);

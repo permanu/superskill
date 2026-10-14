@@ -4,21 +4,23 @@ An agent that spawns a git worktree per subagent pays twice: once when the first
 
 ## Agent-first usage
 
-No CLI is needed. Activate once per repo — the agent can do it via the MCP tool `worktree_activate` — and after that:
+No CLI is needed. `worktree_activate` changes the repository's shared policy, Git hook, and selected host session adapters. Preview first and require explicit user approval before applying it; then activate once per repo. After that:
 
 1. Every `git worktree add` fires a guarded `post-checkout` hook that seeds cheap caches (reflink copy where the filesystem supports it) and always exits 0; it never blocks or changes the checkout.
 2. Host session hooks inject the shared-cache environment (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, GrokBuild, plus a generic `AGENTS.md` fallback) when a session starts in a worktree.
 
 MCP tools: `worktree_status`, `worktree_audit`, `worktree_env`, `worktree_activate`, `worktree_apply`, `worktree_gc`, `worktree_uninstall`. They mirror the CLI below one-for-one, with two exceptions: there is no `worktree bootstrap` MCP tool, and the MCP `worktree_gc` has no `--verbose` (per-path skip reasons stay CLI-only). An agent can still audit, apply, and collect caches without shelling out.
 
-## What superskill will never do
+## Safety boundaries
 
-- Never remove, prune, or move worktrees.
+- Cache GC never removes or moves worktrees. Separate session-lifecycle maintenance may relocate a proven-safe completed checkout into a locked recovery archive only when integration into the repository's configured default branch is proven (the branch need not be named `main`); it never automatically deletes a checkout.
 - Never run `git clean`, `git reset`, or `git checkout -f`.
 - Never delete dirty, untracked, or ignored user files; never touch stashes, unpushed commits, submodules, or in-progress operations (merge / rebase / cherry-pick / revert / bisect).
 - GC touches only the platform cache root, and only by moving directories into `_quarantine/` (reversible with `--undo`). Permanent deletion happens only on `gc --purge --yes`, and only inside `_quarantine/`.
 - Worktree-local caches (`node_modules/`, `target/`, `DerivedData/`, …) are reclaimed only with explicit consent plus a seeded-file manifest audit; reclaims are renamed into `.git/superskill/quarantine/<id>` and can be restored.
 - When state is unknown, keep it: skipping is always safer than deleting.
+
+Session-lifecycle recovery records live under the common Git directory at `superskill/worktree-archives/<id>/recovery.json`. They identify the original and preserved checkout paths, the HEAD, and a rescue ref. Maintenance writes recovery state before relocation, rechecks session ownership under its cleanup lock, and protects the preserved worktree with a Git lock. Missing identity or registry reread evidence prevents relocation. Recovery archives are not cache quarantine entries and are not automatically purged; inspect the returned `recoveries`/`quarantined` records before taking any manual action.
 
 ## How it works
 
@@ -64,7 +66,7 @@ superskill worktree audit --worktree feat-login --json
 
 ### `worktree env`
 
-Read-only. Options: `--json`; `--eval` (shell `export` lines, the form hooks use); `--shell <sh|fish|powershell>`; `--providers <ids...>` (restrict to detected toolchains such as `rust`, `go`, `node`, `python`, `swift`).
+Read-only. Options: `--json`; `--eval` (shell `export` lines, the form hooks use); `--shell <sh|fish|powershell>`; `--providers <ids...>` (restrict to detected toolchains such as `rust`, `go`, `node`, `python`, `swift`); `--timeout-ms <n>` bounds provider execution.
 
 Cache namespaces are keyed by repo identity: the normalized `origin` URL, or the repo's git dir when there is no remote. A `file://` or plain-path remote is followed (bounded, cycle-safe) to the source repo's own identity, so local clones share one namespace; namespaces created under the old per-path scheme are renamed into the shared identity on the next `worktree bootstrap`/`activate` run. `SUPERSKILL_CACHE_ROOT` relocates the cache root; `SUPERSKILL_SCCACHE_CACHE_SIZE` overrides the sccache size cap (default `10G`).
 
@@ -101,7 +103,8 @@ Options:
 | `--include <glob...>` / `--exclude <glob...>` | Path globs relative to `<repoHash>/` | off |
 | `--apply` | Quarantine selected dirs (reversible) | off (dry-run report) |
 | `--purge`, `--yes` | Delete quarantine entries older than 14 days; `--yes` required | plan only |
-| `--undo <journalId>` | Restore a quarantine journal | — |
+| `--undo <journalId> --yes` | Restore a quarantine journal with explicit consent | — |
+| `--journal-id <id>` | Restrict a purge to one validated quarantine record | all eligible records |
 | `--json`, `--verbose` | Machine-readable output / per-path skip reasons (CLI only) | off |
 
 Tiering: `auto` (compiler/build caches such as `go-build`, `sccache`, `pnpm-store`, `uv`) is selected only when at least 30 days old unless you pass an explicit age or tier; `consent` (e.g. `cargo-build`, `node-modules`) requires `--tier consent` or an explicit age filter. Nested per-worktree dirs (e.g. `cargo-build/<worktreeKey>`) are promoted to `auto` and tagged `orphan` once their registered worktree path is gone — worktrees register a marker under `<repoHash>/.worktrees/` via the session/worktree-create bootstrap or `worktree activate`. Tool-native prunes (`go clean -cache`, `pnpm store prune`, `uv cache prune --ci`, …) are printed as informational commands — run them through the tool when you want them.
@@ -111,7 +114,7 @@ superskill worktree gc                           # report for this repo (dry run
 superskill worktree gc --older-than 30d --apply  # quarantine (reversible)
 superskill worktree gc --all --tool node,rust --min-size 1G --json
 superskill worktree gc --purge --yes             # delete quarantined dirs >= 14d old
-superskill worktree gc --undo 2026-10-05T12-00-00.000Z
+superskill worktree gc --undo 2026-10-05T12-00-00.000Z --yes
 ```
 
 Default is a dry-run report; nothing is deleted. `--apply` moves candidates into `_quarantine/` (reversible with `--undo`); only `--purge --yes` deletes, and only inside `_quarantine/`.
@@ -126,7 +129,7 @@ superskill worktree apply --item seed --yes
 superskill worktree apply --undo 2026-10-05T14-22-01.000Z-a1b2c3d4 --yes
 ```
 
-Default is a dry-run report; nothing is deleted. `reclaim:<provider>:<dir-id>` items rename a worktree-local cache directory (`node_modules/`, `target/`, `DerivedData/`, …) into `.git/superskill/quarantine/<id>` (never a copy+delete); restore it with `worktree apply --undo <id>`. `--all-safe` skips consent items; name a consent item explicitly with `--item <id> --yes` to apply it. Reclaims and other mutations require `--yes` on the CLI or `confirm: true` on the MCP `worktree_apply` tool.
+Default is a dry-run report; nothing is deleted. `reclaim:<provider>:<dir-id>` items rename a worktree-local cache directory (`node_modules/`, `target/`, `DerivedData/`, …) into `.git/superskill/quarantine/<id>` (never a copy+delete); restore it with `worktree apply --undo <id> --yes`. `--all-safe` skips consent items; name a consent item explicitly with `--item <id> --yes` to apply it. Reclaims and other mutations require `--yes` on the CLI or `confirm: true` on the MCP `worktree_apply` tool.
 
 ### `worktree bootstrap`
 
@@ -145,7 +148,7 @@ superskill worktree uninstall
 superskill worktree uninstall --purge-local --yes
 ```
 
-Plain uninstall removes the post-checkout hook and host adapters and stops future seeding/env injection; it keeps the policy and touches no cache data. `--purge-local --yes` only moves this repo's cache namespace into quarantine (reversible with `worktree gc --undo <journalId>`); without `--yes` it is skipped.
+Plain uninstall removes the post-checkout hook and host adapters and stops future seeding/env injection; it keeps the policy and touches no cache data. `--purge-local --yes` only moves this repo's cache namespace into quarantine (reversible with `worktree gc --undo <journalId> --yes`); without `--yes` it is skipped.
 
 ## Filter cookbook
 
@@ -176,7 +179,7 @@ superskill worktree gc --all --older-than 30d --apply
 superskill worktree gc --all --json | jq '.plan.selected[] | { path, bytes }'
 
 # Undo a quarantine
-superskill worktree gc --undo <journalId>
+superskill worktree gc --undo <journalId> --yes
 ```
 
 ## Host support matrix
@@ -210,4 +213,4 @@ For the MCP client setup matrix, see [harness integration](harness.md#support-an
 superskill worktree uninstall
 ```
 
-This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill worktree uninstall --purge-local --yes` and undo with `superskill worktree gc --undo <journalId>`.
+This removes the post-checkout hook block and the host session adapters, and stops all future seeding and env injection. What remains: the policy at `.git/superskill/policy.json` and its journal (kept because deletion outside the quarantine root is forbidden), the shared caches, and anything already in `_quarantine/` — all untouched. To also quarantine this repo's cache namespace, run `superskill worktree uninstall --purge-local --yes` and undo with `superskill worktree gc --undo <journalId> --yes`.

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { existsSync } from "fs";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 import { removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, TeardownResult, TeardownOptions } from "./types.js";
 import { readJsonConfig, updateJsonConfig, removeMcpEntry } from "./json-config.js";
 import { removeTomlBlock } from "./toml-config.js";
-import { removeMarkdownInstruction, removeMdcInstruction } from "./instructions.js";
+import { removeMarkdownInstruction } from "./instructions.js";
 import { removeSlashCommands } from "./commands.js";
 import { CLIENT_REGISTRY } from "./clients.js";
 import { detectClient } from "./detect.js";
@@ -24,6 +25,8 @@ export function teardownClient(
   };
 
   try {
+    assertSafeSetupPath(mcpConfigPath);
+    if (instructionPath) assertSafeSetupPath(instructionPath);
     if (config.configFormat === "json") {
       if (options.dryRun) {
         result.mcpRemoved = true;
@@ -57,10 +60,10 @@ export function teardownClient(
     } else if (options.dryRun) {
       result.mcpRemoved = true;
     } else if (existsSync(mcpConfigPath)) {
-      const content = readFileSync(mcpConfigPath, "utf-8");
+      const content = readSetupText(mcpConfigPath)!;
       const { content: updated, removed } = removeTomlBlock(content);
       if (removed) {
-        writeFileSync(mcpConfigPath, updated, "utf-8");
+        writeSetupText(mcpConfigPath, updated, content);
         result.mcpRemoved = true;
       }
     }
@@ -72,7 +75,7 @@ export function teardownClient(
     } else if (config.instructionStrategy === "markdown-file" && instructionPath) {
       result.instructionRemoved = removeMarkdownInstruction(instructionPath);
     } else if (config.instructionStrategy === "mdc-file" && instructionPath) {
-      result.instructionRemoved = removeMdcInstruction(instructionPath);
+      result.instructionRemoved = removeMarkdownInstruction(instructionPath);
     } else if (config.instructionStrategy === "config-array" && instructionPath) {
       if (existsSync(mcpConfigPath)) {
         const existing = readJsonConfig(mcpConfigPath);
@@ -89,10 +92,7 @@ export function teardownClient(
           }
         }
       }
-      if (existsSync(instructionPath)) {
-        unlinkSync(instructionPath);
-      }
-      result.instructionRemoved = true;
+      result.instructionRemoved = removeMarkdownInstruction(instructionPath);
     }
 
     if (!options.dryRun) {

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { formatPlanDerivation, formatRuleDerivation } from "./explain.js";
-import { buildIndex, matchGlob, simpleStem, termsMatch } from "./index-builder.js";
+import { buildIndex, globToRegExp, matchGlob, simpleStem, termsMatch } from "./index-builder.js";
 import type { RulesIndex } from "./index-builder.js";
 import { loadRules } from "./loader.js";
 import type { ParsedRule } from "./loader.js";
@@ -274,6 +274,14 @@ describe("route plan shape and explain", () => {
     expect(route({ prompt: "implement the parser", stack: ["typescript"], phase: "review" }, index).phase).toBe("review");
   });
 
+  it("uses phase only as plan metadata, not as a rule eligibility claim", () => {
+    const input = { prompt: "parse json", stack: ["typescript"] };
+    const explore = route({ ...input, phase: "explore" }, index);
+    const ship = route({ ...input, phase: "ship" }, index);
+    expect(ship.rules).toEqual(explore.rules);
+    expect(ship.explain).toEqual(explore.explain);
+  });
+
   it("returns the plan shape with empty flows and gates", () => {
     const plan = route({ prompt: "parse json", stack: ["typescript"] }, index);
     expect(plan.flows).toEqual([]);
@@ -339,6 +347,20 @@ describe("route principle selection", () => {
 });
 
 describe("matchGlob", () => {
+  it("normalizes and bounds the compiled-glob cache while retaining recent entries", () => {
+    const first = globToRegExp("__cache_test__/0/*.ts");
+    expect(globToRegExp("./__cache_test__/0/*.ts")).toBe(first);
+    const oldest = globToRegExp("__cache_test__/1/*.ts");
+    for (let i = 2; i < 512; i += 1) globToRegExp(`__cache_test__/${i}/*.ts`);
+    expect(globToRegExp("__cache_test__/0/*.ts")).toBe(first);
+    globToRegExp("__cache_test__/512/*.ts");
+    expect(globToRegExp("__cache_test__/1/*.ts")).not.toBe(oldest);
+    for (let i = 513; i < 1100; i += 1) globToRegExp(`__cache_test__/${i}/*.ts`);
+    const renewed = globToRegExp("__cache_test__/0/*.ts");
+    expect(renewed).not.toBe(first);
+    expect(renewed.test("__cache_test__/0/a.ts")).toBe(true);
+  });
+
   it("supports ** across directories", () => {
     expect(matchGlob("**/*.ts", "a.ts")).toBe(true);
     expect(matchGlob("**/*.ts", "src/deep/a.ts")).toBe(true);

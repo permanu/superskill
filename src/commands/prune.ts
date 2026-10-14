@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
-import { VaultFS } from "../lib/vault-fs.js";
+import { VaultFS, VaultError } from "../lib/vault-fs.js";
 import { parseFrontmatter, mergeFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
 import { removeVaultFileFromIndex, upsertVaultFile } from "../lib/knowledge-index.js";
 import { resolveProject } from "../config.js";
@@ -63,6 +63,12 @@ export async function pruneCommand(
       `Unknown retention mode: "${args.mode}". Allowed modes: dry-run, archive, delete.`
     );
   }
+  if (args.all !== undefined && typeof args.all !== "boolean") {
+    throw new Error("all must be a boolean");
+  }
+  if (ctx.projectSlug === null || ctx.vaultFs.projectSlug === null) {
+    throw new VaultError("PERMISSION_DENIED", "Pruning requires a resolved project or a trusted unscoped context");
+  }
 
   const policy = { ...DEFAULT_POLICY, ...args.policy };
   validateRetentionPolicy(policy);
@@ -70,17 +76,22 @@ export async function pruneCommand(
   const vaultFs = ctx.vaultFs;
 
   if (args.all) {
-    const projectFiles = await vaultFs.list("projects", 1);
+    const globalFs = new VaultFS(ctx.vaultPath);
+    const projectFiles = await globalFs.list("projects", 1);
     const projectDirs = projectFiles
       .filter((f) => f.endsWith("/") && !f.endsWith("_index.md"))
       .map((f) => f.replace("projects/", "").replace("/", ""));
 
     for (const slug of projectDirs) {
-      const result = await pruneProject(vaultFs, ctx.vaultPath, slug, args.mode, policy);
+      const result = await pruneProject(globalFs, ctx.vaultPath, slug, args.mode, policy);
       results.push(result);
     }
   } else {
     const projectSlug = await resolveProject(ctx.vaultPath, args.project);
+    if (typeof ctx.projectSlug === "string" && ctx.projectSlug !== projectSlug) {
+      throw new VaultError("PERMISSION_DENIED", `Cross-project pruning denied: ${projectSlug}`);
+    }
+    vaultFs.jailPath(`projects/${projectSlug}`);
     const result = await pruneProject(vaultFs, ctx.vaultPath, projectSlug, args.mode, policy);
     results.push(result);
   }
@@ -137,9 +148,13 @@ export async function statsCommand(
           case "done": taskBreakdown.done++; break;
           case "cancelled": taskBreakdown.cancelled++; break;
         }
-      } catch { /* skip unreadable */ }
+      } catch (e: unknown) {
+        if (!isMissing(e)) throw e;
+      }
     }
-  } catch { /* no tasks dir */ }
+  } catch (e: unknown) {
+    if (!isMissing(e)) throw e;
+  }
 
   const totalFiles = sessionCount + learningCount + adrCount + brainstormCount + taskBreakdown.total;
 
@@ -248,8 +263,9 @@ async function pruneByAge(
   let files: string[];
   try {
     files = await vaultFs.list(dir, 1);
-  } catch {
-    return;
+  } catch (e: unknown) {
+    if (isMissing(e)) return;
+    throw e;
   }
 
   for (const file of files) {
@@ -279,9 +295,7 @@ async function pruneByAge(
         removePrunedFileFromIndex(vaultPath, file);
       }
     } catch (e: unknown) {
-      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-        console.error(`[prune] Skipping unreadable file: ${file}:`, e instanceof Error ? e.message : e);
-      }
+      if (!isMissing(e)) throw e;
     }
   }
 }
@@ -301,8 +315,9 @@ async function pruneByStatus(
   let files: string[];
   try {
     files = await vaultFs.list(dir, 1);
-  } catch {
-    return;
+  } catch (e: unknown) {
+    if (isMissing(e)) return;
+    throw e;
   }
 
   for (const file of files) {
@@ -334,9 +349,7 @@ async function pruneByStatus(
         removePrunedFileFromIndex(vaultPath, file);
       }
     } catch (e: unknown) {
-      if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
-        console.error(`[prune] Skipping unreadable task file: ${file}:`, e instanceof Error ? e.message : e);
-      }
+      if (!isMissing(e)) throw e;
     }
   }
 }
@@ -375,8 +388,9 @@ async function collectDatedFiles(vaultFs: VaultFS, dir: string, out: DatedVaultF
   let files: string[];
   try {
     files = await vaultFs.list(dir, 1);
-  } catch {
-    return;
+  } catch (e: unknown) {
+    if (isMissing(e)) return;
+    throw e;
   }
   for (const file of files) {
     if (!file.endsWith(".md")) continue;
@@ -384,7 +398,9 @@ async function collectDatedFiles(vaultFs: VaultFS, dir: string, out: DatedVaultF
       const { data } = parseFrontmatter(await vaultFs.read(file));
       const time = frontmatterTime(data);
       if (time !== null) out.push({ path: file, time });
-    } catch { /* skip unreadable */ }
+    } catch (e: unknown) {
+      if (!isMissing(e)) throw e;
+    }
   }
 }
 
@@ -392,7 +408,12 @@ async function countFiles(vaultFs: VaultFS, dir: string): Promise<number> {
   try {
     const files = await vaultFs.list(dir, 1);
     return files.filter((f) => f.endsWith(".md")).length;
-  } catch {
-    return 0;
+  } catch (e: unknown) {
+    if (isMissing(e)) return 0;
+    throw e;
   }
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "FILE_NOT_FOUND");
 }

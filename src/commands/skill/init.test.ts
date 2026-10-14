@@ -36,6 +36,8 @@ describe("initProject", () => {
 
     expect(result.success).toBe(true);
     expect(result.graph_path).toContain("graph.json");
+    expect(result.vault_mapping_error).toBeUndefined();
+    expect(result.vault_mapping).toBe(join(projectDir, "project-map.json"));
 
     const graphContent = await readFile(join(projectDir, ".superskill", "graph.json"), "utf-8");
     const graph = JSON.parse(graphContent);
@@ -88,6 +90,48 @@ describe("initProject", () => {
     expect(await readFile(graphPath, "utf8")).toBe("{unfinished");
   });
 
+  it.each([".superskill", ".superskill/graph.json", ".gitignore", "AGENTS.md", "CLAUDE.md"])("refuses explicit init through symlinked %s", async (relativePath) => {
+    const outside = `${projectDir}-outside`;
+    await mkdir(outside);
+    const target = join(outside, "target");
+    await writeFile(target, "Keep me");
+    try {
+      if (relativePath === ".superskill/graph.json") await mkdir(join(projectDir, ".superskill"));
+      await symlink(relativePath === ".superskill" ? outside : target, join(projectDir, relativePath));
+      const result = await initProject({}, createMockCtx(projectDir));
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/symlink/i);
+      expect(await readFile(target, "utf8")).toBe("Keep me");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("reports unsupported native bridge requests without writing", async () => {
+    const result = await initProject({ bridge: true }, createMockCtx(projectDir));
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/bridge.*unsupported/i);
+  });
+
+  it("preserves malformed existing graphs on explicit init", async () => {
+    await mkdir(join(projectDir, ".superskill"));
+    const graphPath = join(projectDir, ".superskill", "graph.json");
+    await writeFile(graphPath, "{unfinished");
+    const result = await initProject({}, createMockCtx(projectDir));
+    expect(result.success).toBe(false);
+    expect(await readFile(graphPath, "utf8")).toBe("{unfinished");
+  });
+
+  it("does not quarantine or replace schema-invalid graphs during init", async () => {
+    await mkdir(join(projectDir, ".superskill"));
+    const graphPath = join(projectDir, ".superskill", "graph.json");
+    const original = JSON.stringify({ nodes: [{ type: "session", id: "incomplete" }], edges: [] });
+    await writeFile(graphPath, original);
+    const result = await initProject({}, createMockCtx(projectDir));
+    expect(result.success).toBe(false);
+    expect(await readFile(graphPath, "utf8")).toBe(original);
+  });
+
   it.skipIf(process.getuid?.() === 0)("reports a denied graph read without replacing it at startup", async () => {
     await mkdir(join(projectDir, ".superskill"));
     const graphPath = join(projectDir, ".superskill", "graph.json");
@@ -112,7 +156,7 @@ describe("initProject", () => {
     const edge = graph.edges.find((item: any) => item.to === "code/typescript");
     edge.w = 0.91;
     edge.activations = 8;
-    graph.nodes.push({ type: "session", id: "session-1", skills: [], files: [], ts: 1 });
+    graph.nodes.push({ type: "session", id: "session-1", intent: "Retained session", skills: [], files: [], insights: [], outcome: null, ts: 1 });
     await writeFile(graphPath, JSON.stringify(graph));
     expect((await initProject({}, ctx)).success).toBe(true);
     const refreshed = JSON.parse(await readFile(graphPath, "utf-8"));
@@ -132,9 +176,10 @@ describe("initProject", () => {
     skill.triggers = ["obsolete-trigger"];
     skill.w = 0.94;
     graph.nodes = graph.nodes.filter((node: any) => node.id !== "code/go");
+    graph.edges = graph.edges.filter((edge: any) => edge.from !== "code/go" && edge.to !== "code/go");
     graph.nodes.push({ ...skill, id: "code/removed-package", source: "catalog" });
     graph.nodes.push({ ...skill, id: "native/local-only", source: "native" });
-    graph.nodes.push({ type: "session", id: "retained", skills: [skill.id], files: [], outcome: null, insights: [], ts: Date.now() });
+    graph.nodes.push({ type: "session", id: "retained", intent: "Retained session", skills: [skill.id], files: [], outcome: null, insights: [], ts: Date.now() });
     const edge = graph.edges.find((item: any) => item.to === skill.id);
     edge.w = 0.93;
     edge.activations = 9;
@@ -206,6 +251,22 @@ describe("initProject", () => {
     const testSkillNode = graph.nodes.find((n: any) => n.type === "skill" && n.id === "native/test-skill");
     expect(testSkillNode).toBeDefined();
     expect(testSkillNode.w).toBe(0.8);
+  });
+
+  it("keeps safe generic native routing while reporting strict Anthropic compatibility issues", async () => {
+    const skillDir = join(projectDir, ".claude", "skills", "legacy_native");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), `---\nname: Legacy_Native\ndescription: legacy skill\n---\n# Existing native skill\n`);
+
+    const result = await initProject({}, createMockCtx(projectDir));
+    const graph = JSON.parse(await readFile(join(projectDir, ".superskill", "graph.json"), "utf8"));
+
+    expect(result.success).toBe(true);
+    expect(graph.nodes.some((node: any) => node.id === "native/Legacy_Native")).toBe(true);
+    expect(result.native_skill_compatibility_warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ".claude/skills/legacy_native/SKILL.md" }),
+    ]));
+    expect(result.native_skill_compatibility_warnings?.[0].issues.some((issue) => issue.field === "name" && issue.severity === "error")).toBe(true);
   });
 
   it("derives triggers from description when frontmatter triggers are absent", async () => {
@@ -286,6 +347,27 @@ describe("initProject", () => {
     const parsed = await parseNativeSkillFile(skillFile);
     expect(parsed).not.toBeNull();
     expect(parsed!.triggers).toBeUndefined();
+  });
+
+  it("rejects executable native frontmatter without evaluating it", async () => {
+    const marker = "__superskillNativeMatterAudit";
+    const state = globalThis as typeof globalThis & Record<string, unknown>;
+    delete state[marker];
+    const skillDir = join(projectDir, ".agents", "skills", "engine-payload");
+    await mkdir(skillDir, { recursive: true });
+    const file = join(skillDir, "SKILL.md");
+    await writeFile(file, `---js\n((globalThis.${marker} = true), {name: 'engine-payload'})\n---\n# Unsafe engine`);
+    try {
+      expect(await parseNativeSkillFile(file)).toBeNull();
+      expect(state[marker]).toBeUndefined();
+      const result = await initProject({}, createMockCtx(projectDir), { startup: true });
+      expect(result.success).toBe(true);
+      expect(state[marker]).toBeUndefined();
+      const graph = JSON.parse(await readFile(join(projectDir, ".superskill", "graph.json"), "utf8"));
+      expect(graph.nodes.some((node: { id: string }) => node.id === "native/engine-payload")).toBe(false);
+    } finally {
+      delete state[marker];
+    }
   });
 
   it("blocks native skills with failed audits", async () => {

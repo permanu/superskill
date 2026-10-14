@@ -6,12 +6,12 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 
 | Command | Purpose | Common flags |
 |---|---|---|
-| `read <path>` | Read a vault note | |
+| `read <path>` | Read a vault note or directory | `--max-bytes`, `-d, --depth` |
 | `list <path>` | List a vault directory | `-d, --depth <n>` |
 | `write <path>` | Write/create a note | `-c, --content`, `-m, --mode overwrite\|append\|prepend` (default `append`), `-f, --frontmatter <json>` |
 | `append <path>` | Append to a note | `-c, --content` |
 | `search <query>` | FTS5 vault search, project-scoped | `-p, --project`, `-l, --limit`, `-s, --structured` |
-| `context` | Project context document | `-p, --project`, `-d, --detail summary\|full` |
+| `context` | Project context document | `-p, --project`, `-d, --detail summary\|full`, `--max-tokens` |
 
 `write --mode overwrite` snapshots the previous version to `_versions/` first.
 
@@ -30,7 +30,9 @@ All commands work as `superskill <command>`. Many commands accept `-p, --project
 | `prune` | Archive/delete stale content | `-a, --all`, `-m, --mode dry-run\|archive\|delete`, `--sessions <days>`, `--done-tasks <days>` |
 | `deprecate <path>` | Mark a vault item deprecated | `-r, --reason` |
 
-Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent registering the same workspace gets the holder's tool/task back instead of silently co-tenanting, unless it passes `allow_shared`. Heartbeats refresh the claim and report file overlaps (including `files_touched` updates); sessions that stop heartbeating become `expired` and their worktrees become eligible for the completed-worktree cleanup, which never removes a worktree with a live pid or a completion younger than 60 seconds.
+`deprecate <path>` is an explicit vault mutation and has no dry-run mode. Read and verify the target note before marking it deprecated.
+
+Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent registering the same workspace gets the holder's tool/task back instead of silently co-tenanting, unless it passes `allow_shared`. Heartbeats refresh the claim and report file overlaps (including `files_touched` updates). Stopped sessions become `expired`, but expiry alone is not cleanup permission. Lifecycle maintenance rechecks registry ownership, workspace identity, liveness, grace periods, cleanliness, and integration into the repository's configured default branch before relocating eligible completed worktrees into locked recovery archives. It never automatically deletes a checkout; inspect returned `quarantined` and `recoveries` records.
 
 ## Knowledge graph
 
@@ -41,21 +43,26 @@ Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent
 | `graph related <path>` | Backlinks and outgoing links | `--hops <n>` |
 | `graph cross-project <query>` | Project-jailed search; cross-project is denied | `-l, --limit` |
 | `graph node <id>` | Metadata + edges for one traversal node | `--json` |
-| `graph children <id>` | One-level lazy descent (vault/rules/skills/code) | `--limit <n>` |
+| `graph children <id>` | One-level lazy descent (vault/rules/principles/skills/bundled skill resources/code) | `--limit <n>` |
 | `graph resolve <task>` | What would load: paths + byte/token estimates, no content | `--limit <n>` |
-| `graph open <id>` | Content for exactly one node | `--full` |
+| `graph open <id>` | Content for exactly one node | `--full`, `--offset-bytes <n>`, `--max-bytes <n>` |
+
+`graph open` returns at most 4,096 bytes by default. For a long node, request a page with `--offset-bytes` and `--max-bytes`, then continue from the returned `next_offset_bytes` until `read_complete` is true. Offsets and limits are UTF-8 byte counts, not character positions.
 
 ## Skills
 
 | Command | Purpose | Common flags |
 |---|---|---|
-| `skill init` | Detect stack, index the catalog, build `.superskill/graph.json`, update `.gitignore` + `AGENTS.md`/`CLAUDE.md` | `--bridge` |
+| `skill init` | Detect stack, index the catalog, build `.superskill/graph.json`, update `.gitignore` + `AGENTS.md`/`CLAUDE.md` | |
 | `skill activate [task]` | Load packs for a task | `--skill-id <id>` |
+| `skill validate <path>` | Validate one native skill file or bundle | `--profile anthropic\|portable` (default `anthropic`) |
 | `skill install <source>` | Install skills from a GitHub repo; audits must be all-pass unless `--allow-unaudited` | `--select <names>`, `--allow-unaudited` |
 | `skill list` | List installed skills | |
 | `skill remove <name>` | Remove an installed skill | |
 | `skill status` | Graph state: skills, weights, recent sessions | |
 | `onboard` | One-shot: create the vault, detect tools, configure clients | `--vault-path` |
+
+`skill validate` checks the selected profile's metadata and bundle rules; it is not a model-quality or all-host compatibility test. Internal packs and atomic rule files are validated under their own contracts. See the [native skill template](SKILL-TEMPLATE.md) and [Anthropic's authoring guidance](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
 
 ## Gates
 
@@ -87,11 +94,13 @@ Sessions carry a TTL'd exclusive claim on their `workspace_path`: a second agent
 | `upgrade` | Reconcile managed launchers, legacy aliases, and instruction blocks (also runs automatically at MCP start) | `--dry-run`, `--json` |
 | `teardown` | Remove SuperSkill configuration | `--clients`, `--dry-run`, `--silent` |
 | `register [path]` | Map a repo to a vault project so commands auto-detect without `-p` (also done by `skill init`) | `-s, --slug <name>` |
-| `doctor` | Health check: install vs running MCP servers, vault, mapping, graph isolation, catalog, toolchains, telemetry, clients | `--json` |
+| `doctor` | Health check: install vs running MCP servers, vault, mapping, graph isolation, catalog, toolchains, telemetry, clients | `--fast`, `--json` |
+
+`setup` changes user-level client configuration and instruction files under the home directory. Preview with `--dry-run` and obtain explicit authorization before applying it; `worktree activate` has a separate consent boundary (see [Worktrees](worktrees.md)).
 
 ## Telemetry
 
-Local, opt-in rule-selection telemetry. Off by default; nothing leaves the machine — events are append-only JSONL under `~/.superskill/telemetry/` and prompts are stored only as truncated SHA-256 hashes.
+Local, opt-in rule-selection telemetry. Off by default; nothing leaves the machine — events are append-only JSONL under `~/.superskill/telemetry/`. Newly recorded prompt identities are keyed HMAC-SHA256 values, not raw prompts or globally stable hashes. Legacy events retain their old identities until cleared.
 
 | Command | Purpose |
 |---|---|
@@ -100,7 +109,7 @@ Local, opt-in rule-selection telemetry. Off by default; nothing leaves the machi
 | `telemetry report` | Top-selected, most-dropped, and never-triggered rules; budget stats |
 | `telemetry clear` | Delete all local events |
 
-Set `SUPERSKILL_TELEMETRY=1` (or `0`) to override the persisted setting for one process.
+`SUPERSKILL_TELEMETRY=0` disables recording for the process. `1` opts in unless an explicit persisted opt-out exists. MCP state-changing telemetry calls require `confirm: true`; the explicit CLI `enable`, `disable`, and `clear` actions provide that confirmation.
 
 ## Hygiene
 
@@ -116,6 +125,8 @@ Session review + environment optimization: dig for findings, fix what you approv
 
 | Command | Purpose | Common flags |
 |---|---|---|
-| `watchdog dig` | Analyze a session, a window of sessions, or the machine environment; writes a `watchdog/` report note | `--session <id>` / `--scope session\|window\|env\|all` / `--since 7d` / `--count <n>` / `--all-projects` / `--tool <harness>` / `--no-persist` / `--json` |
+| `watchdog dig` | Analyze a session, a window of sessions, or the machine environment; writes a `watchdog/` report note | `--session <id>` / `--scope session\|window\|env\|all` / `--since 7d` / `--count <n>` / `--all-projects --confirm` / `--include-prompts` / `--tool <harness>` / `--no-persist` / `--json` |
 | `watchdog fix` | Apply approved findings and reclaim leaks; dry-run unless `--apply`, quarantine + manifest undo | `--finding <ids...>` / `--category <names...>` (incl. `leaked-tmp`) / `--dismiss` / `--apply` / `--json` |
 | `watchdog status` | Past digs, open findings, recurrence counts, detected trace sources | `--json` |
+
+`watchdog fix --dismiss` previews marking selected findings dismissed; it does not apply the status change by itself. Review the finding and pass `--apply` only after approval (for example, `superskill watchdog fix --finding <id> --dismiss --apply`).

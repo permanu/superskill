@@ -47,14 +47,12 @@ export function renderReport(report: WatchdogReport): string {
   lines.push("");
 
   if (report.findings.length === 0) {
-    lines.push("No findings. The environment and sessions look clean. 🐕");
-    return lines.join("\n");
-  }
-
-  lines.push("## Findings (most severe first)");
-  lines.push("");
-  for (const finding of sortFindings(report.findings)) {
-    lines.push(renderFinding(finding));
+    lines.push("No findings in assessed data. Missing or truncated sources are not proof of a clean session.");
+    lines.push("");
+  } else {
+    lines.push("## Findings (most severe first)");
+    lines.push("");
+    for (const finding of sortFindings(report.findings)) lines.push(renderFinding(finding));
   }
 
   if (report.digests.length > 0) {

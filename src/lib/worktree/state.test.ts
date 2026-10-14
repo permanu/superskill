@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,7 +24,7 @@ import {
   type WorktreeManifest,
   type WorktreePolicy,
 } from "./state.js";
-import { repoStateDir } from "./paths.js";
+import { repoStateDir, worktreeKey } from "./paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -147,6 +147,21 @@ describe("worktree state", () => {
 
       expect(result).toBeNull();
     });
+
+    it("refuses symlink state roots and manifest ancestors without touching their targets", async () => {
+      const outside = join(base, "outside");
+      await mkdir(outside);
+      const root = join(repo, ".git", "superskill");
+      await symlink(outside, root);
+      await expect(writePolicy(repo, samplePolicy(repo))).rejects.toThrow("Unsafe");
+      await expect(readPolicy(repo)).rejects.toThrow("Unsafe");
+      expect(await readdir(outside)).toEqual([]);
+      await rm(root);
+      await mkdir(root);
+      await symlink(outside, join(root, "manifests"));
+      await expect(writeManifest(repo, { v: 1, worktree: repo, createdAt: new Date().toISOString(), files: [] })).rejects.toThrow("Unsafe");
+      expect(await readdir(outside)).toEqual([]);
+    });
   });
 
   describe("hook state", () => {
@@ -197,6 +212,14 @@ describe("worktree state", () => {
 
       expect(result).toBeNull();
       expect(calls.some((args) => typeof args[0] === "string" && args[0].includes("[worktree-state]"))).toBe(true);
+    });
+
+    it("preserves unrecognized hook metadata instead of treating it as disposable state", async () => {
+      const dir = await repoStateDir(repo);
+      await mkdir(dir);
+      await writeFile(join(dir, "hook.state"), "user-owned content");
+      await expect(clearHookState(repo)).rejects.toThrow("preserved");
+      expect(await readFile(join(dir, "hook.state"), "utf-8")).toBe("user-owned content");
     });
   });
 
@@ -253,6 +276,20 @@ describe("worktree state", () => {
 
       expect(entries).toEqual([entry]);
       expect(calls.some((args) => typeof args[0] === "string" && args[0].includes("[worktree-state]"))).toBe(true);
+    });
+
+    it("refuses symlink journal destinations and rejects valid JSON with invalid record shapes", async () => {
+      const outside = join(base, "outside-journal");
+      await writeFile(outside, "private\n");
+      const dir = await repoStateDir(repo);
+      await mkdir(dir);
+      const path = join(dir, "journal.jsonl");
+      await symlink(outside, path);
+      await expect(appendJournal(repo, { id: "id", ts: new Date().toISOString(), action: "seed", paths: [], bytes: 0 })).rejects.toThrow("Unsafe");
+      expect(await readFile(outside, "utf-8")).toBe("private\n");
+      await rm(path);
+      await writeFile(path, 'null\n{"paths":7}\n[]\n');
+      expect(await readJournal(repo)).toEqual([]);
     });
   });
 
@@ -408,6 +445,35 @@ describe("worktree state", () => {
       expect(result.modified.sort()).toEqual([...escaped].sort());
       expect(result.missing).toEqual([]);
       expect(result.intact).toEqual([]);
+    });
+
+    it("never verifies outside content reached through a symlink ancestor", async () => {
+      const outside = join(base, "outside");
+      await mkdir(outside);
+      await writeFile(join(outside, "secret"), "secret");
+      await symlink(outside, join(repo, "escape"));
+      const manifest: WorktreeManifest = { v: 1, worktree: repo, createdAt: new Date().toISOString(), files: [
+        { path: "escape/secret", sha256: sha256("secret"), size: 6 },
+        { path: "escape/", sha256: await listingSignature(outside), size: 0 },
+      ] };
+      expect(await verifyManifest(manifest)).toEqual({ modified: ["escape/secret", "escape/"], missing: [], intact: [] });
+    });
+
+    it("recognizes only path-bound manifests and leaves unknown records and directories untouched", async () => {
+      const dir = join(await repoStateDir(repo), "manifests");
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, `${worktreeKey(repo)}.json`);
+      const invalid = [null, [], { v: 1, worktree: repo, files: "not-files" }, { v: 1, worktree: join(base, "other"), createdAt: new Date().toISOString(), files: [] }];
+      for (const record of invalid) {
+        const raw = JSON.stringify(record);
+        await writeFile(path, raw);
+        expect(await readManifest(repo, repo)).toBeNull();
+        expect(await readFile(path, "utf-8")).toBe(raw);
+      }
+      await rm(path);
+      await mkdir(path);
+      expect(await readManifest(repo, repo)).toBeNull();
+      expect((await lstat(path)).isDirectory()).toBe(true);
     });
   });
 });

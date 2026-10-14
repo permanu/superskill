@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import matter from "gray-matter";
+import matter from "./markdown-matter.js";
 
 export interface Frontmatter {
   type?: string;

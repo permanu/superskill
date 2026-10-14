@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { dirSizeBounded, detectEnvironment, scanLeakedTmpFiles } from "./environment.js";
@@ -42,6 +42,29 @@ describe("environment probes", () => {
     const { bytes, truncated } = await dirSizeBounded(dir);
     expect(bytes).toBe(3000);
     expect(truncated).toBe(false);
+  });
+
+  it("shares entry and time budgets across the whole environment scan", async () => {
+    const cache = join(home, ".superskill", "cache");
+    for (let i = 0; i < 10; i += 1) await mkdir(join(cache, `cache-${i}`), { recursive: true });
+    const capped = await detectEnvironment({ home, maxEntries: 3, checkHarnessStores: false });
+    expect(capped.some(finding => /safety budget/.test(finding.title))).toBe(true);
+    const clock = vi.spyOn(Date, "now");
+    let now = 0;
+    clock.mockImplementation(() => now += 10);
+    try {
+      const timed = await detectEnvironment({ home, maxMs: 1 });
+      expect(timed.some(finding => /safety budget/.test(finding.title))).toBe(true);
+    } finally { clock.mockRestore(); }
+  });
+
+  it("does not follow symlinked scan roots", async () => {
+    const outside = join(home, "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, "private"), "secret");
+    const link = join(home, "linked");
+    await symlink(outside, link);
+    expect(await dirSizeBounded(link)).toEqual({ bytes: 0, truncated: false });
   });
 });
 

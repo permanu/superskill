@@ -36,4 +36,10 @@ describe("audit gates", () => {
     expect(auditHasFailure(null)).toBe(false);
     expect(auditHasFailure(pass)).toBe(false);
   });
+
+  it.each(["PASS", "approved", "", 1, {}, []])("treats malformed audit value %j as unknown", (value) => {
+    const malformed = { ...pass, gen: value } as never;
+    expect(auditIsUnknown(malformed)).toBe(true);
+    expect(auditIsBlocked(malformed)).toBe(true);
+  });
 });

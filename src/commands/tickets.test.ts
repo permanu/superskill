@@ -41,6 +41,35 @@ describe("ticketsCommand", () => {
     await cleanup();
   });
 
+  it.each(["create", "list", "board", "ready", "update"] as const)("validates every supplied status for %s", async (action) => {
+    for (const status of ["", null, "invalid"]) {
+      await expect(ticketsCommand({ action, ticketId: "ticket-001", status: status as never, project: "test-project" }, ctx)).rejects.toThrow(/Invalid status/);
+    }
+  });
+
+  it.each([-1, 1.5, Number.NaN, Infinity, 501, "2", null])("rejects an invalid direct list limit: %j", async (limit) => {
+    for (const action of ["list", "board", "ready"] as const) {
+      await expect(ticketsCommand({ action, project: "test-project", limit: limit as never }, ctx)).rejects.toThrow(/limit/i);
+    }
+  });
+
+  it("validates every ticket input shape before claiming any file", async () => {
+    await createFrozenSpec(ctx);
+    for (const invalid of [null, { title: 1 }, { title: "Bad", requiresReview: "true" }, { title: "Bad", blockedBy: [1] }, { title: "Bad", acceptance: null }]) {
+      await expect(ticketsCommand({ action: "create", spec: "001", project: "test-project", tickets: [{ title: "Valid" }, invalid as never] }, ctx)).rejects.toThrow(/ticket 2/i);
+      expect(await vaultFs.exists("projects/test-project/tickets")).toBe(false);
+    }
+  });
+
+  it("bounds direct ticket lists, boards, and ready output to 50 by default and permits zero", async () => {
+    const paths = Array.from({ length: 51 }, (_, index) => `projects/test-project/tickets/ticket-${String(index + 1).padStart(3, "0")}-ticket.md`);
+    await Promise.all(paths.map((path) => vaultFs.write(path, "---\ntype: ticket\nstatus: backlog\n---\n# Ticket\n")));
+    expect((await ticketsCommand({ action: "list", project: "test-project" }, ctx)).tickets).toHaveLength(50);
+    expect((await ticketsCommand({ action: "board", project: "test-project" }, ctx)).board!.backlog).toHaveLength(50);
+    expect((await ticketsCommand({ action: "ready", project: "test-project" }, ctx)).ready).toHaveLength(50);
+    expect((await ticketsCommand({ action: "ready", project: "test-project", limit: 0 }, ctx)).ready).toEqual([]);
+  });
+
   describe("create", () => {
     it("maps dependency references to actual IDs after an abandoned reservation", async () => {
       await createFrozenSpec(ctx);

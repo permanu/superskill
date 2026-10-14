@@ -12,6 +12,6 @@ export const codexAdapter: HostAdapter = createHookAdapter({
   buildEntry: (cli) => ({
     hooks: [{ type: "command", command: `${cli} worktree bootstrap --source session` }],
   }),
-  detect: () =>
-    existsSync(join(process.cwd(), ".codex")) || existsSync(join(homedir(), ".codex")),
+  detect: (ctx) =>
+    existsSync(join(ctx?.repoRoot ?? process.cwd(), ".codex")) || existsSync(join(homedir(), ".codex")),
 });

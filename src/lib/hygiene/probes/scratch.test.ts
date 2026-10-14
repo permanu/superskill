@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashId } from "../../worktree/paths.js";
@@ -46,7 +46,7 @@ describe("scratch probe", () => {
   async function makeDir(name: string, ageDays: number, owned = false): Promise<string> {
     const path = join(root, name);
     await mkdir(path);
-    if (owned) await writeFile(join(path, SCRATCH_MARKER), "{}\n");
+    if (owned) await writeFile(join(path, SCRATCH_MARKER), JSON.stringify({ v: 1, owner: "superskill", path, createdAt: new Date(NOW - 10 * DAY_MS).toISOString() }), { mode: 0o600 });
     await backdate(path, ageDays);
     return path;
   }
@@ -63,7 +63,7 @@ describe("scratch probe", () => {
 
     await symlink(ownedPath, join(root, "linked-dir"));
 
-    const result = await runScratchProbe(baseOptions(), { roots: [root] });
+    const result = await runScratchProbe(baseOptions(), { roots: [root], managedRoot: root });
 
     expect(result.category).toBe("scratch");
     expect(result.label).toBe("Agent scratch");
@@ -94,7 +94,7 @@ describe("scratch probe", () => {
     expect(unowned.reason).toBe("not superskill-owned; verify contents before removing");
     expect(unowned.meta).toEqual({ owned: false, root });
 
-    const again = await runScratchProbe(baseOptions(), { roots: [root] });
+    const again = await runScratchProbe(baseOptions(), { roots: [root], managedRoot: root });
     expect(again.items.map((item) => item.id)).toEqual(result.items.map((item) => item.id));
   });
 
@@ -110,7 +110,7 @@ describe("scratch probe", () => {
         scratchReviewMinBytes: 256 * 1024 ** 2,
       },
     });
-    const measured = await runScratchProbe(bigThreshold, { roots: [root] });
+    const measured = await runScratchProbe(bigThreshold, { roots: [root], managedRoot: root });
 
     const owned = itemByPath(measured, ownedPath);
     expect(owned.bytes).not.toBeNull();
@@ -121,7 +121,7 @@ describe("scratch probe", () => {
       sizes: true,
       policy: { ...DEFAULT_HYGIENE_POLICY, scratchTtlHours: 48, scratchReviewMinBytes: 0 },
     });
-    const unfiltered = await runScratchProbe(tinyThreshold, { roots: [root] });
+    const unfiltered = await runScratchProbe(tinyThreshold, { roots: [root], managedRoot: root });
 
     const unowned = itemByPath(unfiltered, unownedPath);
     expect(unowned.bytes).not.toBeNull();
@@ -132,10 +132,10 @@ describe("scratch probe", () => {
   it("honors a custom marker name", async () => {
     const path = join(root, "custom-owned");
     await mkdir(path);
-    await writeFile(join(path, "custom.marker"), "{}\n");
+    await writeFile(join(path, "custom.marker"), JSON.stringify({ v: 1, owner: "superskill", path, createdAt: new Date(NOW - 10 * DAY_MS).toISOString() }), { mode: 0o600 });
     await backdate(path, 5);
 
-    const result = await runScratchProbe(baseOptions(), { roots: [root], marker: "custom.marker" });
+    const result = await runScratchProbe(baseOptions(), { roots: [root], marker: "custom.marker", managedRoot: root });
 
     const item = itemByPath(result, path);
     expect(item.tier).toBe("auto");
@@ -148,6 +148,7 @@ describe("scratch probe", () => {
 
     const result = await runScratchProbe(baseOptions(), {
       roots: [join(root, "does-not-exist"), root],
+      managedRoot: root,
     });
 
     expect(itemByPath(result, ownedPath).tier).toBe("auto");
@@ -166,6 +167,25 @@ describe("scratch probe", () => {
     expect(result.items).toEqual([]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("[hygiene-scratch]"));
     spy.mockRestore();
+  });
+
+  it("never trusts markers planted in an unmanaged scan root", async () => {
+    const path = await makeDir("spoofed", 5, true);
+    const result = await runScratchProbe(baseOptions(), { roots: [root] });
+    expect(itemByPath(result, path)).toMatchObject({ due: false, tier: "review", plan: null });
+  });
+
+  it("rejects empty, symlinked and publicly writable ownership markers", async () => {
+    const empty = await makeDir("empty", 5);
+    await writeFile(join(empty, SCRATCH_MARKER), "{}", { mode: 0o600 });
+    await backdate(empty, 5);
+    const linked = await makeDir("linked", 5);
+    const valid = await makeDir("valid", 5, true);
+    await symlink(join(valid, SCRATCH_MARKER), join(linked, SCRATCH_MARKER));
+    await backdate(linked, 5);
+    await chmod(join(valid, SCRATCH_MARKER), 0o666);
+    const result = await runScratchProbe(baseOptions(), { roots: [root], managedRoot: root });
+    expect(result.items.every((item) => !item.due && item.plan === null)).toBe(true);
   });
 
   it("caps selected items by size descending with unknown sizes last", () => {

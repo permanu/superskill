@@ -3,11 +3,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { repoStateDir } from "../../lib/worktree/paths.js";
+import { captureLocalWorktreeIdentity } from "../../lib/worktree/quarantine.js";
 import { seedWorktree } from "../../lib/worktree/seed.js";
 import { appendJournal, readJournal } from "../../lib/worktree/state.js";
 import { worktreeApplyCommand, renderWorktreeApply, type WorktreeApplyResult } from "./apply.js";
@@ -31,6 +32,16 @@ const ctx = {
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd, env: GIT_ENV, timeout: 20000 });
   return stdout;
+}
+
+async function recoveryManifest(root: string, id: string, originals: string[]): Promise<void> {
+  const dir = join(await repoStateDir(root), "quarantine", id);
+  await chmod(dir, 0o700);
+  await writeFile(join(dir, "manifest.json"), JSON.stringify({
+    v: 1, journalId: id, ts: new Date().toISOString(), repoRoot: root, sourceRoot: root, scope: "worktree",
+    localIdentity: await captureLocalWorktreeIdentity(root),
+    entries: originals.map((original) => ({ original, quarantined: join(dir, basename(original)), basename: basename(original), bytes: 1 })),
+  }), { mode: 0o600 });
 }
 
 async function optionalModule(specifier: string): Promise<Record<string, unknown> | null> {
@@ -208,7 +219,7 @@ describe("worktree apply", () => {
       const absent = await worktreeApplyCommand({ undo: "no-such-journal", yes: true }, ctx);
       expect(absent.applied[0]).toMatchObject({
         status: "skipped",
-        detail: "no quarantine journal entry for no-such-journal",
+        detail: "manifest missing or unreadable",
       });
 
       await appendJournal(repo, {
@@ -220,7 +231,7 @@ describe("worktree apply", () => {
         detail: "test",
       });
       const orphan = await worktreeApplyCommand({ undo: "orphan-journal", yes: true }, ctx);
-      expect(orphan.applied[0].detail).toBe("quarantine directory missing");
+      expect(orphan.applied[0].detail).toBe("manifest missing or unreadable");
     });
 
     it("restores recorded paths and skips entries with no original or an existing target", async () => {
@@ -238,6 +249,7 @@ describe("worktree apply", () => {
         bytes: 1,
         detail: "test",
       });
+      await recoveryManifest(cwd, "j-restore", [join(cwd, "node_modules")]);
 
       const result = await worktreeApplyCommand({ undo: "j-restore", yes: true }, ctx);
       expect(result.applied[0].status).toBe("applied");
@@ -247,7 +259,7 @@ describe("worktree apply", () => {
         skipped: Array<{ path: string; reason: string }>;
       };
       expect(details.restored).toEqual([join(cwd, "node_modules")]);
-      expect(details.skipped.some((entry) => entry.reason === "no recorded original path")).toBe(true);
+      expect(existsSync(join(quarantineDir, "stray"))).toBe(true);
 
       await mkdir(join(stateDir, "quarantine", "j-blocked", "blocked"), { recursive: true });
       await mkdir(join(cwd, "blocked"), { recursive: true });
@@ -260,6 +272,7 @@ describe("worktree apply", () => {
         bytes: 1,
         detail: "test",
       });
+      await recoveryManifest(cwd, "j-blocked", [join(cwd, "blocked")]);
       const blocked = await worktreeApplyCommand({ undo: "j-blocked", yes: true }, ctx);
       expect(blocked.applied[0]).toMatchObject({ status: "skipped", detail: "target already exists" });
     });
@@ -278,11 +291,12 @@ describe("worktree apply", () => {
         bytes: 1,
         detail: "test",
       });
+      await recoveryManifest(cwd, "j-outside", [join(base, "outside")]);
 
       const result = await worktreeApplyCommand({ undo: "j-outside", yes: true }, ctx);
       expect(result.applied[0].status).toBe("skipped");
       const details = result.applied[0].result as { skipped: Array<{ reason: string }> };
-      expect(details.skipped[0]?.reason).toBe("outside worktree");
+      expect(details.skipped[0]?.reason).toContain("outside cache root");
 
       await writeFile(join(cwd, "plain-file"), "x");
       await mkdir(join(stateDir, "quarantine", "j-unreadable"), { recursive: true });
@@ -295,6 +309,7 @@ describe("worktree apply", () => {
         bytes: 1,
         detail: "test",
       });
+      await recoveryManifest(cwd, "j-unreadable", [join(cwd, "plain-file", "child")]);
       const unreadable = await worktreeApplyCommand({ undo: "j-unreadable", yes: true }, ctx);
       const unreadableDetails = unreadable.applied[0].result as {
         skipped: Array<{ reason: string }>;

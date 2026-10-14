@@ -2,8 +2,8 @@
 
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve, isAbsolute } from "node:path";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { parseFrontmatter, type Frontmatter } from "./frontmatter.js";
 import { validateProjectSlug } from "../config.js";
 
@@ -11,6 +11,11 @@ export const INDEX_FILENAME = ".knowledge-index.sqlite";
 
 const SCHEMA_VERSION = 1;
 const OPEN_DB_LIMIT = 32;
+const MAX_GRAPH_ROWS = 1000;
+const MAX_NOTE_BYTES = 8 * 1024 * 1024;
+const MAX_INDEX_BYTES = 64 * 1024 * 1024;
+const MAX_PROJECT_FILES = 50_000;
+const SNAPSHOT_FRESH_MS = 500;
 const RECENCY_LAMBDA = 0.1;
 const RECENCY_DECAY_DAYS = 90;
 const MS_PER_DAY = 86_400_000;
@@ -52,6 +57,38 @@ const WIKILINK_RE = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
 const SOLE_WIKILINK_RE = /^\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]$/;
 
 const openDbs = new Map<string, KnowledgeIndex>();
+const busyDbs = new Set<KnowledgeIndex>();
+const snapshots = new WeakMap<KnowledgeIndex, { checkedAt: number; entries: Map<string, string> }>();
+
+function boundedInteger(value: number, name: string, min: number, max: number): number {
+  if (!Number.isInteger(value) || value < min || value > max) throw new RangeError(`${name} must be an integer between ${min} and ${max}`);
+  return value;
+}
+
+function schemaVersion(db: DatabaseSync): number {
+  const version = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  if (!Number.isInteger(version) || version < 0 || version > SCHEMA_VERSION) throw new Error(`Unsupported knowledge index schema version ${version}; supported version is ${SCHEMA_VERSION}`);
+  return version;
+}
+
+function stampOf(path: string): string {
+  const stat = lstatSync(path);
+  return JSON.stringify([stat.mode, stat.ino, stat.dev, stat.size, stat.mtimeMs, stat.ctimeMs]);
+}
+
+function snapshotFresh(idx: KnowledgeIndex): boolean {
+  const snapshot = snapshots.get(idx);
+  if (!snapshot || Date.now() - snapshot.checkedAt > SNAPSHOT_FRESH_MS) return false;
+  for (const [path, stamp] of snapshot.entries) {
+    try {
+      if (stampOf(path) !== stamp) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`[knowledge-index] cannot validate ${path}: ${String(error)}`);
+      return false;
+    }
+  }
+  return true;
+}
 
 function normalizeRelatedValue(value: string): string {
   const trimmed = value.trim();
@@ -88,7 +125,7 @@ function assertProjectPath(vaultRoot: string, slug: string, target: string): voi
     try {
       const resolved = resolve(realpathSync(ancestor), ...suffix);
       const rel = relative(boundary, resolved);
-      if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) throw new Error(`Index path escapes project ${slug}: ${target}`);
+      if (rel === ".." || rel.startsWith("../") || isAbsolute(rel) || rel.split(/[\\/]/).some(part => part.toLowerCase() === "personal")) throw new Error(`Index path escapes project ${slug}: ${target}`);
       return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -204,82 +241,116 @@ export class KnowledgeIndex {
   private constructor(
     private readonly db: DatabaseSync,
     private readonly dbPath: string,
+    private readonly identity: string,
   ) {}
 
   static open(dbPath: string): KnowledgeIndex {
+    dbPath = resolve(dbPath);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    try {
+      dbPath = realpathSync(dbPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        if (lstatSync(dbPath).isSymbolicLink()) throw new Error(`Dangling index symlink: ${dbPath}`);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code !== "ENOENT") throw statError;
+      }
+      dbPath = join(realpathSync(dirname(dbPath)), basename(dbPath));
+    }
     const existing = openDbs.get(dbPath);
     if (existing) {
-      openDbs.delete(dbPath);
-      openDbs.set(dbPath, existing);
-      return existing;
+      const stat = statSync(dbPath);
+      if (existing.identity === `${stat.dev}:${stat.ino}`) {
+        schemaVersion(existing.db);
+        openDbs.delete(dbPath);
+        openDbs.set(dbPath, existing);
+        return existing;
+      }
+      if (busyDbs.has(existing)) throw new Error(`Knowledge index replaced during a transaction: ${dbPath}`);
+      existing.close();
     }
-    mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     try {
       const capability = db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') AS enabled").get() as { enabled: number };
       if (capability.enabled !== 1) {
         throw new Error("SuperSkill requires Node.js 22.16+ or 24+ with SQLite FTS5 enabled. Install an official supported Node.js runtime and retry.");
       }
+      const version = schemaVersion(db);
       db.exec("PRAGMA busy_timeout = 2000");
       db.exec("PRAGMA journal_mode = WAL");
       db.exec("PRAGMA foreign_keys = ON");
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS notes (
-          path TEXT PRIMARY KEY,
-          type TEXT,
-          title TEXT,
-          body TEXT NOT NULL,
-          ts REAL
-        );
-        CREATE TABLE IF NOT EXISTS files (
-          path TEXT PRIMARY KEY,
-          size INTEGER NOT NULL,
-          mtime_ms REAL NOT NULL,
-          ctime_ms REAL NOT NULL,
-          content_hash TEXT NOT NULL,
-          indexed_at TEXT NOT NULL
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-          title,
-          body,
-          content='notes',
-          content_rowid='rowid',
-          tokenize='porter unicode61'
-        );
-        CREATE TABLE IF NOT EXISTS edges (
-          "from" TEXT NOT NULL,
-          "to" TEXT NOT NULL,
-          type TEXT NOT NULL,
-          PRIMARY KEY ("from", "to", type)
-        );
-        CREATE INDEX IF NOT EXISTS idx_edges_to ON edges("to");
-      `);
-      upgradeNotesSchema(db);
-      ensureFtsTriggers(db);
-      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      if (version < SCHEMA_VERSION) {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS notes (
+              path TEXT PRIMARY KEY,
+              type TEXT,
+              title TEXT,
+              body TEXT NOT NULL,
+              ts REAL
+            );
+            CREATE TABLE IF NOT EXISTS files (
+              path TEXT PRIMARY KEY,
+              size INTEGER NOT NULL,
+              mtime_ms REAL NOT NULL,
+              ctime_ms REAL NOT NULL,
+              content_hash TEXT NOT NULL,
+              indexed_at TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+              title,
+              body,
+              content='notes',
+              content_rowid='rowid',
+              tokenize='porter unicode61'
+            );
+            CREATE TABLE IF NOT EXISTS edges (
+              "from" TEXT NOT NULL,
+              "to" TEXT NOT NULL,
+              type TEXT NOT NULL,
+              PRIMARY KEY ("from", "to", type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_edges_to ON edges("to");
+          `);
+          upgradeNotesSchema(db);
+          ensureFtsTriggers(db);
+          db.exec("INSERT INTO notes_fts(notes_fts) VALUES ('rebuild')");
+          db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      }
     } catch (error) {
       db.close();
       throw error;
     }
-    const idx = new KnowledgeIndex(db, dbPath);
+    const stat = statSync(dbPath);
+    const idx = new KnowledgeIndex(db, dbPath, `${stat.dev}:${stat.ino}`);
     cacheDb(dbPath, idx);
     return idx;
   }
 
   static openForProject(vaultRoot: string, slug: string): KnowledgeIndex {
-    return KnowledgeIndex.open(indexPathFor(vaultRoot, slug));
+    const path = indexPathFor(vaultRoot, slug);
+    for (const suffix of ["-wal", "-shm"]) assertProjectPath(vaultRoot, slug, `${path}${suffix}`);
+    return KnowledgeIndex.open(path);
   }
 
   upsert(note: IndexedNote): void {
     const type = note.type || "note";
-    const title = note.title || titleFrom(note.body, note.path);
+    const body = indexedBody(type, note.body);
+    const title = note.title || titleFrom(body, note.path);
     const ts = typeof note.ts === "number" && Number.isFinite(note.ts) ? note.ts : Date.now();
     this.db.exec("SAVEPOINT knowledge_note");
     try {
       this.db.prepare(
         `INSERT INTO notes(path, type, title, body, ts) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET type=excluded.type, title=excluded.title, body=excluded.body, ts=excluded.ts`,
-      ).run(note.path, type, title, note.body, ts);
+      ).run(note.path, type, title, body, ts);
       this.db.prepare(`DELETE FROM edges WHERE "from" = ?`).run(note.path);
       const insertEdge = this.db.prepare(
         `INSERT OR IGNORE INTO edges("from", "to", type) VALUES (?, ?, ?)`,
@@ -316,7 +387,10 @@ export class KnowledgeIndex {
   }
 
   search(query: string, limit = 10): KnowledgeHit[] {
-    const tokens = tokenizeQuery(query);
+    boundedInteger(limit, "limit", 0, MAX_GRAPH_ROWS);
+    if (limit === 0) return [];
+    if (query.length > 4096) throw new RangeError("query must not exceed 4096 characters");
+    const tokens = tokenizeQuery(query).slice(0, 64);
     if (tokens.length === 0) return [];
     const quoted = tokens.map((token) => `"${token}"`);
     let rows: RankedRow[] = [];
@@ -342,28 +416,35 @@ export class KnowledgeIndex {
   }
 
   neighbors(path: string, hops = 1): string[] {
-    const depth = Math.max(1, Math.min(8, Math.floor(hops)));
-    const rows = this.db.prepare(
-      `WITH RECURSIVE hop(id, d) AS (
-         SELECT ?, 0
-         UNION
-         SELECT CASE WHEN e."from" = hop.id THEN e."to" ELSE e."from" END, hop.d + 1
-         FROM hop
-         JOIN edges e ON e."from" = hop.id OR e."to" = hop.id
-         WHERE hop.d < ?
-       )
-       SELECT DISTINCT id FROM hop WHERE d > 0`,
-    ).all(path, depth) as Array<{ id: string }>;
-    return rows.map((r) => r.id);
+    const depth = boundedInteger(hops, "hops", 1, 8);
+    const seen = new Set([path]);
+    let frontier = [path];
+    const adjacent = this.db.prepare(`SELECT DISTINCT CASE WHEN "from" = ? THEN "to" ELSE "from" END AS id FROM edges WHERE "from" = ? OR "to" = ? ORDER BY id LIMIT ?`);
+    for (let hop = 0; hop < depth && frontier.length > 0 && seen.size <= MAX_GRAPH_ROWS; hop++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        const rows = adjacent.all(id, id, id, MAX_GRAPH_ROWS + 1) as Array<{ id: string }>;
+        for (const row of rows) {
+          if (seen.has(row.id)) continue;
+          seen.add(row.id);
+          next.push(row.id);
+          if (seen.size > MAX_GRAPH_ROWS) break;
+        }
+        if (seen.size > MAX_GRAPH_ROWS) break;
+      }
+      frontier = next;
+    }
+    seen.delete(path);
+    return [...seen];
   }
 
   outgoing(path: string): string[] {
-    const rows = this.db.prepare(`SELECT "to" AS id FROM edges WHERE "from" = ?`).all(path) as Array<{ id: string }>;
+    const rows = this.db.prepare(`SELECT DISTINCT "to" AS id FROM edges WHERE "from" = ? ORDER BY id LIMIT ?`).all(path, MAX_GRAPH_ROWS) as Array<{ id: string }>;
     return rows.map((r) => r.id);
   }
 
   incoming(path: string): string[] {
-    const rows = this.db.prepare(`SELECT "from" AS id FROM edges WHERE "to" = ?`).all(path) as Array<{ id: string }>;
+    const rows = this.db.prepare(`SELECT DISTINCT "from" AS id FROM edges WHERE "to" = ? ORDER BY id LIMIT ?`).all(path, MAX_GRAPH_ROWS) as Array<{ id: string }>;
     return rows.map((r) => r.id);
   }
 
@@ -405,6 +486,7 @@ export class KnowledgeIndex {
 
   transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
+    busyDbs.add(this);
     try {
       const result = fn();
       this.db.exec("COMMIT");
@@ -416,6 +498,13 @@ export class KnowledgeIndex {
         console.error(`[knowledge-index] rollback failed: ${String(rollbackError)}`);
       }
       throw error;
+    } finally {
+      busyDbs.delete(this);
+      if (!this.closed) {
+        openDbs.delete(this.dbPath);
+        openDbs.set(this.dbPath, this);
+      }
+      trimDbCache(this);
     }
   }
 
@@ -426,6 +515,7 @@ export class KnowledgeIndex {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    snapshots.delete(this);
     if (openDbs.get(this.dbPath) === this) openDbs.delete(this.dbPath);
     this.db.close();
   }
@@ -465,8 +555,12 @@ export class KnowledgeIndex {
 
 function cacheDb(dbPath: string, index: KnowledgeIndex): void {
   openDbs.set(dbPath, index);
+  trimDbCache(index);
+}
+
+function trimDbCache(keep?: KnowledgeIndex): void {
   while (openDbs.size > OPEN_DB_LIMIT) {
-    const oldest = openDbs.keys().next().value;
+    const oldest = [...openDbs.keys()].find(path => openDbs.get(path) !== keep && !busyDbs.has(openDbs.get(path)!));
     if (oldest === undefined) break;
     const evicted = openDbs.get(oldest);
     openDbs.delete(oldest);
@@ -496,21 +590,32 @@ function ensureFtsTriggers(db: DatabaseSync): void {
   `);
 }
 
-function walkMarkdown(dir: string, acc: string[]): void {
+function walkMarkdown(dir: string, acc: string[], stamps: Map<string, string>, depth = 0): void {
+  if (depth > 128 || stamps.size >= MAX_PROJECT_FILES * 2) throw new Error("Knowledge index directory limit exceeded");
   let entries;
   try {
+    const stat = lstatSync(dir);
+    if (!stat.isDirectory()) return;
+    stamps.set(dir, stampOf(dir));
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(`[knowledge-index] cannot list ${dir}: ${String(error)}`);
+      throw error;
+    }
     return;
   }
   for (const e of entries) {
-    if (e.name.startsWith(".")) continue;
+    if (e.name.startsWith(".") || e.name.toLowerCase() === "personal") continue;
     const full = join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === "dist") continue;
-      walkMarkdown(full, acc);
+      walkMarkdown(full, acc, stamps, depth + 1);
     } else if (e.isFile() && e.name.endsWith(".md")) {
+      if (acc.length >= MAX_PROJECT_FILES) throw new Error("Knowledge index file limit exceeded");
       acc.push(full);
+      try { stamps.set(full, stampOf(full)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
   }
 }
@@ -527,8 +632,9 @@ function buildBasenameIndex(paths: Iterable<string>): Map<string, string[]> {
   return index;
 }
 
-function resolveEdgeTarget(slug: string, raw: string, paths: Set<string>, basenames: Map<string, string[]>): string {
+function resolveEdgeTarget(slug: string, raw: string, paths: Set<string>, basenames: Map<string, string[]>): string | null {
   const target = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  if (!target || isAbsolute(target) || target.includes("\0") || target.split("/").some(part => part === "." || part === "..") || (target.startsWith("projects/") && !target.startsWith(`projects/${slug}/`))) return null;
   const prefixed = `projects/${slug}/${target}`;
   const candidates = target.startsWith("projects/")
     ? [target, `${target}.md`]
@@ -548,13 +654,13 @@ function stripFencedCodeBlocks(body: string): string {
   const kept: string[] = [];
   let fence: string | null = null;
   for (const line of lines) {
-    const match = line.match(/^\s*(`{3,})/);
+    const match = line.match(/^\s*(`{3,}|~{3,})/);
     if (fence === null) {
       if (match) fence = match[1];
       else kept.push(line);
       continue;
     }
-    if (match && match[1].length >= fence.length) fence = null;
+    if (match && match[1][0] === fence[0] && match[1].length >= fence.length && line.slice(match[0].length).trim() === "") fence = null;
   }
   return kept.join("\n");
 }
@@ -563,18 +669,42 @@ function indexedBody(type: string, body: string): string {
   return type === "code" ? stripFencedCodeBlocks(body) : body;
 }
 
-function markdownFiles(projectDir: string): string[] {
+function markdownFiles(projectDir: string, stamps: Map<string, string>): string[] {
   const files: string[] = [];
-  if (existsSync(projectDir) && statSync(projectDir).isDirectory()) {
-    walkMarkdown(projectDir, files);
-  }
+  walkMarkdown(projectDir, files, stamps);
   return files;
 }
 
-function parseNote(absPath: string, relPath: string, stat: { size: number; mtime_ms: number; ctime_ms: number }): { note: IndexedNote; stamp: IndexedFileStamp } | null {
+function readProjectNote(absPath: string, boundary: string): string {
+  const canonical = realpathSync(absPath);
+  const rel = relative(boundary, canonical);
+  if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) throw new Error(`Index path escapes project: ${absPath}`);
+  const fd = openSync(canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    const current = lstatSync(canonical);
+    if (!stat.isFile() || stat.ino !== current.ino || stat.dev !== current.dev || realpathSync(absPath) !== canonical) throw new Error(`Index note is not a stable regular file: ${absPath}`);
+    if (stat.size > MAX_NOTE_BYTES) throw new Error(`Knowledge note exceeds ${MAX_NOTE_BYTES} bytes: ${absPath}`);
+    const buffer = Buffer.alloc(stat.size + 1);
+    let used = 0;
+    while (used < buffer.length) {
+      const count = readSync(fd, buffer, used, buffer.length - used, used);
+      if (count === 0) break;
+      used += count;
+    }
+    if (used > stat.size) throw new Error(`Knowledge note grew during read: ${absPath}`);
+    const after = fstatSync(fd);
+    const currentAfter = lstatSync(canonical);
+    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs || currentAfter.ino !== stat.ino || currentAfter.dev !== stat.dev || realpathSync(absPath) !== canonical) throw new Error(`Knowledge note changed during read: ${absPath}`);
+    return buffer.subarray(0, used).toString("utf8");
+  } finally { closeSync(fd); }
+}
+
+function parseNote(absPath: string, relPath: string, stat: { size: number; mtime_ms: number; ctime_ms: number }, boundary: string): { note: IndexedNote; stamp: IndexedFileStamp } | null {
+  if (stat.size > MAX_NOTE_BYTES) throw new Error(`Knowledge note exceeds ${MAX_NOTE_BYTES} bytes: ${relPath}`);
   let raw: string;
   try {
-    raw = readFileSync(absPath, "utf-8");
+    raw = readProjectNote(absPath, boundary);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return null;
@@ -609,8 +739,11 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
 
   const parsed: IndexedNote[] = [];
   const stamps: IndexedFileStamp[] = [];
+  const snapshot = new Map<string, string>();
   const pathSet = new Set<string>();
-  for (const abs of markdownFiles(projectDir)) {
+  let totalBytes = 0;
+  for (const abs of markdownFiles(projectDir, snapshot)) {
+    assertProjectPath(vaultRoot, safe, abs);
     const rel = vaultRelPath(vaultRoot, abs);
     let fileStat;
     try {
@@ -619,7 +752,9 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       continue;
     }
-    const entry = parseNote(abs, rel, { size: fileStat.size, mtime_ms: fileStat.mtimeMs, ctime_ms: fileStat.ctimeMs });
+    totalBytes += fileStat.size;
+    if (totalBytes > MAX_INDEX_BYTES) throw new Error(`Knowledge project exceeds ${MAX_INDEX_BYTES} indexed bytes: ${safe}`);
+    const entry = parseNote(abs, rel, { size: fileStat.size, mtime_ms: fileStat.mtimeMs, ctime_ms: fileStat.ctimeMs }, join(realpathSync(vaultRoot), "projects", safe));
     if (!entry) continue;
     parsed.push(entry.note);
     stamps.push(entry.stamp);
@@ -628,12 +763,13 @@ export function rebuildProjectIndex(vaultRoot: string, slug: string): { notes: n
 
   const basenames = buildBasenameIndex(pathSet);
   for (const n of parsed) {
-    n.related = n.related.map((t) => resolveEdgeTarget(safe, t, pathSet, basenames));
+    n.related = n.related.map((t) => resolveEdgeTarget(safe, t, pathSet, basenames)).filter((target): target is string => target !== null);
   }
 
   const idx = KnowledgeIndex.openForProject(vaultRoot, safe);
   idx.replaceAll(parsed, stamps);
   removeIndexStamp(vaultRoot, safe);
+  snapshots.set(idx, { checkedAt: Date.now(), entries: snapshot });
   const dump = idx.graphDump();
   return { notes: dump.nodes.length, edges: dump.edges.length };
 }
@@ -643,9 +779,14 @@ function syncProjectIndexFiles(vaultRoot: string, slug: string, idx: KnowledgeIn
   assertProjectPath(vaultRoot, slug, projectDir);
 
   const current = new Map<string, { abs: string; size: number; mtime_ms: number; ctime_ms: number }>();
-  for (const abs of markdownFiles(projectDir)) {
+  const snapshot = new Map<string, string>();
+  let totalBytes = 0;
+  for (const abs of markdownFiles(projectDir, snapshot)) {
+    assertProjectPath(vaultRoot, slug, abs);
     try {
       const stat = statSync(abs);
+      totalBytes += stat.size;
+      if (totalBytes > MAX_INDEX_BYTES) throw new Error(`Knowledge project exceeds ${MAX_INDEX_BYTES} indexed bytes: ${slug}`);
       current.set(vaultRelPath(vaultRoot, abs), { abs, size: stat.size, mtime_ms: stat.mtimeMs, ctime_ms: stat.ctimeMs });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -663,12 +804,15 @@ function syncProjectIndexFiles(vaultRoot: string, slug: string, idx: KnowledgeIn
   for (const rel of known.keys()) {
     if (!current.has(rel)) removed.push(rel);
   }
-  if (changed.size === 0 && removed.length === 0) return;
+  if (changed.size === 0 && removed.length === 0) {
+    snapshots.set(idx, { checkedAt: Date.now(), entries: snapshot });
+    return;
+  }
 
   const parsed: IndexedNote[] = [];
   const stamps: IndexedFileStamp[] = [];
   for (const [rel, stat] of changed) {
-    const entry = parseNote(stat.abs, rel, stat);
+    const entry = parseNote(stat.abs, rel, stat, join(realpathSync(vaultRoot), "projects", slug));
     if (!entry) continue;
     parsed.push(entry.note);
     stamps.push(entry.stamp);
@@ -676,9 +820,10 @@ function syncProjectIndexFiles(vaultRoot: string, slug: string, idx: KnowledgeIn
   const pathSet = new Set(current.keys());
   const basenames = buildBasenameIndex(pathSet);
   for (const n of parsed) {
-    n.related = n.related.map((t) => resolveEdgeTarget(slug, t, pathSet, basenames));
+    n.related = n.related.map((t) => resolveEdgeTarget(slug, t, pathSet, basenames)).filter((target): target is string => target !== null);
   }
   idx.applyFileChanges(parsed, stamps, removed);
+  snapshots.set(idx, { checkedAt: Date.now(), entries: snapshot });
 }
 
 export function ensureProjectIndex(vaultRoot: string, slug: string): KnowledgeIndex {
@@ -694,6 +839,7 @@ export function ensureProjectIndex(vaultRoot: string, slug: string): KnowledgeIn
     return idx;
   }
   if (stampExists) removeIndexStamp(vaultRoot, safe);
+  if (!stampExists && snapshotFresh(idx)) return idx;
   syncProjectIndexFiles(vaultRoot, safe, idx);
   return idx;
 }
@@ -703,6 +849,8 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
   const m = rel.match(/^projects\/([^/]+)\//);
   if (!m) return;
   const slug = m[1];
+  assertProjectPath(vaultRoot, validateProjectSlug(slug), join(vaultRoot, rel));
+  if (Buffer.byteLength(content, "utf8") > MAX_NOTE_BYTES) throw new Error(`Knowledge note exceeds ${MAX_NOTE_BYTES} bytes: ${rel}`);
   const { data, content: rawBody } = parseFrontmatter(content);
   const type = typeof data.type === "string" ? data.type : "note";
   const body = indexedBody(type, rawBody);
@@ -710,7 +858,7 @@ export function upsertVaultFile(vaultRoot: string, vaultRelPath: string, content
   const paths = new Set(idx.graphDump().nodes.map((n) => n.id));
   paths.add(rel);
   const basenames = buildBasenameIndex(paths);
-  const related = extractKnowledgeLinks(data, body).map((t) => resolveEdgeTarget(slug, t, paths, basenames));
+  const related = extractKnowledgeLinks(data, body).map((t) => resolveEdgeTarget(slug, t, paths, basenames)).filter((target): target is string => target !== null);
   const ts = frontmatterTimestamp(data) ?? statMtimeMs(vaultRoot, rel) ?? Date.now();
   idx.applyFileChanges(
     [{
@@ -731,6 +879,7 @@ export function removeVaultFileFromIndex(vaultRoot: string, vaultRelPath: string
   const m = rel.match(/^projects\/([^/]+)\//);
   if (!m) return;
   const slug = m[1];
+  assertProjectPath(vaultRoot, validateProjectSlug(slug), join(vaultRoot, rel));
   const dbPath = indexPathFor(vaultRoot, slug);
   if (!existsSync(dbPath)) return;
   KnowledgeIndex.open(dbPath).remove(rel);

@@ -36,19 +36,22 @@ export async function learnCommand(
   path?: string;
   learnings?: LearningItem[];
 }> {
+  if (args.confidence !== undefined && !VALID_CONFIDENCE.includes(args.confidence)) {
+    throw new Error(`Invalid confidence "${args.confidence}". Must be one of: ${VALID_CONFIDENCE.join(", ")}`);
+  }
+  if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 0 || args.limit > 500)) {
+    throw new Error("limit must be an integer between 0 and 500");
+  }
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const vaultFs = ctx.vaultFs;
   const learningsDir = `projects/${projectSlug}/learnings`;
 
   switch (args.action) {
     case "add": {
-      if (!args.title) throw new Error("Title required for add");
-      if (!args.discovery) throw new Error("Discovery required for add");
+      if (typeof args.title !== "string" || !args.title.trim()) throw new Error("Title required for add");
+      if (typeof args.discovery !== "string" || !args.discovery.trim()) throw new Error("Discovery required for add");
 
       const confidence = args.confidence ?? "medium";
-      if (!VALID_CONFIDENCE.includes(confidence)) {
-        throw new Error(`Invalid confidence "${confidence}". Must be one of: ${VALID_CONFIDENCE.join(", ")}`);
-      }
 
       const titleSlug = slugify(args.title);
 
@@ -84,9 +87,7 @@ export async function learnCommand(
       if (args.tag) {
         filtered = filtered.filter((l) => l.tags.includes(args.tag!));
       }
-      if (args.limit !== undefined) {
-        filtered = filtered.slice(0, args.limit);
-      }
+      filtered = filtered.slice(0, args.limit ?? 50);
 
       return { learnings: filtered };
     }
@@ -105,7 +106,8 @@ async function noteLearningCaptured(
   let files: string[];
   try {
     files = await vaultFs.list(dir, 1);
-  } catch {
+  } catch (e: unknown) {
+    if (!isMissing(e)) console.error("[learn] Could not list sessions:", e instanceof Error ? e.message : e);
     return;
   }
   for (const file of files.filter((name) => name.endsWith(".md"))) {
@@ -113,16 +115,19 @@ async function noteLearningCaptured(
     let content: string;
     try {
       content = await vaultFs.read(path);
-    } catch {
+    } catch (e: unknown) {
+      if (!isMissing(e)) console.error("[learn] Could not read session:", e instanceof Error ? e.message : e);
       continue;
     }
-    const { data, content: body } = parseFrontmatter(content);
+    const { data } = parseFrontmatter(content);
     if (data.type !== "session" || data.session_id !== sessionId) continue;
     try {
       await vaultFs.update(path, (current) => {
         const { data: latest, content: latestBody } = parseFrontmatter(current);
         if (latest.type !== "session" || latest.session_id !== sessionId) return current;
-        return serializeFrontmatter({ ...latest, learnings_captured: Number(latest.learnings_captured ?? 0) + 1 }, latestBody);
+        const count = Number(latest.learnings_captured ?? 0);
+        if (!Number.isSafeInteger(count) || count < 0 || count === Number.MAX_SAFE_INTEGER) throw new Error(`Invalid learnings_captured count in ${path}`);
+        return serializeFrontmatter({ ...latest, learnings_captured: count + 1 }, latestBody);
       });
     } catch (err: unknown) {
       console.error(`[learn] could not update learnings_captured: ${err instanceof Error ? err.message : String(err)}`);
@@ -131,11 +136,13 @@ async function noteLearningCaptured(
   }
 }
 
-async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, learningsDir: string): Promise<LearningItem[]> {  let files: string[];
+async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, learningsDir: string): Promise<LearningItem[]> {
+  let files: string[];
   try {
     files = await vaultFs.list(learningsDir, 1);
-  } catch {
-    return [];
+  } catch (e: unknown) {
+    if (isMissing(e)) return [];
+    throw e;
   }
 
   const mdFiles = files.filter((f) => f.endsWith(".md"));
@@ -175,7 +182,7 @@ async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, lear
         learnings.push(result.value);
       } else if (result.status === "rejected") {
         const e = result.reason;
-        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        if (!isMissing(e)) {
           console.error("[learn] Skipping unreadable learning file:", e instanceof Error ? e.message : e);
         }
       }
@@ -184,4 +191,8 @@ async function listLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, lear
 
   learnings.sort((a, b) => a.id.localeCompare(b.id));
   return learnings;
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "FILE_NOT_FOUND");
 }

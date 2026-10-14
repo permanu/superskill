@@ -46,7 +46,7 @@ afterEach(async () => {
 describe("nodeProvider", () => {
   it("exposes id and languages", () => {
     expect(nodeProvider.id).toBe("node");
-    expect(nodeProvider.languages).toEqual(["typescript"]);
+    expect(nodeProvider.languages).toEqual(["typescript", "javascript"]);
   });
 
   it("detects a package.json at the project root", async () => {

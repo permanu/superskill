@@ -17,6 +17,11 @@ export interface ContextResult {
   stale_context: boolean;
 }
 
+function missingPath(error: unknown): boolean {
+  return error instanceof VaultError && error.code === "FILE_NOT_FOUND"
+    || error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
 export async function contextCommand(
   args: {
     project?: string;
@@ -26,6 +31,10 @@ export async function contextCommand(
   ctx: CommandContext,
 ): Promise<ContextResult> {
   const { detailLevel = "summary", maxTokens } = args;
+  if (detailLevel !== "summary" && detailLevel !== "full") throw new VaultError("INVALID_ARGUMENT", "detailLevel must be summary or full");
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 50_000)) {
+    throw new VaultError("INVALID_ARGUMENT", "maxTokens must be a positive integer no greater than 50000");
+  }
   const effectiveMaxTokens = maxTokens ?? ctx.config.maxInjectTokens;
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const vaultFs = ctx.vaultFs;
@@ -64,33 +73,16 @@ export async function contextCommand(
     ? `> ⚠ Context stale (last updated: ${contextFrontmatter.updated}). Run \`/context update\` to refresh.\n\n`
     : "";
 
-  if (detailLevel === "full") {
-    // Enhancement C: inject:always in full mode too
-    const injectPrefix = await collectInjectAlways(vaultFs, ctx.log);
-    const fullContent = injectPrefix ? `${injectPrefix}\n\n---\n\n${content}` : content;
-    return {
-      project_slug: projectSlug,
-      context_md: staleWarning + fullContent,
-      token_estimate: estimateTokens(staleWarning + fullContent),
-      sections,
-      truncated: false,
-      learning_count: learningCount,
-      last_session: lastSession,
-      open_threads: openThreads,
-      stale_context: staleContext,
-    };
-  }
-
-  // Enhancement A: inject:always support — prepend before truncation
-  const injectPrefix = await collectInjectAlways(vaultFs, ctx.log);
-  const combinedContent = injectPrefix ? `${injectPrefix}\n\n---\n\n${content}` : content;
-
-  const { text, truncated } = truncateToTokenBudget(combinedContent, effectiveMaxTokens);
+  const injectPrefix = await collectInjectAlways(vaultFs, projectSlug, ctx.log);
+  const combinedContent = (injectPrefix ? `${injectPrefix}\n\n---\n\n` : "") + staleWarning + content;
+  const { text, truncated } = detailLevel === "full" && maxTokens === undefined
+    ? { text: combinedContent, truncated: false }
+    : truncateToTokenBudget(combinedContent, effectiveMaxTokens);
 
   return {
     project_slug: projectSlug,
-    context_md: staleWarning + text,
-    token_estimate: estimateTokens(staleWarning + text),
+    context_md: text,
+    token_estimate: estimateTokens(text),
     sections,
     truncated,
     learning_count: learningCount,
@@ -102,10 +94,11 @@ export async function contextCommand(
 
 async function collectInjectAlways(
   vaultFs: import("../lib/vault-fs.js").VaultFS,
+  projectSlug: string,
   log: Logger,
 ): Promise<string> {
   try {
-    const allFiles = await vaultFs.list("shared", 10);
+    const allFiles = await vaultFs.list(`projects/${projectSlug}/shared`, 10);
     const mdFiles = allFiles.filter((f) => f.endsWith(".md"));
     const bodies: string[] = [];
     for (const filePath of mdFiles) {
@@ -124,7 +117,7 @@ async function collectInjectAlways(
     // shared/ may not exist — that's fine
     if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") return "";
     if (e instanceof Error && "code" in e && (e as any).code === "ENOENT") return "";
-    log.debug("[context] collectInjectAlways error:", e instanceof Error ? e.message : e);
+    log.error("[context] collectInjectAlways error:", e instanceof Error ? e.message : e);
     return "";
   }
 }
@@ -143,11 +136,8 @@ async function countLearnings(vaultFs: import("../lib/vault-fs.js").VaultFS, pro
     const files = await vaultFs.list(`projects/${projectSlug}/learnings`, 1);
     return files.filter((f) => f.endsWith(".md")).length;
   } catch (e: unknown) {
-    if (e instanceof VaultError && e.code === "FILE_NOT_FOUND") return 0;
-    if (e instanceof Error && "code" in e && (e as any).code === "ENOENT") return 0;
-    if (e instanceof Error && "code" in e && (e as any).code !== undefined) {
-      console.error("[context] Error counting learnings:", e.message);
-    }
+    if (missingPath(e)) return 0;
+    console.error("[context] Error counting learnings:", e instanceof Error ? e.message : e);
     return 0;
   }
 }
@@ -170,7 +160,7 @@ async function getLastSession(
       completed_at: (data.completed_at as string) ?? (data.created as string) ?? "",
     };
   } catch (e: unknown) {
-    if (!(e instanceof Error && "code" in e && (e as any).code === "ENOENT")) {
+    if (!missingPath(e)) {
       console.error("[context] Error reading last session:", e instanceof Error ? e.message : e);
     }
     return null;
@@ -202,7 +192,7 @@ async function getOpenThreads(
       try {
         content = await vaultFs.read(file);
       } catch (e: unknown) {
-        if (e instanceof Error && "code" in e && (e as any).code !== "ENOENT") {
+        if (!missingPath(e)) {
           console.error("[context] Error reading session for open threads:", e instanceof Error ? e.message : e);
         }
         continue;
@@ -224,7 +214,7 @@ async function getOpenThreads(
     }
     return { count: items.length, items: items.slice(0, limit) };
   } catch (e: unknown) {
-    if (!(e instanceof Error && "code" in e && (e as any).code === "ENOENT")) {
+    if (!missingPath(e)) {
       console.error("[context] Error deriving open threads:", e instanceof Error ? e.message : e);
     }
     return { count: 0, items: [] };

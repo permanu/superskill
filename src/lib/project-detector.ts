@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFile } from "fs/promises";
-import { resolve } from "path";
+import { realpath, lstat } from "fs/promises";
+import { resolve, isAbsolute, relative } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { coordinationPath, readCoordinationFile } from "./session-registry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,7 @@ interface CacheEntry {
   map: ProjectMap;
   time: number;
   vaultPath: string;
+  identity: string;
 }
 
 const CACHE_TTL_MS = 60_000; // 1 minute
@@ -28,9 +30,9 @@ function setCache(entry: CacheEntry): void {
   cache = entry;
 }
 
-function getCache(vaultPath: string): ProjectMap | null {
+function getCache(vaultPath: string, identity: string): ProjectMap | null {
   const now = Date.now();
-  if (cache && cache.vaultPath === vaultPath && now - cache.time < CACHE_TTL_MS) {
+  if (cache && cache.vaultPath === vaultPath && cache.identity === identity && now - cache.time < CACHE_TTL_MS) {
     return cache.map;
   }
   return null;
@@ -40,27 +42,33 @@ function getCache(vaultPath: string): ProjectMap | null {
  * Load the project map from the vault. Cache is keyed by vaultPath.
  */
 async function loadProjectMap(vaultPath: string): Promise<ProjectMap> {
-  const cached = getCache(vaultPath);
-  if (cached) return cached;
-
   const mapPath = resolve(vaultPath, "project-map.json");
   try {
-    const raw = await readFile(mapPath, "utf-8");
+    const abs = await coordinationPath(vaultPath, "project-map.json");
+    const info = await lstat(abs);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Unsafe project map file: ${mapPath}`);
+    if (info.size > 1024 * 1024) throw new Error("Project map exceeds byte limit");
+    const identity = `${info.dev}:${info.ino}`;
+    const cached = getCache(vaultPath, identity);
+    if (cached) return cached;
+    const raw = await readCoordinationFile(vaultPath, "project-map.json", 1024 * 1024);
+    if (raw === null) return {};
     const parsed = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       return {};
     }
-    const map: ProjectMap = {};
+    if (Object.keys(parsed).length > 10_000) throw new Error("Project map exceeds entry limit");
+    const map: ProjectMap = Object.create(null);
     for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string") {
-        map[key] = value;
+      if (isAbsolute(key) && key.length <= 4096 && !/[\x00-\x1f\x7f]/.test(key) && typeof value === "string" && value.length <= 128 && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value) && !value.includes("..")) {
+        map[resolve(key)] = value;
       }
     }
-    setCache({ map, time: Date.now(), vaultPath });
+    setCache({ map, time: Date.now(), vaultPath, identity });
     return map;
   } catch (e: any) {
     if (e?.code === "EACCES") {
-      console.error(`Warning: permission denied reading ${mapPath}`);
+      console.error(`[project-detector] Permission denied reading ${mapPath}`);
     } else if (e?.code !== "ENOENT" && !(e instanceof SyntaxError)) {
       throw e;
     }
@@ -95,8 +103,10 @@ export async function getGitRoot(cwd: string): Promise<string | null> {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd,
       timeout: 3000,
+      maxBuffer: 16 * 1024,
     });
-    return stdout.trim();
+    const root = stdout.trim();
+    return isAbsolute(root) ? resolve(root) : null;
   } catch {
     return null;
   }
@@ -114,14 +124,21 @@ export async function getGitRoot(cwd: string): Promise<string | null> {
  */
 export async function detectProject(cwd: string, vaultPath: string): Promise<string | null> {
   const map = await loadProjectMap(vaultPath);
-  const cleanCwd = stripWorktreeSuffix(cwd);
+  const normalizedCwd = resolve(cwd);
+  const entries = Object.entries(map).sort(([a], [b]) => b.length - a.length);
+  for (const [path, slug] of entries) {
+    const rel = relative(path, normalizedCwd);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return slug;
+  }
+  const cleanCwd = stripWorktreeSuffix(normalizedCwd);
 
   // Exact match
   if (map[cleanCwd]) return map[cleanCwd];
 
   // Subdirectory match
-  for (const [path, slug] of Object.entries(map)) {
-    if (cleanCwd.startsWith(path + "/") || cleanCwd === path) {
+  for (const [path, slug] of entries) {
+    const rel = relative(path, cleanCwd);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
       return slug;
     }
   }
@@ -132,11 +149,28 @@ export async function detectProject(cwd: string, vaultPath: string): Promise<str
     const cleanGitRoot = stripWorktreeSuffix(gitRoot);
     if (map[cleanGitRoot]) return map[cleanGitRoot];
 
-    for (const [path, slug] of Object.entries(map)) {
-      if (cleanGitRoot.startsWith(path + "/") || cleanGitRoot === path) {
+    for (const [path, slug] of entries) {
+      const rel = relative(path, cleanGitRoot);
+      if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
         return slug;
       }
     }
+  }
+
+  try {
+    const canonicalCwd = await realpath(cwd);
+    for (const [path, slug] of entries) {
+      let canonicalMapped: string;
+      try { canonicalMapped = await realpath(path); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("[project-detector] Could not resolve mapped project:", (error as Error).message);
+        continue;
+      }
+      const rel = relative(canonicalMapped, canonicalCwd);
+      if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return slug;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("[project-detector] Could not resolve project directory:", (error as Error).message);
   }
 
   return null;

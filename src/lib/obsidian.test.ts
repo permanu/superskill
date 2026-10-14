@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { obsidianAppInstalled, obsidianDeepLink, scopeGraphFilter } from "./obsidian.js";
@@ -59,6 +60,7 @@ describe("scopeGraphFilter", () => {
       ok: false,
       reason: "vault has not been opened in Obsidian yet (no .obsidian/graph.json)",
     });
+    expect(existsSync(join(vaultRoot, ".obsidian"))).toBe(false);
   });
 
   it("leaves malformed JSON untouched", async () => {
@@ -83,5 +85,50 @@ describe("scopeGraphFilter", () => {
     expect(parsed.repelStrength).toBe(10);
     expect(parsed.showTags).toBe(false);
     expect(raw).toBe(`${JSON.stringify(parsed, null, 2)}\n`);
+    expect((await stat(graphPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("enforces mode 0600 even when the graph filter and serialized settings are unchanged", async () => {
+    const graphPath = join(vaultRoot, ".obsidian", "graph.json");
+    const original = `${JSON.stringify({ search: "path:projects/superskill", showTags: false }, null, 2)}\n`;
+    await mkdir(join(vaultRoot, ".obsidian"));
+    await writeFile(graphPath, original);
+    await chmod(graphPath, 0o644);
+    expect(await scopeGraphFilter(vaultRoot, "superskill")).toEqual({ ok: true });
+    expect(await readFile(graphPath, "utf8")).toBe(original);
+    expect((await stat(graphPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(["directory", "file"])("rejects an escaping %s symlink without changing the target", async (kind) => {
+    const outside = join(scratch, "outside");
+    await mkdir(outside);
+    const original = JSON.stringify({ search: "my filter", user: { colors: [1, 2] } });
+    const target = join(outside, "graph.json");
+    await writeFile(target, original);
+    if (kind === "directory") await symlink(outside, join(vaultRoot, ".obsidian"));
+    else {
+      await mkdir(join(vaultRoot, ".obsidian"));
+      await symlink(target, join(vaultRoot, ".obsidian", "graph.json"));
+    }
+    const result = await scopeGraphFilter(vaultRoot, "superskill");
+    expect(result.ok).toBe(false);
+    expect(await readFile(target, "utf8")).toBe(original);
+  });
+
+  it("rejects an unsafe project slug without changing settings", async () => {
+    const graphPath = join(vaultRoot, ".obsidian", "graph.json");
+    await mkdir(join(vaultRoot, ".obsidian"));
+    await writeFile(graphPath, '{"search":"mine"}');
+    expect((await scopeGraphFilter(vaultRoot, 'p OR path:projects/other')).ok).toBe(false);
+    expect(await readFile(graphPath, "utf8")).toBe('{"search":"mine"}');
+  });
+
+  it("does not follow graph.json symlinks into other vault files", async () => {
+    const target = join(vaultRoot, "user-settings.json");
+    await writeFile(target, '{"search":"mine"}');
+    await mkdir(join(vaultRoot, ".obsidian"));
+    await symlink(target, join(vaultRoot, ".obsidian", "graph.json"));
+    expect((await scopeGraphFilter(vaultRoot, "superskill")).ok).toBe(false);
+    expect(await readFile(target, "utf8")).toBe('{"search":"mine"}');
   });
 });

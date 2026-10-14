@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, rm, realpath } from "fs/promises";
+import { mkdir, rm, realpath, stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { sessionCommand } from "./session.js";
@@ -34,7 +34,7 @@ describe("sessionCommand", () => {
     await mkdir(join(vaultRoot, "coordination/locks"), { recursive: true });
     vaultFs = new VaultFS(vaultRoot);
     registry = new SessionRegistryManager(vaultRoot, 24);
-    ctx = createCommandContext(vaultFs, { sessionRegistry: registry });
+    ctx = createCommandContext(vaultFs, { sessionRegistry: registry, projectSlug: "test-project" });
     vi.spyOn(lifecycle, "assessWorktreeLifecycle").mockResolvedValue({ status: "not_repo", worktreeCount: null, currentLinked: null, policyInstalled: null, safety: "not_assessed", nextActions: [] });
     vi.spyOn(graphStore, "mutateGraph").mockImplementation(async (_root, update) => update({ nodes: [], edges: [] }));
   });
@@ -42,6 +42,77 @@ describe("sessionCommand", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await rm(vaultRoot, { recursive: true, force: true });
+  });
+
+  it("rejects unsafe tool names before creating a session", async () => {
+    for (const tool of ["../codex", "codex\nother", "a".repeat(65)]) {
+      await expect(sessionCommand({ action: "register", tool }, ctx)).rejects.toThrow(/tool/i);
+    }
+    expect(await registry.listActive()).toEqual([]);
+  });
+
+  it("honors explicit project filters and refuses conflicting scoped filters", async () => {
+    await registry.register("codex", "test-project");
+    const other = await registry.register("codex", "other-project");
+    const result = await sessionCommand({ action: "list_active", project: "other-project" }, { ...ctx, projectSlug: undefined });
+    expect(result.active_sessions?.map(session => session.id)).toEqual([other.session_id]);
+    await expect(sessionCommand({ action: "list_active", project: "other-project" }, ctx)).rejects.toThrow(/different project/i);
+  });
+
+  it("does not let an unscoped caller complete or heartbeat scoped sessions", async () => {
+    const registered = await registry.register("codex", "other-project");
+    for (const projectSlug of [undefined, null]) {
+      for (const action of ["complete", "heartbeat"] as const) {
+        await expect(sessionCommand({ action, sessionId: registered.session_id }, { ...ctx, projectSlug })).rejects.toThrow(/project/i);
+      }
+    }
+    expect((await registry.get(registered.session_id))?.status).toBe("active");
+  });
+
+  it("does not resurrect a deleted session workspace while settling its graph", async () => {
+    const workspace = join(vaultRoot, "gone-workspace");
+    await mkdir(workspace);
+    const registered = await registry.register("codex", "test-project", null, [], workspace);
+    await rm(workspace, { recursive: true });
+    vi.mocked(graphStore.mutateGraph).mockClear();
+    await sessionCommand({ action: "complete", sessionId: registered.session_id }, ctx);
+    expect(graphStore.mutateGraph).not.toHaveBeenCalled();
+    await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps archive recovery outputs when registry acknowledgment fails", async () => {
+    vi.mocked(lifecycle.assessWorktreeLifecycle).mockResolvedValue({ status: "available", worktreeCount: 2, currentLinked: false, policyInstalled: true, safety: "not_assessed", nextActions: [] });
+    const recovery = { worktree: "/removed", path: "/recover/worktree", manifest: "/recover/recovery.json", rescueRef: "refs/superskill/worktree-rescue/example", head: "a".repeat(40), state: "quarantined" as const };
+    vi.spyOn(cleanupModule, "cleanupCompletedWorktrees").mockResolvedValue({ removed: ["/removed"], archives: [{ worktree: "/removed", path: "/recover/archive" }], recoveries: [recovery], quarantined: [recovery], kept: [], errors: [] });
+    vi.spyOn(registry, "acknowledgeWorkspaceRemoval").mockRejectedValue(new Error("registry unavailable"));
+    const result = await sessionCommand({ action: "register", tool: "codex" }, ctx);
+    expect(result.worktree?.cleanup?.archives).toEqual([{ worktree: "/removed", path: "/recover/archive" }]);
+    expect(result.worktree?.cleanup?.removed).toEqual(["/removed"]);
+    expect(result.worktree?.cleanup?.recoveries).toEqual([recovery]);
+    expect(result.worktree?.cleanup?.quarantined).toEqual([recovery]);
+    expect(result.worktree?.cleanup?.errors).toContainEqual({ path: "/removed", reason: expect.stringContaining("registry unavailable") });
+  });
+
+  it("records worktree identity and updates only its HEAD at completion", async () => {
+    const info = await stat(vaultRoot);
+    const identity = { head: "a".repeat(40), gitDir: join(vaultRoot, ".git/worktrees/owned"), gitDirDev: info.dev, gitDirIno: info.ino + 1, gitDirBirthtimeMs: info.birthtimeMs, rootDev: info.dev, rootIno: info.ino, rootBirthtimeMs: info.birthtimeMs };
+    const capture = vi.spyOn(cleanupModule, "captureCleanupWorkspaceIdentity").mockResolvedValue(identity);
+    const registered = await sessionCommand({ action: "register", tool: "codex", workspacePath: vaultRoot }, ctx);
+    expect((await registry.get(registered.session_id!))?.workspace_identity).toEqual(identity);
+    const completedIdentity = { ...identity, head: "b".repeat(40) };
+    capture.mockResolvedValue(completedIdentity);
+    await sessionCommand({ action: "complete", sessionId: registered.session_id }, ctx);
+    expect((await registry.get(registered.session_id!))?.workspace_identity).toEqual(completedIdentity);
+  });
+
+  it("does not transfer workspace ownership when its registration identity changes", async () => {
+    const info = await stat(vaultRoot);
+    const identity = { head: "a".repeat(40), gitDir: join(vaultRoot, ".git/worktrees/owned"), gitDirDev: info.dev, gitDirIno: info.ino + 1, gitDirBirthtimeMs: info.birthtimeMs, rootDev: info.dev, rootIno: info.ino, rootBirthtimeMs: info.birthtimeMs };
+    const capture = vi.spyOn(cleanupModule, "captureCleanupWorkspaceIdentity").mockResolvedValue(identity);
+    const registered = await sessionCommand({ action: "register", tool: "codex", workspacePath: vaultRoot }, ctx);
+    capture.mockResolvedValue({ ...identity, gitDirIno: identity.gitDirIno + 1 });
+    await sessionCommand({ action: "complete", sessionId: registered.session_id }, ctx);
+    expect((await registry.get(registered.session_id!))?.workspace_identity).toBeUndefined();
   });
 
   it("automatically assesses the actual workspace at register and completion", async () => {
@@ -209,7 +280,7 @@ describe("sessionCommand", () => {
       }, ctx);
 
       expect(lockFreeDuringCleanup).toBe(true);
-      expect(cleanup).toHaveBeenCalledWith(workspace, expect.any(Array), { currentSessionId: result.session_id });
+      expect(cleanup).toHaveBeenCalledWith(workspace, expect.any(Array), { currentSessionId: result.session_id, readSessions: expect.any(Function), withSessionLease: expect.any(Function) });
     });
   });
 
@@ -365,11 +436,11 @@ describe("sessionCommand", () => {
         project: "other-project",
         taskSummary: "Task 2",
         allowShared: true,
-      }, ctx);
+      }, { ...ctx, projectSlug: undefined });
 
       const result = await sessionCommand({
         action: "list_active",
-      }, ctx);
+      }, { ...ctx, projectSlug: undefined });
 
       expect(result.active_sessions).toBeDefined();
       expect(result.active_sessions!.length).toBeGreaterThanOrEqual(2);
@@ -405,6 +476,16 @@ describe("sessionCommand", () => {
   });
 
   describe("persist session note", () => {
+    it("encodes wikilink delimiters in code-note targets", async () => {
+      const file = "src/a] b|c#d.ts";
+      await vaultFs.write(`projects/test-project/code/${file}.md`, "# code");
+      const registered = await registry.register("codex", "test-project");
+      const result = await sessionCommand({ action: "complete", sessionId: registered.session_id, filesTouched: [file] }, ctx);
+      const content = await vaultFs.read(result.session_note_path!);
+      expect(content).toContain("[[projects/test-project/code/src/a%5D b%7Cc%23d.ts]]");
+      expect(content).not.toContain(`[[projects/test-project/code/${file}]]`);
+    });
+
     it("creates session note when completing with project and vaultFs", async () => {
       await mkdir(join(vaultRoot, "projects/test-project/sessions"), { recursive: true });
 

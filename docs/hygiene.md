@@ -26,7 +26,7 @@ superskill hygiene --json                   # scripts + agents
 | `xcode` | DerivedData, legacy iOS DeviceSupport, unavailable simulators | DerivedData ≥ 5 GiB; DeviceSupport older than the newest version; any unavailable simulator |
 | `scratch` | Temp/scratch roots; dirs with a `.superskill-scratch.json` marker are *owned*, everything else is *review-only* | owned scratch idle ≥ 72h |
 
-Each item reports `bytes`, `ageDays`, `tier` (`auto` = regenerable, `consent` = needs an explicit OK, `review` = verify manually), `due`, `reason`, and `plan` — the literal command to reclaim it. Due-ness is conservative: unknown sizes/ages never mark an item due, dirty or unpushed worktrees are blocked, ignored files block worktree removals, and scratch is only ever recommended as due when it carries the ownership marker.
+Each item reports `bytes`, `ageDays`, `tier` (`auto` = regenerable, `consent` = needs an explicit OK, `review` = verify manually), `due`, `reason`, and `plan`. A proposed command is not authorization to run it. Unknown cache-name prefixes are not proof of ownership; unmanaged caches use exact recognized names and tool-native remediation where available. Dirty or unpushed worktrees are blocked, ignored files block removal proposals, and a scratch marker alone does not authorize cleanup outside the managed scratch root. Bounded or incomplete probes report uncertainty rather than claiming a complete inventory.
 
 ## Acting on the report
 

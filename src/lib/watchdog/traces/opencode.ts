@@ -5,15 +5,14 @@ import type { SessionTrace, TraceSessionRef, TraceToolCall } from "../types.js";
 import {
   addCall,
   capText,
-  DEFAULT_MAX_CALLS,
-  DEFAULT_MAX_TRACE_BYTES,
   errorText,
   listDirs,
   listFiles,
   newTrace,
   pushUserTurn,
   readJson,
-  safeStat,
+  readTextBounded,
+  traceLimits,
   type TraceListOptions,
   type TraceLoadOptions,
   type TraceSource,
@@ -64,6 +63,7 @@ function storageRoot(): string | null {
 }
 
 async function listSessions(opts: TraceListOptions = {}): Promise<TraceSessionRef[]> {
+  if (opts.project === null) return [];
   const storage = join(storageRoot() ?? "", "storage");
   const projectDirs = await listDirs(join(storage, "session"));
   const refs: TraceSessionRef[] = [];
@@ -103,6 +103,7 @@ function normalizeParts(parts: OpencodePartFile[], message: OpencodeMessageFile,
       continue;
     }
     if (part.type !== "tool" || typeof part.tool !== "string") continue;
+    if (trace.toolCalls.length >= maxCalls) { trace.truncated = true; continue; }
 
     const state = part.state ?? {};
     const input = state.input ?? {};
@@ -143,11 +144,20 @@ function normalizeParts(parts: OpencodePartFile[], message: OpencodeMessageFile,
 
 async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Promise<SessionTrace> {
   const trace = newTrace(ref);
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_TRACE_BYTES;
-  const maxCalls = opts.maxCalls ?? DEFAULT_MAX_CALLS;
+  const { maxBytes, maxCalls } = traceLimits(opts);
   const budget = { remaining: maxBytes };
+  let filesRead = 0;
+  async function readBudgetJson<T>(path: string): Promise<T | null> {
+    if (budget.remaining === 0 || filesRead >= 5000) { trace.truncated = true; return null; }
+    filesRead += 1;
+    const raw = await readTextBounded(path, Math.min(budget.remaining, 4 * 1024 * 1024));
+    if (!raw) return null;
+    budget.remaining -= raw.bytes;
+    if (raw.truncated) { trace.truncated = true; return null; }
+    try { return JSON.parse(raw.text) as T; } catch { return null; }
+  }
 
-  const session = await readJson<OpencodeSessionFile>(ref.storagePath);
+  const session = await readBudgetJson<OpencodeSessionFile>(ref.storagePath);
   if (session?.summary) {
     trace.diff = {
       files: session.summary.files ?? 0,
@@ -162,7 +172,8 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
 
   const messages: Array<{ file: string; data: OpencodeMessageFile }> = [];
   for (const file of messageFiles) {
-    const data = await readJson<OpencodeMessageFile>(join(messageDir, file));
+    if (budget.remaining === 0 || filesRead >= 5000) { trace.truncated = true; break; }
+    const data = await readBudgetJson<OpencodeMessageFile>(join(messageDir, file));
     if (data) messages.push({ file, data });
   }
   messages.sort((a, b) => (a.data.time?.created ?? 0) - (b.data.time?.created ?? 0));
@@ -175,6 +186,7 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
   let cost = 0;
 
   for (const { file, data } of messages) {
+    if (budget.remaining === 0 || filesRead >= 5000) { trace.truncated = true; break; }
     if (data.role === "assistant") {
       inputTokens += data.tokens?.input ?? 0;
       outputTokens += data.tokens?.output ?? 0;
@@ -194,14 +206,8 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
     const parts: OpencodePartFile[] = [];
     for (const partFile of partFiles) {
       const partPath = join(partDir, partFile);
-      const info = await safeStat(partPath);
-      const size = info?.size ?? 0;
-      if (size > budget.remaining) {
-        trace.truncated = true;
-        continue;
-      }
-      budget.remaining -= size;
-      const part = await readJson<OpencodePartFile>(partPath);
+      if (budget.remaining === 0 || filesRead >= 5000) { trace.truncated = true; break; }
+      const part = await readBudgetJson<OpencodePartFile>(partPath);
       if (part) parts.push(part);
     }
     normalizeParts(parts, data, trace, maxCalls);

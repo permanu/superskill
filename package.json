@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "One-entry orchestrator for coding agents: jailed vault, FTS knowledge graph, Obsidian-native architecture and code notes, 18-axis review. Curated packs — not a 90k-skill dump",
   "type": "module",
   "main": "dist/mcp-server.js",
@@ -43,28 +43,31 @@
     "dev": "node scripts/vendor-grammars.mjs && tsc --watch",
     "start:mcp": "node dist/mcp-server.js",
     "start:cli": "node dist/cli.js",
+    "pretest": "npm run build",
     "test": "vitest run",
+    "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
     "lint": "tsc --noEmit",
     "validate:rules": "node dist/rules/cli.js validate",
+    "validate:skills": "node scripts/check-skill-authoring.mjs",
     "verify:grammars": "node scripts/verify-grammars.mjs",
     "prepublishOnly": "npm run build",
     "postinstall": "node dist/setup/postinstall.js || true",
     "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "commander": "^13.1.0",
     "gray-matter": "^4.0.3",
     "web-tree-sitter": "0.24.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^3.0.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.11"
   },
   "license": "Apache-2.0",
   "author": "Permanu (Atharva Pandey)",

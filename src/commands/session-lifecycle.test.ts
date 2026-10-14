@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile, access } from "node:fs/promises";
@@ -16,9 +16,9 @@ const exec = promisify(execFile);
 const env = { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const git = async (cwd: string, args: string[]) => (await exec("git", args, { cwd, env })).stdout;
 let root: string | undefined;
-afterEach(async () => { invalidateProjectMapCache(); if (root) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); invalidateProjectMapCache(); if (root) await rm(root, { recursive: true, force: true }); });
 
-it("initializes and routes a linked workspace then cleans it after completion and main integration", async () => {
+it("initializes and routes a linked workspace then preserves it in recovery after completion and integration", async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "superskill-lifecycle-e2e-")));
   const repo = join(root, "repo");
   const tree = join(root, "worker-checkout");
@@ -36,6 +36,7 @@ it("initializes and routes a linked workspace then cleans it after completion an
   invalidateProjectMapCache();
   const resolved = await resolveWorkspaceContext(vault, tree, "fixture");
   const ctx = createCommandContext(new VaultFS(vault), resolved);
+  const maintenanceLease = vi.spyOn(ctx.sessionRegistry, "withMaintenanceLease");
   const start = await sessionCommand({ action: "register", tool: "codex", project: "fixture" }, ctx);
   expect(start.worktree?.currentLinked).toBe(true);
   const activation = await activateSkills({ task: "implement worker", files: ["worker.py"], phase: "implement", session_id: start.session_id, max_tokens: 4000 }, ctx);
@@ -55,17 +56,35 @@ it("initializes and routes a linked workspace then cleans it after completion an
   await git(repo, ["merge", "--ff-only", "worker"]);
   const registryPath = join(vault, "coordination", "session-registry.json");
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
+  let maintenanceAt = Date.now();
   for (const session of registry.sessions) {
     if (session.status !== "completed") continue;
-    session.completed_at = new Date(Date.now() - 120_000).toISOString();
+    const startedAt = Math.max(Date.parse(session.started_at), session.workspace_identity.gitDirBirthtimeMs);
+    const heartbeatAt = Math.max(startedAt, Date.parse(session.last_heartbeat));
+    const completedAt = Math.max(heartbeatAt, Date.parse(session.completed_at));
+    session.started_at = new Date(startedAt).toISOString();
+    session.last_heartbeat = new Date(heartbeatAt).toISOString();
+    session.completed_at = new Date(completedAt).toISOString();
+    maintenanceAt = Math.max(maintenanceAt, completedAt + 120_000);
     delete session.pid;
     delete session.host;
   }
   await writeFile(registryPath, JSON.stringify(registry, null, 2));
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(maintenanceAt);
   const next = await sessionCommand({ action: "register", tool: "codex", project: "fixture" }, mainCtx);
-  expect(next.worktree?.cleanup?.removed).toEqual([tree]);
+  expect(maintenanceLease).toHaveBeenCalledOnce();
+  expect(next.worktree?.cleanup?.removed).toEqual([]);
+  expect(next.worktree?.cleanup?.quarantined, JSON.stringify(next.worktree?.cleanup)).toHaveLength(1);
+  const recovery = next.worktree!.cleanup!.quarantined![0];
+  expect(recovery.worktree).toBe(tree);
+  expect(recovery.state).toBe("quarantined");
   expect(next.worktree?.cleanup?.archives).toHaveLength(1);
   await expect(access(tree)).rejects.toThrow();
   expect(await readFile(join(next.worktree!.cleanup!.archives![0].path, "graph.json"), "utf8")).toContain(start.session_id!);
-  expect((await ctx.sessionRegistry.get(start.session_id!))?.workspace_path).toBeUndefined();
+  expect(await readFile(join(recovery.path, "worker.py"), "utf8")).toBe("print('done')\n");
+  expect(JSON.parse(await readFile(recovery.manifest, "utf8"))).toMatchObject({ state: "quarantined", worktree: tree, head: recovery.head });
+  expect((await git(repo, ["rev-parse", recovery.rescueRef])).trim()).toBe(recovery.head);
+  expect(await git(repo, ["worktree", "list", "--porcelain", "-z"])).toContain(`worktree ${recovery.path}\0`);
+  expect((await ctx.sessionRegistry.get(start.session_id!))?.workspace_path).toBe(tree);
 }, 30000);

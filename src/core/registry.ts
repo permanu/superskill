@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { CommandContext, CommandHandler, CommandRegistration, MCPToolDefinition } from "./types.js";
+import type { CommandContext, CommandHandler, CommandRegistration, InputSchema, MCPToolDefinition } from "./types.js";
+import { VaultError } from "../lib/vault-fs.js";
 import { readCommand, listCommand } from "../commands/read.js";
 import { writeCommand } from "../commands/write.js";
 import { searchCommand } from "../commands/search.js";
@@ -46,17 +47,80 @@ import { watchdogCommand, type WatchdogArgs } from "../commands/watchdog.js";
 import { HYGIENE_CATEGORY_ORDER } from "../lib/hygiene/report.js";
 import type { AcceptanceInput } from "../lib/gates/spec.js";
 import type { TicketStatus } from "../lib/gates/tickets.js";
+import { validateNativeSkillCommand } from "../commands/skill/validate.js";
 
 export type { CommandRegistration } from "./types.js";
+
+function validateValue(schema: InputSchema, value: unknown, path: string): void {
+  const invalid = (requirement: string): never => {
+    throw new VaultError("INVALID_ARGUMENT", `${path} ${requirement}`);
+  };
+  const object = typeof value === "object" && value !== null && !Array.isArray(value);
+  if (schema.type === "object" && !object) invalid("must be an object");
+  if (schema.type === "array" && !Array.isArray(value)) invalid("must be an array");
+  if (schema.type === "string" && typeof value !== "string") invalid("must be a string");
+  if (schema.type === "boolean" && typeof value !== "boolean") invalid("must be a boolean");
+  if (schema.type === "null" && value !== null) invalid("must be null");
+  if (schema.type === "number" || schema.type === "integer") {
+    if (typeof value !== "number" || !Number.isFinite(value)) invalid("must be a finite number");
+    if (schema.type === "integer" && !Number.isInteger(value)) invalid("must be an integer");
+  }
+  if (schema.enum && !schema.enum.some(candidate => candidate === value)) {
+    invalid(`must be one of: ${schema.enum.join(", ")}`);
+  }
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) invalid(`must be >= ${schema.minimum}`);
+    if (schema.maximum !== undefined && value > schema.maximum) invalid(`must be <= ${schema.maximum}`);
+    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) invalid(`must be > ${schema.exclusiveMinimum}`);
+    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) invalid(`must be < ${schema.exclusiveMaximum}`);
+  }
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && [...value].length < schema.minLength) invalid(`must have at least ${schema.minLength} characters`);
+    if (schema.maxLength !== undefined && [...value].length > schema.maxLength) invalid(`must have at most ${schema.maxLength} characters`);
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) invalid("has an invalid format");
+  }
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) invalid(`must have at least ${schema.minItems} items`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) invalid(`must have at most ${schema.maxItems} items`);
+    const items = schema.items;
+    if (items) {
+      for (let index = 0; index < value.length; index++) validateValue(items, value[index], `${path}[${index}]`);
+    }
+  }
+  if (object) {
+    const fields = value as Record<string, unknown>;
+    const properties = schema.properties ?? {};
+    for (const key of schema.required ?? []) {
+      if (!Object.hasOwn(fields, key) || fields[key] === undefined) invalid(`requires ${key}`);
+    }
+    for (const [key, field] of Object.entries(fields)) {
+      if (Object.hasOwn(properties, key)) {
+        if (field !== undefined) validateValue(properties[key], field, `${path}.${key}`);
+      } else if (schema.additionalProperties === false) {
+        invalid(`does not allow field ${key}`);
+      } else if (typeof schema.additionalProperties === "object") {
+        validateValue(schema.additionalProperties, field, `${path}.${key}`);
+      }
+    }
+  }
+}
+
+export function validateArguments(schema: InputSchema, value: unknown): asserts value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new VaultError("INVALID_ARGUMENT", "arguments must be an object");
+  }
+  validateValue(schema, value, "arguments");
+}
+
+const WORKSPACE_PATH_SCHEMA: InputSchema = {
+  type: "string",
+  description: "Absolute thread workspace directory; must map to this project. Omit only when the server cwd is the thread workspace.",
+};
 
 export class CommandRegistry {
   private registrations = new Map<string, CommandRegistration>();
 
   register<TArgs, TResult>(name: string, registration: CommandRegistration<TArgs, TResult>): void {
-    if (name === "session" || name === "superskill" || name === "graph_traverse" || name === "knowledge_viz" || name === "impact" || name === "claims" || name.startsWith("worktree_")) {
-      const properties = registration.toolDef.inputSchema.properties as Record<string, unknown>;
-      properties.workspace_path = { type: "string", description: "Absolute thread workspace directory; must map to this project. Omit only when the server cwd is the thread workspace." };
-    }
     this.registrations.set(name, registration as CommandRegistration);
   }
 
@@ -68,9 +132,16 @@ export class CommandRegistry {
     return this.registrations.has(name);
   }
 
-  async execute(name: string, rawArgs: Record<string, unknown>, ctx: CommandContext): Promise<unknown> {
+  validate(name: string, rawArgs: unknown): void {
     const reg = this.registrations.get(name);
-    if (!reg) throw new Error(`Unknown command: ${name}`);
+    if (!reg) throw new VaultError("INVALID_ARGUMENT", `Unknown command: ${name}`);
+    validateArguments(reg.toolDef.inputSchema, rawArgs);
+  }
+
+  async execute(name: string, rawArgs: unknown, ctx: CommandContext): Promise<unknown> {
+    const reg = this.registrations.get(name);
+    if (!reg) throw new VaultError("INVALID_ARGUMENT", `Unknown command: ${name}`);
+    validateArguments(reg.toolDef.inputSchema, rawArgs);
 
     const adaptedArgs = reg.adaptArgs ? reg.adaptArgs(rawArgs) : rawArgs;
     return reg.handler(adaptedArgs, ctx);
@@ -91,7 +162,7 @@ export class CommandRegistry {
 
 const s = (v: unknown) => typeof v === "string" ? v : undefined;
 const n = (v: unknown) => typeof v === "number" ? v : undefined;
-const a = (v: unknown) => Array.isArray(v) ? v as unknown[] : undefined;
+const a = (v: unknown): unknown[] | undefined => Array.isArray(v) ? v : undefined;
 const b = (v: unknown) => v === true;
 const tier = (v: unknown): "auto" | "consent" | "both" | undefined => {
   const value = s(v);
@@ -108,13 +179,14 @@ const listLimit = (raw: Record<string, unknown>, actions: readonly string[]): nu
 export const DEFAULT_RESPONSE_MAX_BYTES = 65536;
 export const DEFAULT_READ_MAX_BYTES = 65536;
 export const READ_MAX_BYTES_CAP = 10 * 1024 * 1024;
-const RESPONSE_TRUNCATION_MARKER = (bytes: number) => `\n…[truncated; full size ${bytes} bytes]`;
+export const RESPONSE_MAX_BYTES_CAP = 10 * 1024 * 1024;
+export const GRAPH_OPEN_MAX_BYTES = 8 * 1024 * 1024;
 
 export function maxResponseBytes(): number {
   const raw = process.env.SUPERSKILL_MAX_RESPONSE_BYTES;
   if (raw === undefined || raw.trim() === "") return DEFAULT_RESPONSE_MAX_BYTES;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RESPONSE_MAX_BYTES;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, RESPONSE_MAX_BYTES_CAP) : DEFAULT_RESPONSE_MAX_BYTES;
 }
 
 export function serializeToolResult(value: unknown): string {
@@ -127,8 +199,17 @@ export function resolveReadMaxBytes(value: unknown): number {
   return Math.min(Math.floor(parsed), READ_MAX_BYTES_CAP);
 }
 
-function utf8Head(text: string, maxBytes: number): string {
-  const bytes = Buffer.from(text, "utf8");
+export function validateWorkspaceRelativePath(value: unknown): string {
+  if (
+    typeof value !== "string" || value.trim() === "" || value.startsWith("/") || /^[A-Za-z]:/.test(value) ||
+    value.includes("\\") || value.includes("\0") || value.split("/").some((part) => part === "..")
+  ) {
+    throw new VaultError("INVALID_ARGUMENT", "path must be a non-empty workspace-relative path without traversal");
+  }
+  return value;
+}
+
+function utf8Head(bytes: Buffer, maxBytes: number): string {
   let end = maxBytes;
   while (end > 0 && ((bytes[end] ?? 0) & 0b1100_0000) === 0b1000_0000) end -= 1;
   return bytes.subarray(0, end).toString("utf8");
@@ -137,7 +218,78 @@ function utf8Head(text: string, maxBytes: number): string {
 export function capResponseBytes(text: string, maxBytes: number): string {
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes <= maxBytes) return text;
-  return `${utf8Head(text, maxBytes)}${RESPONSE_TRUNCATION_MARKER(bytes)}`;
+  const wrap = (preview: string) => JSON.stringify({ truncated: true, bytes, preview });
+  const minimumBytes = Buffer.byteLength(wrap(""), "utf8");
+  const budget = Math.max(minimumBytes, Number.isFinite(maxBytes) ? Math.floor(maxBytes) : DEFAULT_RESPONSE_MAX_BYTES);
+  const buffer = Buffer.from(text, "utf8");
+  let low = 0;
+  let high = Math.min(bytes, budget);
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(wrap(utf8Head(buffer, middle)), "utf8") <= budget) low = middle;
+    else high = middle - 1;
+  }
+  return wrap(utf8Head(buffer, low));
+}
+
+export function fitGraphOpenResponse(value: unknown, maxBytes: number): string {
+  const cap = Number.isFinite(maxBytes) ? Math.floor(maxBytes) : DEFAULT_RESPONSE_MAX_BYTES;
+  const serialized = serializeToolResult(value);
+  if (Buffer.byteLength(serialized, "utf8") <= cap) return serialized;
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new VaultError("INVALID_ARGUMENT", "Graph open returned an invalid paginated result");
+  }
+  const result = value as Record<string, unknown>;
+  const content = result.content;
+  const totalBytes = result.bytes;
+  const offsetBytes = result.offset_bytes;
+  if (
+    typeof content !== "string" || typeof totalBytes !== "number" || !Number.isSafeInteger(totalBytes) || totalBytes < 0 ||
+    typeof offsetBytes !== "number" || !Number.isSafeInteger(offsetBytes) || offsetBytes < 0 || offsetBytes > totalBytes ||
+    Buffer.byteLength(content, "utf8") > totalBytes - offsetBytes
+  ) {
+    throw new VaultError("INVALID_ARGUMENT", "Graph open returned invalid byte pagination metadata");
+  }
+
+  const contentBuffer = Buffer.from(content, "utf8");
+  const makePage = (prefix: string): Record<string, unknown> => {
+    const contentBytes = Buffer.byteLength(prefix, "utf8");
+    const nextOffset = offsetBytes + contentBytes;
+    const readComplete = nextOffset >= totalBytes;
+    return {
+      ...result,
+      offset_bytes: offsetBytes,
+      next_offset_bytes: readComplete ? null : nextOffset,
+      read_complete: readComplete,
+      content_bytes: contentBytes,
+      content: prefix,
+      truncated: !readComplete,
+    };
+  };
+
+  if (cap < 1) {
+    throw new VaultError("INVALID_ARGUMENT", "Raise SUPERSKILL_MAX_RESPONSE_BYTES; graph open page metadata will not fit.");
+  }
+  const empty = serializeToolResult(makePage(""));
+  if (Buffer.byteLength(empty, "utf8") > cap) {
+    throw new VaultError("INVALID_ARGUMENT", "Raise SUPERSKILL_MAX_RESPONSE_BYTES; graph open page metadata will not fit.");
+  }
+
+  let low = 0;
+  let high = contentBuffer.byteLength;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const prefix = utf8Head(contentBuffer, middle);
+    const candidate = serializeToolResult(makePage(prefix));
+    if (Buffer.byteLength(candidate, "utf8") <= cap) low = middle;
+    else high = middle - 1;
+  }
+  const prefix = utf8Head(contentBuffer, low);
+  if (prefix.length === 0 && offsetBytes < totalBytes) {
+    throw new VaultError("INVALID_ARGUMENT", "Raise SUPERSKILL_MAX_RESPONSE_BYTES; graph open cannot fit content without stalling its cursor.");
+  }
+  return serializeToolResult(makePage(prefix));
 }
 
 export function boundReadContent(content: string, maxBytes: unknown): string {
@@ -158,6 +310,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           path: { type: "string", description: "Relative path within vault. Use '.' for root." },
           depth: { type: "number", description: "Directory listing depth (default 1)" },
           max_bytes: { type: "number", description: "Max file bytes to return (default 65536, cap 10485760)" },
@@ -177,6 +330,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           path: { type: "string", description: "Relative path within vault" },
           content: { type: "string", description: "Markdown content to write" },
           mode: { type: "string", enum: ["overwrite", "append", "prepend"], description: "Write mode (default append)" },
@@ -189,7 +343,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => {
       const mode = s(raw.mode);
       if (mode !== undefined && mode !== "append" && mode !== "prepend" && mode !== "overwrite") {
-        throw new Error(`Invalid write mode "${mode}"; must be one of: append, prepend, overwrite`);
+        throw new VaultError("INVALID_ARGUMENT", `Invalid write mode "${mode}"; must be one of: append, prepend, overwrite`);
       }
       return {
         path: raw.path as string,
@@ -203,12 +357,14 @@ export function createRegistry(): CommandRegistry {
 
   r.register("search", {
     handler: searchCommand as CommandHandler,
+    rateLimit: "write",
     toolDef: {
       name: "search",
       description: "Full-text search (SQLite FTS5 porter stemming) scoped to this project. Structured mode still matches frontmatter.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           query: { type: "string", description: "Search query or structured filter (e.g. 'type:adr project:permanu')" },
           path_filter: { type: "string", description: "Glob to restrict search scope" },
           mode: { type: "string", enum: ["text", "structured"], description: "Search mode (default text)" },
@@ -235,6 +391,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug. If omitted, auto-detected from CWD." },
           detail_level: { type: "string", enum: ["summary", "full"], description: "Detail level (default summary)" },
           max_tokens: { type: "integer", minimum: 256, maximum: 50000, description: "Estimated content token budget, also passed through in full detail" },
@@ -250,6 +407,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("generate_context", {
+    rateLimit: "expensive",
     handler: (async (args: { projectPath: string; slug?: string }) => {
       return initCommand(args.projectPath, args.slug);
     }) as CommandHandler,
@@ -280,6 +438,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           title: { type: "string", description: "Decision title" },
           context: { type: "string", description: "Why this decision was needed" },
           decision: { type: "string", description: "What was decided" },
@@ -309,6 +468,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list", "update", "board"], description: "Task action" },
           title: { type: "string", description: "Task title (required for add)" },
           task_id: { type: "string", description: "Task ID e.g. task-001 (required for update)" },
@@ -346,6 +506,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list"], description: "Learning action" },
           title: { type: "string", description: "Learning title (required for add)" },
           discovery: { type: "string", description: "What was discovered (required for add)" },
@@ -383,6 +544,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           topic: { type: "string", description: "Brainstorm topic (used as filename)" },
           content: { type: "string", description: "Content to add" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
@@ -406,6 +568,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["register", "heartbeat", "complete", "list_active"], description: "Session action" },
           tool: { type: "string", description: "Tool name: claude-code|opencode|codex" },
           project: { type: "string", description: "Project being worked on" },
@@ -451,11 +614,12 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           mode: { type: "string", enum: ["dry-run", "archive", "delete"], description: "Prune mode (default dry-run)" },
           project: { type: "string", description: "Project slug (or omit for auto-detect)" },
           all: { type: "boolean", description: "Prune all projects" },
-          sessions_days: { type: "number", description: "Session retention in days (default 30)" },
-          done_tasks_days: { type: "number", description: "Done task retention in days (default 30)" },
+          sessions_days: { type: "number", minimum: 0, description: "Session retention in days (default 30)" },
+          done_tasks_days: { type: "number", minimum: 0, description: "Done task retention in days (default 30)" },
         },
       },
       annotations: { destructiveHint: true },
@@ -479,6 +643,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
       },
@@ -495,6 +660,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
           limit: { type: "number", description: "Number of recent sessions to show (default 5)" },
           format: { type: "string", enum: ["json", "markdown"], description: "Output format (default markdown)" },
@@ -517,6 +683,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           path: { type: "string", description: "Relative path to the item in the vault" },
           reason: { type: "string", description: "Why this item is being deprecated" },
         },
@@ -566,7 +733,7 @@ export function createRegistry(): CommandRegistry {
     toolDef: {
       name: "telemetry",
       description:
-        "Local, opt-in rule-selection telemetry: status/enable/disable/report/clear. Events never leave the machine; prompts are stored only as truncated hashes.",
+        "Local, opt-in rule-selection telemetry: status/enable/disable/report/clear. Mutations require explicit user authorization and confirm=true. Events never leave the machine; prompts are stored only as truncated hashes.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -576,6 +743,7 @@ export function createRegistry(): CommandRegistry {
             description: "What to do; defaults to status.",
           },
           top: { type: "number", description: "Rows per selection/drop list for action=report (default 20)." },
+          confirm: { type: "boolean", description: "Explicit user authorization for enable/disable/clear (default false)" },
         },
       },
       annotations: { readOnlyHint: false },
@@ -583,6 +751,7 @@ export function createRegistry(): CommandRegistry {
     adaptArgs: (raw) => ({
       action: (typeof raw.action === "string" ? raw.action : "status") as TelemetryAction,
       top: n(raw.top),
+      confirm: b(raw.confirm),
     }),
   });
 
@@ -605,18 +774,21 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("doctor", {
-    handler: doctorCommand as CommandHandler,
+    rateLimit: "expensive",
+    handler: async (args: { fast?: boolean }, ctx) => doctorCommand({}, ctx, { skipCatalog: args.fast, skipToolchains: args.fast }),
     toolDef: {
       name: "doctor",
       description:
         "One-shot health check: install vs running MCP servers, vault + project mapping, project graph isolation (must stay gitignored/project-local), rules catalog, compile toolchains, telemetry, MCP clients.",
       inputSchema: {
         type: "object" as const,
-        properties: {},
+        properties: {
+          fast: { type: "boolean", description: "Skip catalog validation and toolchain probes (default false)" },
+        },
       },
       annotations: { readOnlyHint: true },
     },
-    adaptArgs: () => ({}),
+    adaptArgs: (raw) => ({ fast: b(raw.fast) }),
   });
 
   r.register("superskill", {
@@ -627,10 +799,11 @@ export function createRegistry(): CommandRegistry {
     }) as CommandHandler,
     toolDef: {
       name: "superskill",
-      description: "Route a task to curated in-repo packs (code/review/security/ops/devops) and deterministic verified rules selected by language, file hints, and phase. Lazy: only matching language + phase. Does not scrape skills.sh.",
+      description: "Route a task to curated in-repo packs and verified rules selected by language, keywords, symbols and file hints. Phase selects methodology packs and budget, not individual rule eligibility. Does not scrape skills.sh or execute plan flows/gates.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           task: { type: "string", description: "Describe what you're doing — superskill finds the right methodology and loads it." },
           skill_id: { type: "string", description: "Load a specific skill by ID (e.g. 'vercel-labs/agent-skills@react-best-practices')" },
           files: { type: "array", items: { type: "string" }, description: "Repo-relative file paths being worked on — selects file-triggered rules deterministically" },
@@ -678,6 +851,35 @@ export function createRegistry(): CommandRegistry {
     }),
   });
 
+  r.register("skill_validate", {
+    rateLimit: "expensive",
+    handler: validateNativeSkillCommand as CommandHandler,
+    toolDef: {
+      name: "skill_validate",
+      description: "Validate a native skill file against Anthropic or portable requirements without modifying it.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
+          path: {
+            type: "string",
+            minLength: 1,
+            maxLength: 4096,
+            pattern: "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$",
+            description: "Workspace-relative native skill path; absolute paths and traversal are not allowed.",
+          },
+          profile: { type: "string", enum: ["anthropic", "portable"], description: "Validation profile (default anthropic)" },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    adaptArgs: (raw) => ({
+      path: raw.path === undefined ? undefined : validateWorkspaceRelativePath(raw.path),
+      profile: s(raw.profile) as "anthropic" | "portable" | undefined,
+    }),
+  });
+
   r.register("skill_list_installed", {
     handler: (async () => listInstalledSkills()) as CommandHandler,
     toolDef: {
@@ -717,6 +919,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           source: { type: "string", description: "Relative path to the source vault note" },
           target: { type: "string", description: "Relative path (or note name) to link to" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
@@ -740,6 +943,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           source: { type: "string", description: "Relative path to the source vault note" },
           items: {
             type: "array",
@@ -751,6 +955,7 @@ export function createRegistry(): CommandRegistry {
                 content: { type: "string", description: "Body content for the extracted item" },
               },
               required: ["type", "title", "content"],
+              additionalProperties: false,
             },
             description: "Items to extract from the source document",
           },
@@ -769,14 +974,16 @@ export function createRegistry(): CommandRegistry {
 
   r.register("graph_related", {
     handler: graphRelatedCommand as CommandHandler,
+    rateLimit: "write",
     toolDef: {
       name: "graph_related",
       description: "Related notes via the FTS/edge index (related frontmatter + wikilinks), jailed to this project.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           path: { type: "string", description: "Relative path to the vault note" },
-          hops: { type: "number", description: "Number of hops (default 1)" },
+          hops: { type: "integer", minimum: 1, maximum: 8, description: "Number of hops (default 1, max 8)" },
         },
         required: ["path"],
       },
@@ -790,6 +997,7 @@ export function createRegistry(): CommandRegistry {
 
   r.register("graph_traverse", {
     handler: graphTraverseCommand as CommandHandler,
+    rateLimit: "write",
     toolDef: {
       name: "graph_traverse",
       description:
@@ -797,11 +1005,14 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["node", "children", "resolve", "open"], description: "Traversal action" },
           id: { type: "string", description: "Node id (required for node/children/open), e.g. rule:rust-own-borrow-over-clone, skill:code/rust, code:src/lib/graph/traverse.ts, vault:projects/<slug>/context.md" },
           task: { type: "string", description: "Task text (required for resolve)" },
-          limit: { type: "number", description: "Max children/resolve items (default 100/30)" },
+          limit: { type: "integer", minimum: 1, maximum: 1000, description: "Max children/resolve items (default 100/30, max 1000)" },
           full: { type: "boolean", description: "open: return the whole file instead of the 4KB cap" },
+          offset_bytes: { type: "integer", minimum: 0, maximum: GRAPH_OPEN_MAX_BYTES, description: "open: UTF-8 byte offset for the next page (default 0)" },
+          max_bytes: { type: "integer", minimum: 1, maximum: GRAPH_OPEN_MAX_BYTES, description: "open: maximum UTF-8 content bytes to return (default 4096; max 8388608)" },
         },
         required: ["action"],
       },
@@ -813,6 +1024,8 @@ export function createRegistry(): CommandRegistry {
       task: s(raw.task),
       limit: n(raw.limit),
       full: b(raw.full),
+      offsetBytes: n(raw.offset_bytes),
+      maxBytes: n(raw.max_bytes),
     }),
   });
 
@@ -824,6 +1037,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
       },
@@ -840,6 +1054,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
         },
       },
@@ -850,14 +1065,16 @@ export function createRegistry(): CommandRegistry {
 
   r.register("graph_cross_project", {
     handler: graphCrossProjectCommand as CommandHandler,
+    rateLimit: "write",
     toolDef: {
       name: "graph_cross_project",
       description: "Search the current project's vault only. Cross-project search is denied.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           query: { type: "string", description: "Search query" },
-          limit: { type: "number", description: "Max results (default 20)" },
+          limit: { type: "integer", minimum: 1, maximum: 1000, description: "Max results (default 20, max 1000)" },
         },
         required: ["query"],
       },
@@ -877,6 +1094,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
           branch: { type: "string", description: "Current git branch" },
           dirty_files: { type: "array", items: { type: "string" }, description: "List of dirty/uncommitted files" },
@@ -901,6 +1119,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list"], description: "Action" },
           key: { type: "string", description: "Fact key (required for add)" },
           value: { type: "string", description: "Fact value (required for add)" },
@@ -928,6 +1147,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list"], description: "Action" },
           name: { type: "string", description: "Credential name (required for add)" },
           location: { type: "string", description: "Where the credential is documented (required for add)" },
@@ -955,6 +1175,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list", "mark-follow-up"], description: "Action" },
           commit_hash: { type: "string", description: "Commit hash (required for add)" },
           purpose: { type: "string", description: "Purpose of the checkpoint (required for add)" },
@@ -984,6 +1205,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           items: {
             type: "array",
             items: {
@@ -996,6 +1218,7 @@ export function createRegistry(): CommandRegistry {
                 confidence: { type: "string", enum: ["high", "medium", "low"], description: "Confidence level (for learnings/research)" },
               },
               required: ["type", "title", "content"],
+              additionalProperties: false,
             },
             description: "Items to capture from the conversation",
           },
@@ -1012,17 +1235,17 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("template", {
-    handler: ((async (args: { action?: string; type?: string; variables?: Record<string, string> }) => {
+    handler: (async (args: { action?: string; type?: string; variables?: Record<string, string> }) => {
       if (args.action === "list") {
         return { templates: listTemplates() };
       }
       if (args.type) {
         const result = applyTemplate(args.type, args.variables ?? {});
-        if (!result) return { error: `No template found for type: ${args.type}` };
+        if (!result) throw new VaultError("FILE_NOT_FOUND", `No template found for type: ${args.type}`);
         return result;
       }
       return { templates: listTemplates() };
-    }) as unknown) as CommandHandler,
+    }) as CommandHandler,
     toolDef: {
       name: "template",
       description: "Get pre-filled templates for common vault item types (adr, prd, decision, learning, spec, rfc, roadmap, competitive-analysis, incident, research, vision, strategy). Use to scaffold new documents.",
@@ -1031,7 +1254,7 @@ export function createRegistry(): CommandRegistry {
         properties: {
           action: { type: "string", enum: ["list", "get"], description: "Action (default: list)" },
           type: { type: "string", description: "Template type to retrieve" },
-          variables: { type: "object", description: "Variables to substitute in the template (e.g. { title: 'My ADR' })" },
+          variables: { type: "object", additionalProperties: { type: "string" }, description: "Variables to substitute in the template (e.g. { title: 'My ADR' })" },
         },
       },
       annotations: { readOnlyHint: true },
@@ -1052,6 +1275,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["create", "status", "approve", "freeze", "list"], description: "Spec action" },
           title: { type: "string", description: "Spec title (required for create)" },
           goal: { type: "string", description: "What this work must achieve" },
@@ -1071,6 +1295,7 @@ export function createRegistry(): CommandRegistry {
                 manual: { type: "string", description: "Reason it can only be checked manually" },
               },
               required: ["text"],
+              additionalProperties: false,
             },
             description: "Acceptance criteria; each item needs a command or a manual reason",
           },
@@ -1108,6 +1333,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["create", "list", "board", "ready", "update"], description: "Ticket action" },
           spec: { type: "string", description: "Frozen spec reference (required for create)" },
           tickets: {
@@ -1126,6 +1352,7 @@ export function createRegistry(): CommandRegistry {
                       manual: { type: "string" },
                     },
                     required: ["text"],
+                    additionalProperties: false,
                   },
                   description: "Acceptance criteria; each item needs a command or a manual reason",
                 },
@@ -1133,6 +1360,7 @@ export function createRegistry(): CommandRegistry {
                 requires_review: { type: "boolean", description: "Require a review evidence entry before the gate passes" },
               },
               required: ["title"],
+              additionalProperties: false,
             },
             description: "Tickets to create (required for create)",
           },
@@ -1172,10 +1400,11 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["add", "list"], description: "Evidence action" },
           ticket: { type: "string", description: "Ticket id e.g. ticket-001" },
           command: { type: "string", description: "Command that was run (required for add)" },
-          exit: { type: "number", description: "Exit code (default 0)" },
+          exit: { type: "integer", description: "Exit code (default 0)" },
           output: { type: "string", description: "Command output (truncated when stored)" },
           commit: { type: "string", description: "Commit the evidence applies to (default: git HEAD of cwd)" },
           ts: { type: "string", description: "ISO timestamp (default: now)" },
@@ -1209,6 +1438,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           target: { type: "string", description: "Spec reference (NNN, NNN-slug, path) or ticket id (ticket-NNN)" },
           project: { type: "string", description: "Project slug (auto-detected if omitted)" },
           head: { type: "string", description: "Override HEAD commit for the evidence check" },
@@ -1227,6 +1457,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("impact", {
+    rateLimit: "expensive",
     handler: impactCommand as CommandHandler,
     toolDef: {
       name: "impact",
@@ -1234,6 +1465,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           target: { type: "string", description: "Repo-relative file path, file:<path> id, or symbol name" },
           to: { type: "string", description: "Optional second file/symbol target; when given, include the shortest path between both" },
           root: { type: "string", description: "Scan root (default: cwd)" },
@@ -1250,6 +1482,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("claims", {
+    rateLimit: "expensive",
     handler: claimsCommand as CommandHandler,
     toolDef: {
       name: "claims",
@@ -1257,6 +1490,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           claims: {
             type: "array",
             items: {
@@ -1282,6 +1516,7 @@ export function createRegistry(): CommandRegistry {
                 symbol: { type: "string", description: "no-other-callers: symbol name" },
               },
               required: ["kind"],
+              additionalProperties: false,
             },
             description: "Claims to verify",
           },
@@ -1306,9 +1541,11 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           json: { type: "boolean", description: "Return the raw variable map as JSON instead of shell syntax" },
           shell: { type: "string", enum: ["sh", "fish", "powershell"], description: "Shell syntax for the env text (default sh)" },
           providers: { type: "array", items: { type: "string" }, description: "Restrict to these build-cache providers (default: all detected)" },
+          timeout_ms: { type: "integer", minimum: 1, maximum: 30000, description: "Environment probe time budget in milliseconds (default 10000, max 30000)" },
         },
       },
       annotations: { readOnlyHint: true },
@@ -1317,10 +1554,12 @@ export function createRegistry(): CommandRegistry {
       json: b(raw.json),
       shell: s(raw.shell) as "sh" | "fish" | "powershell" | undefined,
       providers: a(raw.providers) as string[] | undefined,
+      timeoutMs: n(raw.timeout_ms),
     }),
   });
 
   r.register("worktree_audit", {
+    rateLimit: "expensive",
     handler: worktreeAuditCommand as CommandHandler,
     toolDef: {
       name: "worktree_audit",
@@ -1329,6 +1568,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           json: { type: "boolean", description: "Return JSON instead of text" },
           sizes: { type: "boolean", description: "Measure cache directory sizes (slower)" },
           worktree: { type: "string", description: "Audit only this worktree path (default: all worktrees)" },
@@ -1344,6 +1584,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("worktree_status", {
+    rateLimit: "expensive",
     handler: worktreeStatusCommand as CommandHandler,
     toolDef: {
       name: "worktree_status",
@@ -1351,6 +1592,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           json: { type: "boolean", description: "Return JSON instead of text" },
           budget: { type: "string", description: "Cache budget to check, e.g. '2G'" },
         },
@@ -1372,6 +1614,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           confirm: { type: "boolean", description: "true applies changes; false previews first (required)" },
           hooks: { type: "boolean", description: "Install the guarded post-checkout hook (default true)" },
           hosts: { type: "array", items: { type: "string" }, description: "Host session-hook adapters to install (default: all detected)" },
@@ -1404,6 +1647,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           item: { type: "array", items: { type: "string" }, description: "Audit item ids to apply (e.g. policy, hook, seed:pnpm)" },
           all_safe: { type: "boolean", description: "Apply every safe item that needs no extra consent" },
           confirm: { type: "boolean", description: "true mutates; false or omitted returns the plan" },
@@ -1425,10 +1669,11 @@ export function createRegistry(): CommandRegistry {
     toolDef: {
       name: "worktree_gc",
       description:
-        "Reclaim rebuildable build-cache entries (project-wise or --all). Default is a dry-run report. Mutations require confirm=true; deletions are quarantine-only (reversible via undo). Filters: tool, older_than, newer_than, min_size, max_size, tier, include, exclude, keep_latest, project, all, undo, purge.",
+        "Reclaim rebuildable build-cache entries (project-wise or --all). Default is a dry-run report. Mutations require confirm=true; deletions are quarantine-only (reversible via undo). Filters: tool, older_than, newer_than, min_size, max_size, tier, include, exclude, keep_latest, project, all, undo, journal_id, purge.",
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           tool: { type: "array", items: { type: "string" }, description: "Restrict to these tools (e.g. pnpm, cargo)" },
           older_than: { type: "string", description: "Only entries older than this (e.g. 30d, 12h, 2w)" },
           newer_than: { type: "string", description: "Only entries newer than this (e.g. 7d)" },
@@ -1440,10 +1685,11 @@ export function createRegistry(): CommandRegistry {
           keep_latest: { type: "number", description: "Always keep the N newest entries per tool" },
           project: { type: "string", description: "Vault project slug to scope to" },
           all: { type: "boolean", description: "Scan all repos, not just this one" },
-          undo: { type: "string", description: "Restore a quarantine journal id, reversing an apply" },
+          undo: { type: "string", description: "Preview restoring a quarantine journal id; confirm=true restores it, reversing an apply" },
+          journal_id: { type: "string", minLength: 1, pattern: "^[0-9A-Za-z][0-9A-Za-z._:-]*$(?![\\s\\S])", description: "Restrict purge to this quarantine journal id; must be a nonempty safe id" },
           purge: { type: "boolean", description: "Permanently delete quarantined entries older than 14d (requires confirm=true)" },
           worktree: { type: "string", description: "Worktree path to scope to (default: cwd)" },
-          confirm: { type: "boolean", description: "true applies/quarantines/purges; false or omitted is a dry-run report" },
+          confirm: { type: "boolean", description: "true applies/quarantines/restores/purges; false or omitted is a dry-run report" },
           json: { type: "boolean", description: "Return JSON instead of text" },
         },
       },
@@ -1462,6 +1708,7 @@ export function createRegistry(): CommandRegistry {
       project: s(raw.project),
       all: b(raw.all),
       undo: s(raw.undo),
+      journalId: s(raw.journal_id),
       purge: b(raw.purge),
       worktree: s(raw.worktree),
       apply: b(raw.confirm),
@@ -1479,6 +1726,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           purge_local: { type: "boolean", description: "Quarantine this repo's cache namespace (reversible; requires confirm=true)" },
           confirm: { type: "boolean", description: "true applies mutations; false or omitted skips cache purge" },
           json: { type: "boolean", description: "Return JSON instead of text" },
@@ -1494,6 +1742,7 @@ export function createRegistry(): CommandRegistry {
   });
 
   r.register("hygiene_report", {
+    rateLimit: "expensive",
     handler: hygieneCommand as CommandHandler,
     toolDef: {
       name: "hygiene_report",
@@ -1502,6 +1751,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           due: { type: "boolean", description: "Only report entries that are due for cleanup" },
           sizes: { type: "boolean", description: "Measure on-disk sizes (slower, more accurate)" },
           categories: {
@@ -1529,6 +1779,7 @@ export function createRegistry(): CommandRegistry {
       inputSchema: {
         type: "object" as const,
         properties: {
+          workspace_path: WORKSPACE_PATH_SCHEMA,
           action: { type: "string", enum: ["dig", "fix", "status"], description: "watchdog action" },
           scope: { type: "string", enum: ["session", "window", "env", "all"], description: "dig scope (default session)" },
           session_id: { type: "string", description: "Session id, optionally tool:id (default: latest session in this project)" },
@@ -1537,6 +1788,8 @@ export function createRegistry(): CommandRegistry {
           count: { type: "number", description: "Max sessions in window (default 20)" },
           project: { type: "string", description: "Project slug (auto-detected when omitted)" },
           all_projects: { type: "boolean", description: "Ignore the current project filter; review sessions across all projects" },
+          confirm: { type: "boolean", description: "Explicit user authorization for all_projects (default false)" },
+          include_prompts: { type: "boolean", default: false, description: "Include private prompt text in digests only with user authorization (default false)" },
           persist: { type: "boolean", description: "Persist the dig report to the vault (default true)" },
           finding_ids: { type: "array", items: { type: "string" }, description: "Finding ids for action=fix" },
           categories: {
@@ -1561,6 +1814,8 @@ export function createRegistry(): CommandRegistry {
       count: n(raw.count),
       project: s(raw.project),
       allProjects: b(raw.all_projects),
+      confirm: b(raw.confirm),
+      includePrompts: b(raw.include_prompts),
       persist: typeof raw.persist === "boolean" ? raw.persist : undefined,
       findingIds: a(raw.finding_ids) as string[] | undefined,
       categories: a(raw.categories) as string[] | undefined,

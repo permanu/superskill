@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { existsSync } from "fs";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 import { legacyMcpEntry, removeLegacySetup } from "./legacy.js";
 import type { DetectedClient, SetupResult } from "./types.js";
 import {
@@ -9,7 +9,7 @@ import {
   addMcpEntry,
   removeMcpEntry,
 } from "./json-config.js";
-import { isManagedLauncher, LATEST_ARGS, LATEST_ARRAY } from "./launcher.js";
+import { isManagedLauncher, isOurTool, LATEST_ARGS, LATEST_ARRAY } from "./launcher.js";
 import { insertTomlBlock } from "./toml-config.js";
 import {
   planMarkdownInstruction,
@@ -53,17 +53,20 @@ function appendSkip(current: string | undefined, message: string): string {
   return current ? `${current}; ${message}` : message;
 }
 
-function legacyEntryNames(existing: Record<string, any>, rootKey: string): { owned: string[]; foreign: string[] } {
+function legacyEntryNames(existing: Record<string, any>, rootKey: string): { owned: string[]; preserved: string[]; foreign: string[] } {
   const owned: string[] = [];
+  const preserved: string[] = [];
   const foreign: string[] = [];
   const root = existing[rootKey];
-  if (typeof root !== "object" || root === null) return { owned, foreign };
+  if (typeof root !== "object" || root === null) return { owned, preserved, foreign };
   for (const name of LEGACY_NAMES) {
     const entry = (root as Record<string, unknown>)[name];
     if (entry === undefined) continue;
-    (isManagedLauncher(entry) ? owned : foreign).push(name);
+    if (isManagedLauncher(entry)) owned.push(name);
+    else if (isOurTool(entry)) preserved.push(name);
+    else foreign.push(name);
   }
-  return { owned, foreign };
+  return { owned, preserved, foreign };
 }
 
 export function configureClient(
@@ -86,14 +89,23 @@ export function configureClient(
   }
 
   try {
+    assertSafeSetupPath(mcpConfigPath);
+    if (instructionPath) assertSafeSetupPath(instructionPath);
     if (config.configFormat === "json" && existsSync(mcpConfigPath)) {
       const existing = readJsonConfig(mcpConfigPath);
       if (existing === null) {
         result.error = `Invalid JSON in ${mcpConfigPath} — skipped`;
         return result;
       }
-      const { owned, foreign } = legacyEntryNames(existing, config.rootKey);
+      if (config.instructionStrategy === "config-array" && existing.instructions !== undefined && !Array.isArray(existing.instructions)) {
+        result.error = `Invalid instructions array in ${mcpConfigPath} — skipped`;
+        return result;
+      }
+      const { owned, preserved, foreign } = legacyEntryNames(existing, config.rootKey);
       if (foreign.length > 0) result.preserved = foreign.map((name) => `${name} (not superskill-managed)`);
+      if (preserved.length > 0) {
+        result.preserved = [...(result.preserved ?? []), ...preserved.map((name) => `${name} (pinned or customized launcher)`)];
+      }
       if (!readOnly && owned.length > 0) {
         try {
           updateJsonConfig(mcpConfigPath, (current) => {
@@ -146,18 +158,15 @@ export function configureClient(
         }
       }
     } else {
-      const content = existsSync(mcpConfigPath)
-        ? readFileSync(mcpConfigPath, "utf-8")
-        : "";
+      const original = readSetupText(mcpConfigPath);
+      const content = original ?? "";
       const updated = insertTomlBlock(content, buildTomlBlock(vaultPath), force);
       if (updated === null || updated === content) {
         result.skipped = appendSkip(result.skipped, "MCP entry already exists");
       } else if (readOnly) {
         result.mcpConfigured = true;
       } else {
-        const dir = dirname(mcpConfigPath);
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        writeFileSync(mcpConfigPath, updated, "utf-8");
+        writeSetupText(mcpConfigPath, updated, original);
         result.mcpConfigured = true;
       }
     }

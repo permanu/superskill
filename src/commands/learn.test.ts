@@ -30,6 +30,7 @@ describe("learnCommand", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(vaultRoot, { recursive: true, force: true });
   });
 
@@ -38,6 +39,68 @@ describe("learnCommand", () => {
     await vaultFs.write(path, "---\ntype: session\nsession_id: session-shared\nlearnings_captured: 0\n---\nSession body\n");
     await Promise.all(Array.from({ length: 8 }, (_, i) => learnCommand({ action: "add", title: `Discovery ${i}`, discovery: "Useful evidence", project: "test-project", sessionId: "session-shared" }, ctx)));
     expect(await vaultFs.read(path)).toContain("learnings_captured: 8");
+  });
+
+  it("rejects an invalid supplied confidence even for list", async () => {
+    for (const confidence of [null, "", "invalid"]) {
+      await expect(learnCommand({ action: "list", confidence: confidence as never, project: "test-project" }, ctx)).rejects.toThrow(/Invalid confidence/);
+    }
+  });
+
+  it.each([-1, 1.5, Number.NaN, Infinity, 501, "2", null])("rejects an invalid direct list limit: %j", async (limit) => {
+    await expect(learnCommand({ action: "list", project: "test-project", limit: limit as never }, ctx)).rejects.toThrow(/limit/i);
+  });
+
+  it("bounds direct learning lists to 50 by default and permits zero", async () => {
+    const paths = Array.from({ length: 51 }, (_, index) => `projects/test-project/learnings/${String(index + 1).padStart(3, "0")}-learning.md`);
+    await Promise.all(paths.map((path) => vaultFs.write(path, "---\ntype: learning\n---\n# Learning\n")));
+    expect((await learnCommand({ action: "list", project: "test-project" }, ctx)).learnings).toHaveLength(50);
+    expect((await learnCommand({ action: "list", project: "test-project", limit: 0 }, ctx)).learnings).toEqual([]);
+  });
+
+  it("logs unexpected session lookup failures after a successful learning capture", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const list = vaultFs.list.bind(vaultFs);
+    vi.spyOn(vaultFs, "list").mockImplementation((path, depth) => path.endsWith("/sessions") ? Promise.reject(new Error("session listing unavailable")) : list(path, depth));
+    const result = await learnCommand({ action: "add", title: "Captured", discovery: "body", sessionId: "session-1", project: "test-project" }, ctx);
+    expect(await vaultFs.read(result.path!)).toContain("# Captured");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("[learn]"), expect.stringContaining("session listing unavailable"));
+  });
+
+  it("leaves malformed session notes untouched without failing a successful learning capture", async () => {
+    const path = "projects/test-project/sessions/broken.md";
+    const raw = "---\ninvalid: [\n---\nBroken YAML";
+    await vaultFs.write(path, raw);
+    const result = await learnCommand({ action: "add", title: "Captured", discovery: "body", sessionId: "session-1", project: "test-project" }, ctx);
+    expect(await vaultFs.read(result.path!)).toContain("# Captured");
+    expect(await vaultFs.read(path)).toBe(raw);
+  });
+
+  it("does not replace a corrupt captured counter with NaN", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const path = "projects/test-project/sessions/existing.md";
+    await vaultFs.write(path, "---\ntype: session\nsession_id: session-1\nlearnings_captured: unknown\n---\nSession body\n");
+    await learnCommand({ action: "add", title: "Captured", discovery: "body", sessionId: "session-1", project: "test-project" }, ctx);
+    expect(await vaultFs.read(path)).toContain("learnings_captured: unknown");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Invalid learnings_captured"));
+  });
+
+  it("does not increment the session counter when the learning is rejected", async () => {
+    const path = "projects/test-project/sessions/existing.md";
+    await vaultFs.write(path, "---\ntype: session\nsession_id: session-1\nlearnings_captured: 2\n---\nSession body\n");
+    await expect(learnCommand({ action: "add", title: "Rejected", discovery: `ghp_${"A".repeat(36)}`, sessionId: "session-1", project: "test-project" }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+    expect(await vaultFs.read(path)).toContain("learnings_captured: 2");
+  });
+
+  it("surfaces unexpected learning directory failures and logs unexpected per-file failures", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const listing = vi.spyOn(vaultFs, "list").mockRejectedValueOnce(new Error("listing unavailable"));
+    await expect(learnCommand({ action: "list", project: "test-project" }, ctx)).rejects.toThrow("listing unavailable");
+    listing.mockRestore();
+    await vaultFs.write("projects/test-project/learnings/001-unreadable.md", "---\ntype: learning\n---\n# Learning");
+    vi.spyOn(vaultFs, "read").mockRejectedValueOnce(new Error("read unavailable"));
+    await learnCommand({ action: "list", project: "test-project" }, ctx);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("[learn]"), "read unavailable");
   });
 
   describe("add learning", () => {

@@ -3,7 +3,8 @@ import type { CommandContext } from "../core/types.js";
 import { resolveProject } from "../config.js";
 import { claimNumberedFile, slugify } from "../lib/auto-number.js";
 import { createFrontmatter, serializeFrontmatter } from "../lib/frontmatter.js";
-import { upsertVaultFile } from "../lib/knowledge-index.js";
+import { assertSafeVaultContent, VaultError } from "../lib/vault-fs.js";
+import { syncCapturedFile, validateBatchItems } from "./capture.js";
 
 export interface ExtractItem {
   type: string;
@@ -26,6 +27,7 @@ export async function extractCommand(
 ): Promise<ExtractResult> {
   const { source, items } = args;
   const vaultFs = ctx.vaultFs;
+  if (typeof source !== "string" || !source.trim()) throw new Error("Source must be a non-empty string");
 
   const sourceExists = await vaultFs.exists(source);
   if (!sourceExists) {
@@ -47,13 +49,9 @@ export async function extractCommand(
 
   const extracted: Array<{ path: string; type: string; title: string }> = [];
 
-  for (const item of items) {
-    if (!Object.hasOwn(typeDirMap, item.type)) {
-      throw new Error(`Unknown extract type "${item.type}". Allowed types: ${Object.keys(typeDirMap).join(", ")}`);
-    }
-  }
+  validateBatchItems(items, typeDirMap, "extract");
 
-  for (const item of items) {
+  const prepared = items.map((item) => {
     const dirName = typeDirMap[item.type];
     const dirPath = `projects/${projectSlug}/${dirName}`;
     const slug = slugify(item.title);
@@ -66,21 +64,22 @@ export async function extractCommand(
     });
 
     const body = `# ${item.title}\n\n${item.content}`;
-    const claim = await claimNumberedFile(vaultFs, dirPath, (_number, padded) => `${padded}-${slug}.md`, () => serializeFrontmatter(fm, body));
-    await syncIndex(ctx, claim.path);
+    const content = serializeFrontmatter(fm, body);
+    assertSafeVaultContent(content);
+    return { item, dirPath, slug, content };
+  });
 
-    extracted.push({ path: claim.path, type: item.type, title: item.title });
+  for (const [index, { item, dirPath, slug, content }] of prepared.entries()) {
+    try {
+      const claim = await claimNumberedFile(vaultFs, dirPath, (_number, padded) => `${padded}-${slug}.md`, () => content);
+      extracted.push({ path: claim.path, type: item.type, title: item.title });
+      await syncCapturedFile(ctx, claim.path);
+    } catch (cause: unknown) {
+      const message = `Extract item ${index + 1} failed after ${extracted.length} extracted (${extracted.map((entry) => entry.path).join(", ")}): ${cause instanceof Error ? cause.message : String(cause)}`;
+      const error = cause instanceof VaultError ? new VaultError(cause.code, message) : new Error(message, { cause });
+      throw Object.assign(error, { extracted, failed_index: index });
+    }
   }
 
   return { source, extracted };
-}
-
-async function syncIndex(ctx: CommandContext, path: string): Promise<void> {
-  try {
-    const stored = ctx.vaultFs.jailPath(path);
-    const raw = await ctx.vaultFs.read(path);
-    upsertVaultFile(ctx.vaultPath, stored, raw);
-  } catch (e: unknown) {
-    console.error("[knowledge-index] sync skipped:", e instanceof Error ? e.message : e);
-  }
 }

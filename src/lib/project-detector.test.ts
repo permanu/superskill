@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, writeFile, rm } from "fs/promises";
+import { mkdir, writeFile, rm, symlink, rename, realpath } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { detectProject, invalidateProjectMapCache } from "./project-detector.js";
@@ -22,6 +22,47 @@ describe("project-detector", () => {
   });
 
   describe("detectProject", () => {
+    it("reloads maps atomically replaced by another process", async () => {
+      const path = join(vaultRoot, "project-map.json");
+      await writeFile(path, JSON.stringify({ "/repos/a": "a" }));
+      expect(await detectProject("/repos/a", vaultRoot)).toBe("a");
+      await writeFile(`${path}.next`, JSON.stringify({ "/repos/a": "replacement" }));
+      await rename(`${path}.next`, path);
+      expect(await detectProject("/repos/a", vaultRoot)).toBe("replacement");
+    });
+
+    it("recognizes canonical aliases of mapped directories", async () => {
+      const project = join(vaultRoot, "repo");
+      await mkdir(project);
+      await writeFile(join(vaultRoot, "project-map.json"), JSON.stringify({ [project]: "repo" }));
+      expect(await detectProject(await realpath(project), vaultRoot)).toBe("repo");
+    });
+
+    it("honors explicit worktree mappings instead of stripping them first", async () => {
+      await writeFile(join(vaultRoot, "project-map.json"), JSON.stringify({ "/repos/a": "a", "/repos/a/.worktrees/b": "b" }));
+      expect(await detectProject("/repos/a/.worktrees/b/src", vaultRoot)).toBe("b");
+    });
+
+    it("prefers the longest containing mapped path regardless of insertion order", async () => {
+      await writeFile(join(vaultRoot, "project-map.json"), JSON.stringify({ "/repos": "parent", "/repos/nested": "nested" }));
+      expect(await detectProject("/repos/nested/src", vaultRoot)).toBe("nested");
+    });
+
+    it("refuses unsafe map symlinks even after an earlier map was cached", async () => {
+      const mapPath = join(vaultRoot, "project-map.json");
+      await writeFile(mapPath, JSON.stringify({ "/repos/a": "a" }));
+      expect(await detectProject("/repos/a", vaultRoot)).toBe("a");
+      await rm(mapPath);
+      await writeFile(join(vaultRoot, "other.json"), JSON.stringify({ "/repos/a": "other" }));
+      await symlink(join(vaultRoot, "other.json"), mapPath);
+      await expect(detectProject("/repos/a", vaultRoot)).rejects.toThrow(/symlink|unsafe/i);
+    });
+
+    it("never routes using an invalid project slug", async () => {
+      await writeFile(join(vaultRoot, "project-map.json"), JSON.stringify({ "/repos/a": "../other" }));
+      expect(await detectProject("/repos/a", vaultRoot)).toBeNull();
+    });
+
     it("returns null when no project-map.json", async () => {
       const result = await detectProject("/nonexistent/path", vaultRoot);
       expect(result).toBeNull();

@@ -57,7 +57,9 @@ describe("setup/teardown integration", () => {
     const content = readFileSync(mdPath, "utf-8");
     expect(content).toContain("# Existing content");
     expect(content).toContain("<!-- superskill:begin -->");
-    expect(content).toContain("catalog/constitution.md");
+    expect(content).toContain("Resolve graph metadata first");
+    expect(content).toContain("tools.superskill.<tool>");
+    expect(content).not.toContain("catalog/constitution.md");
 
     // Idempotent
     expect(writeMarkdownInstruction(mdPath)).toBe("exists");

@@ -25,6 +25,8 @@ describe("watchdog registration", () => {
       count: 5,
       project: undefined,
       allProjects: false,
+      confirm: false,
+      includePrompts: false,
       persist: undefined,
       findingIds: undefined,
       categories: undefined,
@@ -38,5 +40,12 @@ describe("watchdog registration", () => {
       findingIds: ["f_1"],
       persist: false,
     });
+    expect(reg.adaptArgs!({ action: "dig", all_projects: true, confirm: true, include_prompts: true })).toMatchObject({
+      allProjects: true,
+      confirm: true,
+      includePrompts: true,
+    });
+    expect(reg.toolDef.inputSchema.properties?.include_prompts).toMatchObject({ type: "boolean", default: false });
+    expect(reg.toolDef.inputSchema.properties?.confirm).toMatchObject({ type: "boolean" });
   });
 });

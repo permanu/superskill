@@ -14,12 +14,18 @@ Don't load catalog dumps — resolve first, open last:
 superskill graph resolve "fix a rust ownership bug"   # paths + byte/token estimates, no content
 superskill graph children rules:rust                  # descend one level (rules → lang → prefix)
 superskill graph node rule:rust-own-cow-conditional   # metadata + edges
-superskill graph open rule:rust-own-cow-conditional   # pull just this file (cap ~4KB, --full for all)
+superskill graph open rule:rust-own-cow-conditional   # pull a 4KB page (--full requests up to the source cap)
 ```
 
-Ids span every artifact: `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `code:<path>`, and opaque `symbol:<id>` values returned by file children or task resolution. The MCP equivalent is one tool: `graph_traverse` (`action: resolve|children|node|open`). Resolve and children return metadata without source bodies. Open defaults to 4,096 UTF-8 bytes; opening a symbol returns its source span rather than its whole file.
+Common IDs include `vault:<path>`, `skill:<pack/name>`, `rule:<id>`, `principle:<id>`, `constitution`, `code:<path>`, and opaque `symbol:<id>` values returned by file children or task resolution. The MCP equivalent is one tool: `graph_traverse` (`action: resolve|children|node|open`). Resolve and children return metadata without source bodies. Skill bundles may expose `skill_resource` children; discover and use their IDs from returned metadata rather than constructing them. Open defaults to a 4,096-byte UTF-8 page; `--full` requests up to the 8 MiB source limit. Opening a symbol returns its source span rather than its whole file.
 
 The storage boundaries are deliberate: Markdown is project memory, SQLite derives searchable note links, the source parser derives code relationships, and the project-local skill graph records routing and session outcomes. Traversal presents these through one metadata interface; visualization is a generated consumer, not a prerequisite for agent retrieval.
+
+The routing graph is separate from the vault: `.superskill/graph.json` and `.superskill/skill-cache/` live at the repository root and are gitignored, per-checkout state. The local cache entries may link to trusted installed skill content; they hold routing metadata and cache references, not project memory. The vault's Markdown remains authoritative; its `.knowledge-index.sqlite` is a derived FTS5/edge index under `VAULT_PATH/projects/<slug>/`.
+
+Indexed skill bundles can also expose bounded `skill_resource` child nodes for regular files other than `SKILL.md`. Hidden paths, build/dependency directories, symlinks, and files outside the trusted bundle roots are excluded. Resource metadata marks whether the file is valid UTF-8 text; discover node IDs through the owning skill's children and open text resources individually.
+
+`graph open` reads one node at a time. It defaults to 4,096 bytes; CLI callers can use `--offset-bytes <n> --max-bytes <n>`, and MCP callers can use `offset_bytes` and `max_bytes`. Responses include `next_offset_bytes` and `read_complete`; continue from the returned byte offset until complete. Offsets are UTF-8 byte positions.
 
 For methodology content, the `superskill` MCP tool returns a compact result by default. Set `max_tokens` (256–50,000) to bound estimated content tokens, and `detail: "full"` only when routing diagnostics are needed. The compact response reports content and complete serialized-response estimates separately; these are heuristic estimates, not tokenizer measurements. The CLI exposes the same behavior:
 

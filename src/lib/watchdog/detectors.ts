@@ -54,13 +54,13 @@ function makeFinding(input: FindingInput): Finding {
   };
 }
 
-function callLabel(call: TraceToolCall): string {
-  return `#${call.index} ${call.name}${call.inputSummary ? ` \`${call.inputSummary}\`` : ""}`;
+function callLabel(call: TraceToolCall, includePrompts = false): string {
+  return `#${call.index} ${call.name}${includePrompts && call.inputSummary ? ` \`${call.inputSummary}\`` : ""}`;
 }
 
 const READ_TOOLS = /^(read|view|open|readfile|file_read)$/i;
 
-export function detectToolErrorLoop(trace: SessionTrace): Finding[] {
+export function detectToolErrorLoop(trace: SessionTrace, includePrompts = false): Finding[] {
   const groups = new Map<string, TraceToolCall[]>();
   for (const call of trace.toolCalls) {
     if (call.status !== "error") continue;
@@ -80,8 +80,8 @@ export function detectToolErrorLoop(trace: SessionTrace): Finding[] {
       severity: "high",
       key,
       title: `Same failing call repeated ${calls.length}× — ${name}`,
-      detail: `\`${summary}\` failed ${calls.length} times. Retrying an identical call usually means the error was not read or the approach was wrong.`,
-      evidence: calls.slice(0, 4).map((call) => ({ source: "trace" as const, ref: `${callLabel(call)}${call.errorText ? `: ${call.errorText.slice(0, 120)}` : ""}` })),
+      detail: `${includePrompts ? `\`${summary}\`` : "The same input"} failed ${calls.length} times. Retrying an identical call usually means the error was not read or the approach was wrong.`,
+      evidence: calls.slice(0, 4).map((call) => ({ source: "trace" as const, ref: `${callLabel(call, includePrompts)}${includePrompts && call.errorText ? `: ${call.errorText.slice(0, 120)}` : ""}` })),
       proposal: `Read the first failure, fix the cause, then retry once. If the call has a failing pattern, add a guardrail (lint rule, wrapper script, or preflight check).`,
       tool: trace.ref.tool,
       sessionId: trace.ref.id,
@@ -93,7 +93,7 @@ export function detectToolErrorLoop(trace: SessionTrace): Finding[] {
 
 const POLL_RE = /write_stdin[^)]*chars\s*:\s*(""|'')/;
 
-export function detectRepeatedCalls(trace: SessionTrace): Finding[] {
+export function detectRepeatedCalls(trace: SessionTrace, includePrompts = false): Finding[] {
   const groups = new Map<string, TraceToolCall[]>();
   for (const call of trace.toolCalls) {
     if (!call.inputSummary) continue;
@@ -116,8 +116,8 @@ export function detectRepeatedCalls(trace: SessionTrace): Finding[] {
       severity: "medium",
       key: `repeat:${key}`,
       title: `Identical call made ${calls.length}× — ${name}`,
-      detail: `\`${summary}\` ran ${calls.length} times with the same input. Duplicate calls spend tokens without new information.`,
-      evidence: calls.slice(0, 4).map((call) => ({ source: "trace" as const, ref: callLabel(call) })),
+      detail: `${includePrompts ? `\`${summary}\`` : "The same call"} ran ${calls.length} times with the same input. Duplicate calls spend tokens without new information.`,
+      evidence: calls.slice(0, 4).map((call) => ({ source: "trace" as const, ref: callLabel(call, includePrompts) })),
       proposal: `Run it once and record the result (vault note, comment, or a script that caches), instead of re-deriving it.`,
       tool: trace.ref.tool,
       sessionId: trace.ref.id,
@@ -159,7 +159,7 @@ export function detectNavigationThrash(trace: SessionTrace): Finding[] {
   return findings;
 }
 
-export function detectFailedReads(trace: SessionTrace): Finding[] {
+export function detectFailedReads(trace: SessionTrace, includePrompts = false): Finding[] {
   const failed = trace.toolCalls.filter((call) => {
     if (call.status === "error" && (READ_TOOLS.test(call.name) || call.name.toLowerCase() === "read")) return true;
     return call.status === "error" && /ENOENT|no such file|not found/i.test(call.errorText ?? "");
@@ -171,7 +171,7 @@ export function detectFailedReads(trace: SessionTrace): Finding[] {
     key: "failed-reads",
     title: `${failed.length} tool calls failed on missing files/paths`,
     detail: `Reads or commands hit nonexistent paths ${failed.length} times.`,
-    evidence: failed.slice(0, 5).map((call) => ({ source: "trace" as const, ref: `${callLabel(call)}${call.errorText ? `: ${call.errorText.slice(0, 120)}` : ""}` })),
+    evidence: failed.slice(0, 5).map((call) => ({ source: "trace" as const, ref: `${callLabel(call, includePrompts)}${includePrompts && call.errorText ? `: ${call.errorText.slice(0, 120)}` : ""}` })),
     proposal: `Fix stale pointers in the docs the agent follows, or add a short "repo map" section listing where things live.`,
     tool: trace.ref.tool,
     sessionId: trace.ref.id,
@@ -199,7 +199,7 @@ export function detectVerificationGap(trace: SessionTrace, repo: RepoContext): F
   })];
 }
 
-export function detectOversizeOutputs(trace: SessionTrace): Finding[] {
+export function detectOversizeOutputs(trace: SessionTrace, includePrompts = false): Finding[] {
   const big = trace.toolCalls
     .filter((call) => (call.outputBytes ?? 0) >= T.oversizeBytes)
     .sort((a, b) => (b.outputBytes ?? 0) - (a.outputBytes ?? 0));
@@ -211,7 +211,7 @@ export function detectOversizeOutputs(trace: SessionTrace): Finding[] {
     key: "oversize-output",
     title: `${big.length} tool outputs over ${formatBytes(T.oversizeBytes)} (${formatBytes(totalBytes)} total)`,
     detail: `Large outputs flood the context window; the agent pays tokens for bytes it will not use.`,
-    evidence: big.slice(0, 4).map((call) => ({ source: "trace" as const, ref: `${callLabel(call)} → ${formatBytes(call.outputBytes ?? 0)}` })),
+    evidence: big.slice(0, 4).map((call) => ({ source: "trace" as const, ref: `${callLabel(call, includePrompts)} → ${formatBytes(call.outputBytes ?? 0)}` })),
     proposal: `Narrow the commands (head/grep/--quiet/jq filters) or add a project script that returns a summary instead of the raw dump.`,
     tool: trace.ref.tool,
     sessionId: trace.ref.id,
@@ -220,8 +220,8 @@ export function detectOversizeOutputs(trace: SessionTrace): Finding[] {
 
 const CORRECTION_RE = /^\s*(no\b|nope\b|not what|stop\b|actually\b|wait\b|wrong\b|undo\b|revert\b|that's not|you didn'?t|again\b|i said\b)/i;
 
-export function detectPromptCorrections(trace: SessionTrace): Finding[] {
-  const corrections = trace.userTurns.filter((turn) => CORRECTION_RE.test(turn));
+export function detectPromptCorrections(trace: SessionTrace, includePrompts = false): Finding[] {
+  const corrections = trace.userTurns.map((turn, index) => ({ turn, index })).filter(({ turn }) => CORRECTION_RE.test(turn));
   if (corrections.length < T.correctionMin) return [];
   return [makeFinding({
     category: "prompt",
@@ -229,7 +229,7 @@ export function detectPromptCorrections(trace: SessionTrace): Finding[] {
     key: "prompt-corrections",
     title: `User corrected course ${corrections.length}× mid-session`,
     detail: `Repeated corrections usually mean the task was under-specified at the start, not that the agent was careless.`,
-    evidence: corrections.slice(0, 4).map((turn) => ({ source: "trace" as const, ref: `"${turn.slice(0, 140)}"` })),
+    evidence: corrections.slice(0, 4).map(({ turn, index }) => ({ source: "trace" as const, ref: includePrompts ? `"${turn.slice(0, 140)}"` : `session ${trace.ref.tool}:${trace.ref.id} user turn #${index}` })),
     proposal: `For this kind of task, front-load alignment: run a grilling pass (pipeline/grill) or write a short spec before implementation.`,
     tool: trace.ref.tool,
     sessionId: trace.ref.id,
@@ -254,7 +254,7 @@ export function detectErrorRate(trace: SessionTrace): Finding[] {
   })];
 }
 
-export function detectSessionNoteSignals(trace: SessionTrace): Finding[] {
+export function detectSessionNoteSignals(trace: SessionTrace, includePrompts = false): Finding[] {
   const notes = trace.sessionNotes;
   if (!notes) return [];
   const blocked = notes.blocked ?? [];
@@ -266,8 +266,8 @@ export function detectSessionNoteSignals(trace: SessionTrace): Finding[] {
       severity: "low",
       key: "note-blocked",
       title: `Session ended blocked (${blocked.length} blocker${blocked.length === 1 ? "" : "s"})`,
-      detail: blocked.slice(0, 3).join(" · ").slice(0, 300),
-      evidence: blocked.slice(0, 4).map((item) => ({ source: "trace" as const, ref: item })),
+      detail: includePrompts ? blocked.slice(0, 3).join(" · ").slice(0, 300) : `${blocked.length} blockers recorded in the session note; excerpts omitted.`,
+      evidence: blocked.slice(0, 4).map((item, index) => ({ source: "trace" as const, ref: includePrompts ? item : `session ${trace.ref.tool}:${trace.ref.id} blocker #${index}` })),
       proposal: `Resolve or ticket the blockers before re-running, and split the task so the next session does not inherit the wall.`,
       tool: trace.ref.tool,
       sessionId: trace.ref.id,
@@ -279,8 +279,8 @@ export function detectSessionNoteSignals(trace: SessionTrace): Finding[] {
       severity: "low",
       key: "note-partial",
       title: `Session ended with ${partial.length} item${partial.length === 1 ? "" : "s"} partially complete`,
-      detail: partial.slice(0, 3).join(" · ").slice(0, 300),
-      evidence: partial.slice(0, 4).map((item) => ({ source: "trace" as const, ref: item })),
+      detail: includePrompts ? partial.slice(0, 3).join(" · ").slice(0, 300) : `${partial.length} incomplete items recorded in the session note; excerpts omitted.`,
+      evidence: partial.slice(0, 4).map((item, index) => ({ source: "trace" as const, ref: includePrompts ? item : `session ${trace.ref.tool}:${trace.ref.id} incomplete item #${index}` })),
       proposal: `Turn the leftovers into tasks/tickets before the next run so they do not get lost or re-done.`,
       tool: trace.ref.tool,
       sessionId: trace.ref.id,
@@ -332,15 +332,16 @@ export function detectSteering(repo: RepoContext, homeDir?: string): Finding[] {
   const home = homeDir ?? process.env.HOME ?? "";
 
   for (const file of repo.steering) {
+    const metricsNote = file.truncated ? " Retained-prefix metrics only; the file exceeds the byte cap and metrics are incomplete." : "";
     if (file.estimatedTokens >= T.steeringTokensHigh) {
       findings.push(makeFinding({
         category: "steering",
         severity: "high",
         key: `steering-size:${file.realPath}`,
         title: `Steering file very large: ${file.path} (~${file.estimatedTokens} tokens)`,
-        detail: `${file.lines} lines load into every agent turn regardless of task. Every line spends context load; reference material belongs behind pointers.`,
+        detail: `${file.lines} lines load into every agent turn regardless of task. Every line spends context load; reference material belongs behind pointers.${metricsNote}`,
         evidence: [
-          { source: "repo", ref: `${file.path}: ${file.lines} lines, ~${file.estimatedTokens} tokens` },
+          { source: "repo", ref: `${file.path}: ${file.lines} lines, ~${file.estimatedTokens} tokens${metricsNote}` },
         ],
         proposal: `Keep AGENTS.md/CLAUDE.md for navigation pointers only. Move reference into docs/skills and point at them; push standards to the review flow.`,
       }));
@@ -350,8 +351,8 @@ export function detectSteering(repo: RepoContext, homeDir?: string): Finding[] {
         severity: "medium",
         key: `steering-size:${file.realPath}`,
         title: `Steering file is getting heavy: ${file.path} (~${file.estimatedTokens} tokens)`,
-        detail: `${file.lines} lines load on every turn. Look for no-ops and duplicated instructions, and disclose reference behind pointers.`,
-        evidence: [{ source: "repo", ref: `${file.path}: ${file.lines} lines, ~${file.estimatedTokens} tokens` }],
+        detail: `${file.lines} lines load on every turn. Look for no-ops and duplicated instructions, and disclose reference behind pointers.${metricsNote}`,
+        evidence: [{ source: "repo", ref: `${file.path}: ${file.lines} lines, ~${file.estimatedTokens} tokens${metricsNote}` }],
         proposal: `Prune no-op lines, collapse duplicated rules into one source of truth, and point at docs for anything only some branches need.`,
       }));
     }
@@ -394,7 +395,7 @@ export function detectSteering(repo: RepoContext, homeDir?: string): Finding[] {
         severity: "medium",
         key: `steering-dupe:${[a.realPath, b.realPath].sort().join("|")}`,
         title: `Duplicated steering: ${a.path} ≈ ${b.path} (${Math.round(similarity * 100)}% shared lines)`,
-        detail: `The same instructions live in two files. Duplication costs maintenance and inflates a meaning's prominence past its real rank.`,
+        detail: `The same instructions live in two files. Duplication costs maintenance and inflates a meaning's prominence past its real rank.${a.truncated || b.truncated ? " Similarity is based on retained prefixes only; metrics are incomplete." : ""}`,
         evidence: [
           { source: "repo", ref: `${a.path} (${a.lines} lines)` },
           { source: "repo", ref: `${b.path} (${b.lines} lines)` },

@@ -178,7 +178,7 @@ function handleCall(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
   const callee = node.namedChildren[0];
   if (!callee) return;
   if (callee.type === "simple_identifier") {
-    builder.addUse({ from: ctx.parentId, name: callee.text, kind: "calls", node });
+    builder.addUse({ from: ctx.parentId, name: callee.text, kind: "calls", node, ...(ctx.classId ? { classId: ctx.classId } : {}) });
     return;
   }
   if (callee.type === "navigation_expression") {
@@ -186,7 +186,7 @@ function handleCall(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
     const suffix = callee.childForFieldName("suffix");
     const name = suffix ? findFirst(suffix, "simple_identifier")?.text : undefined;
     if (!name) return;
-    if (target?.type === "simple_identifier" && target.text === "self") {
+    if (target?.type === "self_expression" || (target?.type === "simple_identifier" && target.text === "self")) {
       builder.addUse({
         from: ctx.parentId,
         name,

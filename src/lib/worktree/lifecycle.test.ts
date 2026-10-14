@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -66,5 +66,21 @@ describe("assessWorktreeLifecycle", { timeout: 15000 }, () => {
     await mkdir(join(root, ".git", "superskill"));
     await writeFile(join(root, ".git", "superskill", "policy.json"), "{invalid");
     expect(await assessWorktreeLifecycle(root)).toMatchObject({ status: "available", policyInstalled: null, safety: "not_assessed" });
+  });
+
+  it("does not follow symlinked state directories or policy files during assessment", async () => {
+    const root = await repo();
+    const outside = await fixture();
+    const raw = JSON.stringify({ v: 1, repoId: "test", stacks: [], activation: {} });
+    await writeFile(join(outside, "policy.json"), raw);
+    const state = join(root, ".git", "superskill");
+    await symlink(outside, state);
+    expect(await assessWorktreeLifecycle(root)).toMatchObject({ policyInstalled: null, safety: "not_assessed" });
+    await rm(state);
+    await mkdir(state);
+    await symlink(join(outside, "policy.json"), join(state, "policy.json"));
+    expect(await assessWorktreeLifecycle(root)).toMatchObject({ policyInstalled: null, safety: "not_assessed" });
+    expect(await readFile(join(outside, "policy.json"), "utf-8")).toBe(raw);
+    expect(await readdir(outside)).toEqual(["policy.json"]);
   });
 });

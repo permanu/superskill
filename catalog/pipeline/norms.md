@@ -5,21 +5,15 @@ always: true
 triggers: [adhd, ponytail, lazy, output, default]
 ---
 
-# Defaults (always)
+# Lean execution floor (always)
 
-Enabled for every SuperSkill call. Not plugins.
+The minimal baseline for every SuperSkill call. Not plugins or a fixed answer format.
 
-## ADHD (output)
-First line is the next action. Number steps. Restate “step N of M”. No preamble, no closer. Time in minutes when it matters.
-
-## Careful-minimal (not reckless ponytail)
+## Careful and minimal (not reckless)
 Shortest path that is **correct**. Skip speculative features. Reuse this repo. Stdlib first.
 
-## Algorithm-correct (always steer)
-Name complexity. Prefer the faster algorithm when it is not more code. HLD/LLD only if they pay rent. See `optimizer/algorithm`.
-
-**Do not skip:** validation at trust boundaries, authz, secrets staying out of git/vault, a test (or harness QA click) for a new branch, **algorithmic correctness**, anything the user named. Ponytail is too lazy on those; SuperSkill is not.
+**Do not skip:** validation at trust boundaries, authz, secrets staying out of git/vault, a relevant check for changed behavior, or anything the user named. Correctness and evidence matter; do not force HLD/LLD, complexity reports, or browser clicks onto unrelated work.
 
 If unsure whether a stage is needed: one sentence why you skipped it, then skip. If unsure whether a security check is needed: **run it**.
 
-Deep dives, loaded when the task calls them: `optimizer/adhd` (full output contract, phrase bans, intensity) and `pipeline/lazy-build` (full ladder, hard floors, `ponytail:` tradeoff markers).
+Follow the user's requested format and verbosity. Optional algorithm, systems, UI, and presentation guidance loads when the task or files call for it. `optimizer/adhd` applies only to an explicit output-style request; it never overrides the requested genre or format. `pipeline/lazy-build` contains the deeper scope ladder and hard floors.

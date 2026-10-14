@@ -117,6 +117,7 @@ describe("pythonProvider", () => {
   });
 
   it("prunes the uv cache", async () => {
+    await writeFile(join(ctx.projectRoot, "uv.lock"), "");
     expect(await pythonProvider.prune(ctx)).toEqual({
       tool: "uv",
       command: "uv",
@@ -125,6 +126,12 @@ describe("pythonProvider", () => {
       autoSafe: true,
       minAgeDays: 30,
     });
+  });
+
+  it("never proposes uv pruning for a pip or Poetry project", async () => {
+    await writeFile(join(ctx.projectRoot, "requirements.txt"), "");
+    await writeFile(join(ctx.projectRoot, "poetry.lock"), "");
+    expect(await pythonProvider.prune(ctx)).toBeNull();
   });
 
   it("documents the per-worktree .venv rule", async () => {

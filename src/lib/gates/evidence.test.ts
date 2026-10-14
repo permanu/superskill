@@ -109,7 +109,7 @@ describe("evidence storage", () => {
     expect(records.map((r) => r.command)).toEqual(["first", "second"]);
   });
 
-  it("skips malformed lines", async () => {
+  it("fails closed on malformed lines rather than exposing earlier passing evidence", async () => {
     const { vaultFs, cleanup: clean } = await createTestVault();
     cleanup = clean;
 
@@ -118,8 +118,29 @@ describe("evidence storage", () => {
       `${JSON.stringify(record())}\nnot json\n{"ticket":"ticket-001"}\n`,
     );
 
-    const records = await readEvidence(vaultFs, "p", "ticket-001");
-    expect(records).toHaveLength(1);
-    expect(records[0].command).toBe("npm test");
+    await expect(readEvidence(vaultFs, "p", "ticket-001")).rejects.toThrow(/Malformed evidence.*line 2/i);
+  });
+
+  it.each([
+    { ticket: "ticket-999" },
+    { command: " " },
+    { exit: null },
+    { exit: "0" },
+    { exit: 0.5 },
+    { commit: "" },
+    { ts: "not-a-date" },
+    { output: null },
+  ])("never treats an invalid stored record as passing evidence: %j", async (invalid) => {
+    const { vaultFs, cleanup: clean } = await createTestVault();
+    cleanup = clean;
+    await vaultFs.write(evidencePath("p", "ticket-001"), `${JSON.stringify(record())}\n${JSON.stringify({ ...record(), ...invalid })}\n`);
+    await expect(readEvidence(vaultFs, "p", "ticket-001")).rejects.toThrow(/Malformed evidence.*line 2/i);
+  });
+
+  it.each([Number.NaN, Infinity, 0.5, null, "0"])("requires a finite integer exit when appending a record: %j", async (exit) => {
+    const { vaultFs, cleanup: clean } = await createTestVault();
+    cleanup = clean;
+    await expect(appendEvidence(vaultFs, "p", record({ exit: exit as never }))).rejects.toThrow(/exit.*finite integer/i);
+    expect(await vaultFs.exists(evidencePath("p", "ticket-001"))).toBe(false);
   });
 });

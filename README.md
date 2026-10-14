@@ -50,7 +50,7 @@ Full install, MCP client snippets, upgrade, and uninstall: [Getting started](doc
 - **Project-jailed vault and knowledge graph** — markdown under `projects/<slug>/` is the source of truth; SQLite FTS5 + edges is derived; agents traverse lazily instead of loading dumps. [Knowledge graph](docs/knowledge-graph.md)
 - **Code graph** — tree-sitter WASM `impact` and `claims`, with every edge tagged EXTRACTED or INFERRED. [Code graph](docs/knowledge-graph.md#code-graph-impact-and-claims)
 - **Obsidian-native memory** — `graph viz` writes Mermaid architecture notes, code notes, a project dashboard, and Bases views. [Obsidian](docs/obsidian.md)
-- **Worktree cache sharing** — share safe caches (package stores, compiler caches), isolate build state, seed fresh worktrees copy-on-write; reports and quarantine by default, never deletes. [Worktrees](docs/worktrees.md)
+- **Worktree cache sharing** — share safe caches (package stores, compiler caches), isolate build state, seed fresh worktrees copy-on-write; reports and recoverable quarantine by default, with explicit purge controls. [Worktrees](docs/worktrees.md)
 - **Space hygiene** — a read-only report of what is worth reclaiming and the exact command to reclaim it. [Hygiene](docs/hygiene.md)
 - **Watchdog** — session-trace review pinned against the repo, returning severity-ranked findings with evidence and proposals. [Watchdog](docs/watchdog.md)
 - **Local-first and safe** — vault jail, secret scanner, fail-closed skill audits, prompt-injection scan, MCP write rate limits, opt-in local telemetry. [Security](docs/security.md)
@@ -84,12 +84,15 @@ git clone https://github.com/permanu/superskill.git
 cd superskill
 npm install
 npm run lint              # tsc --noEmit
-npm test                  # vitest
-npm run build             # tsc
+npm run build             # explicit tsc + vendored parser build
+npm test                  # rebuild, then Vitest including built CLI/MCP tests
+npm run test:coverage     # rebuild, test, enforce coverage thresholds
 npm run validate:rules    # node dist/rules/cli.js validate
 ```
 
 Rule authoring follows `docs/authoring/CONTRACT.md`: one falsifiable decision per file, primary sources required, compilable Bad/Good snippets, and `status: verified` only after independent verification. See `CONTRIBUTING.md` for the PR workflow.
+
+For native `SKILL.md` files, use the [template](docs/SKILL-TEMPLATE.md) and the `skill validate` profile. Structural validation and unit fixtures establish only the deterministic cases they exercise; even a green result does not establish model effectiveness or compatibility with every harness. Model behavior remains unproven until separate evaluations complete; fixtures or runner scaffolding alone are not a paid-model result. Only report behavior for the exact tested model/harness matrix. See [Anthropic's skill-authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
 
 ## License
 

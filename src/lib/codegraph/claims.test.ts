@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { fixturePath } from "./__fixtures__/paths.js";
@@ -26,6 +28,12 @@ describe("claimPath", () => {
     expect(claimPath(ROOT, "file:src/alpha.ts")).toBe("src/alpha.ts");
     expect(claimPath(ROOT, join(ROOT, "src", "alpha.ts"))).toBe("src/alpha.ts");
     expect(claimPath(ROOT, "src/../src/alpha.ts")).toBe("src/alpha.ts");
+  });
+
+  it("rejects lexical escapes, drive paths, and NUL bytes", () => {
+    for (const path of ["../outside.ts", "/outside.ts", "file:../../outside.ts", "C:\\outside.ts", "src/\0.ts"]) {
+      expect(() => claimPath(ROOT, path)).toThrow(/outside|invalid/);
+    }
   });
 });
 
@@ -112,9 +120,10 @@ describe("verifyClaims", () => {
     expect(missingFile.verdict).toBe("refuted");
   });
 
-  it("verifies no-other-importers when the scan has no incoming imports edge", async () => {
+  it("does not verify no-other-importers from an empty heuristic edge set", async () => {
     const clean = await verify({ kind: "no-other-importers", file: "src/gamma.ts" });
-    expect(clean.verdict).toBe("verified");
+    expect(clean.verdict).toBe("unverifiable");
+    expect(clean.evidence.some((item) => item.kind === "scan" && /incomplete/i.test(item.detail ?? ""))).toBe(true);
     expect(clean.evidence[0].id).toBe("file:src/gamma.ts");
 
     const imported = await verify({ kind: "no-other-importers", file: "src/beta.ts" });
@@ -127,9 +136,10 @@ describe("verifyClaims", () => {
     expect(missing.verdict).toBe("refuted");
   });
 
-  it("verifies no-other-callers only when no INFERRED call edge points at the symbol", async () => {
+  it("does not verify no-other-callers from an empty heuristic edge set", async () => {
     const clean = await verify({ kind: "no-other-callers", symbol: "lonely" });
-    expect(clean.verdict).toBe("verified");
+    expect(clean.verdict).toBe("unverifiable");
+    expect(clean.evidence.some((item) => item.kind === "scan" && /incomplete/i.test(item.detail ?? ""))).toBe(true);
 
     const called = await verify({ kind: "no-other-callers", symbol: "helper" });
     expect(called.verdict).toBe("unverifiable");
@@ -156,6 +166,31 @@ describe("verifyClaims", () => {
     expect(report.root).toBe(ROOT);
     expect(report.summary).toEqual({ verified: 1, refuted: 1, unverifiable: 1 });
     expect(report.claims).toHaveLength(3);
+  });
+
+  it("rejects existing and missing outside paths with the same result, including symlink parents", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "codegraph-claims-outside-"));
+    const root = await mkdtemp(join(tmpdir(), "codegraph-claims-root-"));
+    try {
+      await writeFile(join(outside, "secret.ts"), "export const secret = 1;");
+      await symlink(outside, join(root, "alias"));
+      const localScan = await scanRepo(root);
+      for (const path of [join(outside, "secret.ts"), join(outside, "missing.ts"), "alias/secret.ts", "alias/missing.ts"]) {
+        await expect(verifyClaims([{ kind: "file-exists", path }], { root, scan: localScan })).rejects.toThrow(/outside/);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["swift", "java", "c", "cpp"] as const)("does not claim complete %s importer/caller coverage", async (language) => {
+    const nodes = scan.graph.nodes.map((node) => ({ ...node, language: node.language === "external" ? "external" as const : language }));
+    const report = await verifyClaims([
+      { kind: "no-other-importers", file: "src/gamma.ts" },
+      { kind: "no-other-callers", symbol: "lonely" },
+    ], { root: ROOT, scan: { ...scan, graph: { ...scan.graph, languages: [language], nodes } } });
+    expect(report.claims.every((claim) => claim.verdict === "unverifiable")).toBe(true);
   });
 });
 

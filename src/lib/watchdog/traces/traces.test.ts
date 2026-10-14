@@ -234,7 +234,7 @@ describe("codex trace adapter branch coverage", () => {
     expect(invalid?.startedAt).toBe(Math.round(old.getTime()));
 
     const since = await listTraceSessions({ tool: "codex", since: Date.parse("2026-01-15T00:00:00Z") });
-    expect(since.map((ref) => ref.id).sort()).toEqual(["rollout-2026-02-01T00-00-00-b", "rollout-2026-03-01T00-00-00-c"]);
+    expect(since.map((ref) => ref.id).sort()).toEqual(["rollout-2026-01-01T00-00-00-a", "rollout-2026-02-01T00-00-00-b", "rollout-2026-03-01T00-00-00-c"]);
 
     const limited = await listTraceSessions({ tool: "codex", limit: 1 });
     expect(limited).toHaveLength(1);
@@ -250,16 +250,13 @@ describe("codex trace adapter branch coverage", () => {
     expect(excluded).toHaveLength(0);
   });
 
-  it("treats an unreadable rollout head as having no cwd", async () => {
+  it("reports an unreadable rollout head instead of treating it as an empty listing", async () => {
     const path = await writeRollout("2026/06/01", "rollout-2026-06-01T00-00-00-lock.jsonl", [
       { type: "session_meta", payload: { cwd: "/tmp/hidden" } },
     ]);
     await chmod(path, 0o000);
     try {
-      const refs = await listTraceSessions({ tool: "codex" });
-      const ref = refs.find((entry) => entry.id === "rollout-2026-06-01T00-00-00-lock");
-      expect(ref).toBeDefined();
-      expect(ref?.project).toBeUndefined();
+      await expect(listTraceSessions({ tool: "codex" })).rejects.toThrow("codex:EACCES");
     } finally {
       await chmod(path, 0o600);
     }
@@ -366,6 +363,7 @@ describe("codex trace adapter branch coverage", () => {
     });
     expect(missing.toolCalls).toEqual([]);
     expect(missing.truncated).toBe(false);
+    expect(missing.sourceErrors).toBeUndefined();
     expect(codexSource.root()).toBe(root);
     expect(codexSource.id).toBe("codex");
     expect(codexSource.label).toBe("Codex CLI");
@@ -392,7 +390,7 @@ describe("claude-code trace adapter branch coverage", () => {
     return path;
   }
 
-  it("lists sessions, decoding slugs and honoring head cwd, since, limit, and project filters", async () => {
+  it("lists sessions without inventing paths from lossy slugs and honors head cwd, since, limit, and project filters", async () => {
     const matchPath = await writeSession("-tmp-cc-match", "aaa.jsonl", [
       { type: "user", cwd: "/tmp/cc/target", message: { role: "user", content: "hi" } },
     ]);
@@ -407,15 +405,15 @@ describe("claude-code trace adapter branch coverage", () => {
     const all = await listTraceSessions({ tool: "claude-code" });
     expect(all.map((ref) => ref.id).sort()).toEqual(["aaa", "bbb", "ccc"]);
     const other = all.find((ref) => ref.id === "bbb");
-    expect(other?.project).toBe("/tmp/cc/other");
+    expect(other?.project).toBeUndefined();
     const noSlug = all.find((ref) => ref.id === "ccc");
-    expect(noSlug?.project).toBe("plain-dir");
+    expect(noSlug?.project).toBeUndefined();
 
     const filtered = await listTraceSessions({ tool: "claude-code", project: "/tmp/cc/target" });
     expect(filtered.map((ref) => ref.id)).toEqual(["aaa"]);
 
     const otherFiltered = await listTraceSessions({ tool: "claude-code", project: "/tmp/cc/other" });
-    expect(otherFiltered.map((ref) => ref.id)).toEqual(["bbb"]);
+    expect(otherFiltered).toEqual([]);
 
     const since = await listTraceSessions({ tool: "claude-code", since: Date.parse("2025-01-01T00:00:00Z") });
     expect(since.map((ref) => ref.id)).toEqual(["aaa"]);

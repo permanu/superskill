@@ -103,13 +103,12 @@ function walk(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
       }
       for (const spec of node.namedChildren) {
         if (spec.type !== "const_spec" && spec.type !== "var_spec") continue;
-        for (const name of spec.namedChildren) {
-          if (name.type !== "identifier") continue;
+        for (const name of spec.childrenForFieldName("name")) {
+          if (name.type !== "identifier" || name.text === "_") continue;
           builder.addSymbol("const", name.text, node, {
             parentId: ctx.parentId,
             exported: isExported(name.text),
           });
-          break;
         }
       }
       return;
@@ -138,7 +137,7 @@ function handleImportSpec(spec: SyntaxNode, builder: FileBuilder, statement: Syn
   const specifier = unquote(path.text);
   const segments = specifier.split("/");
   const binding = name ? name.text : (segments[segments.length - 1] ?? specifier);
-  builder.addImport(specifier, binding, statement);
+  builder.addImport(specifier, binding, statement, binding, true);
 }
 
 function methodReceiverType(node: SyntaxNode): string | null {

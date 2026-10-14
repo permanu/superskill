@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { chmod, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { gitTopLevel, hashId, repoStateDir } from "./paths.js";
+import { gitCommonDir, gitTopLevel, hashId, repoStateDir } from "./paths.js";
 import { clearHookState, readHookState, writeHookState, type HookState } from "./state.js";
+import { unsafePathReason } from "./host-adapters/helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +15,27 @@ const GIT_TIMEOUT_MS = 5000;
 const HOOK_STATE_VERSION = 1;
 const DEFAULT_HOOK_MODE = 0o755;
 const MANAGED_HOOK_KINDS = new Set<HookState["kind"]>(["block", "husky", "lefthook"]);
+
+type OwnedHookState = HookState & { hookFile?: string; created?: boolean; blockHash?: string };
+
+async function hookPathReason(worktreeRoot: string, path: string): Promise<string | null> {
+  const repoRoot = await gitTopLevel(worktreeRoot);
+  if (repoRoot === null) return "not a git repository; hook left unchanged";
+  const common = await gitCommonDir(worktreeRoot);
+  const roots = [worktreeRoot, repoRoot, ...(common === null ? [] : [common])];
+  for (const root of roots) {
+    const rel = relative(resolve(root), resolve(path));
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    if ((await lstat(root)).isSymbolicLink()) return `symlink hook directory left unchanged: ${root}`;
+    return unsafePathReason(path, root);
+  }
+  return `hook path outside trusted repository/git directories; left unchanged: ${path}`;
+}
+
+async function requireHookPath(worktreeRoot: string, path: string): Promise<void> {
+  const reason = await hookPathReason(worktreeRoot, path);
+  if (reason !== null) throw new Error(reason);
+}
 
 export type HookManagerKind = "block" | "husky" | "lefthook" | "precommit" | "none";
 
@@ -73,11 +97,12 @@ async function fileExists(path: string): Promise<boolean> {
 
 async function readBytes(path: string): Promise<Buffer | null> {
   try {
-    return await readFile(path);
+    return await readFile(path, { flag: constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
       console.error(`[worktree-hooks] cannot read ${path}: ${code ?? String(err)}`);
+      throw err;
     }
     return null;
   }
@@ -100,13 +125,21 @@ async function fileMode(path: string): Promise<number | null> {
   }
 }
 
-async function atomicWrite(filePath: string, content: Buffer, mode: number): Promise<void> {
+async function atomicWrite(worktreeRoot: string, filePath: string, content: Buffer, mode: number, expected?: Buffer | null): Promise<void> {
+  await requireHookPath(worktreeRoot, filePath);
+  const before = expected === undefined ? await readBytes(filePath) : expected;
   const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-  const tmpPath = join(dir, `.${basename(filePath)}.tmp-${process.pid}-${Date.now().toString(36)}`);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await requireHookPath(worktreeRoot, filePath);
+  const tmpPath = join(dir, `.${basename(filePath)}.tmp-${randomUUID()}`);
   try {
-    await writeFile(tmpPath, content, { mode });
+    await writeFile(tmpPath, content, { mode: 0o600, flag: "wx" });
     await chmod(tmpPath, mode);
+    await requireHookPath(worktreeRoot, filePath);
+    const current = await readBytes(filePath);
+    if (before === null ? current !== null : current === null || !before.equals(current)) {
+      throw new Error(`${filePath} changed during write; left unchanged`);
+    }
     await rename(tmpPath, filePath);
   } catch (err) {
     try {
@@ -171,11 +204,14 @@ interface BlockRegion {
 }
 
 function findRegion(content: Buffer): BlockRegion | null {
-  const start = content.indexOf(HOOK_START_BYTES);
+  let start = content.indexOf(HOOK_START_BYTES);
+  while (start > 0 && content[start - 1] !== 0x0a) start = content.indexOf(HOOK_START_BYTES, start + HOOK_START_BYTES.length);
   if (start === -1) return null;
-  const endMarker = content.indexOf(HOOK_END_BYTES, start + HOOK_START_BYTES.length);
+  let endMarker = content.indexOf(HOOK_END_BYTES, start + HOOK_START_BYTES.length);
+  while (endMarker > 0 && content[endMarker - 1] !== 0x0a) endMarker = content.indexOf(HOOK_END_BYTES, endMarker + HOOK_END_BYTES.length);
   if (endMarker === -1) return { start, end: content.length, terminated: false };
   const after = endMarker + HOOK_END_BYTES.length;
+  if (after < content.length && content[after] !== 0x0a) return { start, end: content.length, terminated: false };
   return {
     start,
     end: after < content.length && content[after] === 0x0a ? after + 1 : after,
@@ -200,7 +236,7 @@ export async function detectHookManager(worktreeRoot: string): Promise<HookManag
     : null;
   const hookAt = resolvedHooksDir ? join(resolvedHooksDir, "post-checkout") : fallback;
 
-  if (hooksPath && hooksPath.includes(".husky")) {
+  if (resolvedHooksDir === join(repoRoot, ".husky") || resolvedHooksDir === join(repoRoot, ".husky", "_")) {
     return { kind: "husky", hooksPath, hookFile: join(repoRoot, ".husky", "post-checkout") };
   }
   if (await fileExists(join(repoRoot, ".pre-commit-config.yaml"))) {
@@ -291,6 +327,9 @@ async function planBlockWrite(
         content: null,
       };
     }
+    if (!regionOwned(existing, region, null)) {
+      return { ...unchangedPlan(mode, ["modified or unrecognized superskill hook block; left unchanged"]), refused: true };
+    }
     const content = Buffer.concat([
       existing.subarray(0, region.start),
       payload,
@@ -341,13 +380,21 @@ async function planBlockWrite(
   };
 }
 
-async function commitBlockWrite(filePath: string, plan: BlockWritePlan): Promise<void> {
+async function commitBlockWrite(worktreeRoot: string, filePath: string, plan: BlockWritePlan, before: Buffer | null): Promise<void> {
   if (!plan.changed || plan.content === null) return;
-  if (plan.backupPath !== null && !(await fileExists(plan.backupPath))) {
-    await mkdir(dirname(plan.backupPath), { recursive: true });
-    await copyFile(filePath, plan.backupPath);
+  await requireHookPath(worktreeRoot, filePath);
+  const current = await readBytes(filePath);
+  if (before === null ? current !== null : current === null || !before.equals(current)) {
+    throw new Error("hook changed during installation; left unchanged");
   }
-  await atomicWrite(filePath, plan.content, plan.mode);
+  if (plan.backupPath !== null) {
+    await requireHookPath(worktreeRoot, plan.backupPath);
+    if (!(await fileExists(plan.backupPath))) {
+      await mkdir(dirname(plan.backupPath), { recursive: true, mode: 0o700 });
+      await writeFile(plan.backupPath, before as Buffer, { flag: "wx", mode: 0o600 });
+    }
+  }
+  await atomicWrite(worktreeRoot, filePath, plan.content, plan.mode, before);
 }
 
 function lefthookBody(cli: string | null): string {
@@ -377,6 +424,11 @@ export async function installPostCheckoutHook(
   const cli = normalizeCliPath(opts.cliPath);
   const fingerprint = fingerprintFor(cli);
   const info = await detectHookManager(worktreeRoot);
+  const stateFile = join(await repoStateDir(worktreeRoot), "hook.state");
+  const unsafe = await hookPathReason(worktreeRoot, info.hookFile) ?? await hookPathReason(worktreeRoot, stateFile);
+  if (unsafe !== null) {
+    return { changed: false, kind: info.kind, hookFile: info.hookFile, backupPath: null, fingerprint, notes: [unsafe] };
+  }
 
   if (info.kind === "precommit") {
     return {
@@ -401,14 +453,18 @@ export async function installPostCheckoutHook(
     }
     const content = Buffer.from(lefthookFile(cli, fingerprint), "utf-8");
     if (!dryRun) {
-      await atomicWrite(info.hookFile, content, 0o644);
-      await writeHookState(worktreeRoot, {
+      await atomicWrite(worktreeRoot, info.hookFile, content, 0o644, null);
+      const state: OwnedHookState = {
         v: HOOK_STATE_VERSION,
         kind: "lefthook",
         fingerprint,
         backupPath: null,
         installedAt: new Date().toISOString(),
-      });
+        hookFile: info.hookFile,
+        created: true,
+        blockHash: hashId(content.toString("utf-8"), 64),
+      };
+      await writeHookState(worktreeRoot, state);
     }
     notes.push("created .lefthook-local.yml with a post-checkout bootstrap command");
     return { changed: true, kind: "lefthook", hookFile: info.hookFile, backupPath: null, fingerprint, notes };
@@ -416,6 +472,14 @@ export async function installPostCheckoutHook(
 
   const kind: "block" | "husky" = info.kind === "husky" ? "husky" : "block";
   const block = hookBlock(fingerprint, cli);
+  const before = await readBytes(info.hookFile);
+  const previous = await readHookState(worktreeRoot) as OwnedHookState | null;
+  const previousRegion = before === null ? null : findRegion(before);
+  const wasManaged = previous?.hookFile === info.hookFile && previousRegion?.terminated === true;
+  if (before !== null && previousRegion?.terminated && previous?.hookFile === info.hookFile &&
+    previous.blockHash && hashId(before.subarray(previousRegion.start, previousRegion.end).toString("utf-8"), 64) !== previous.blockHash) {
+    return { changed: false, kind, hookFile: info.hookFile, backupPath: null, fingerprint, notes: ["modified superskill hook block; left unchanged"] };
+  }
   const plan = await planBlockWrite(worktreeRoot, info.hookFile, block);
   const notes = [...plan.notes];
   if (plan.refused) {
@@ -429,15 +493,19 @@ export async function installPostCheckoutHook(
     };
   }
   if (dryRun) notes.push("dry-run: no hook changes written");
-  else await commitBlockWrite(info.hookFile, plan);
+  else await commitBlockWrite(worktreeRoot, info.hookFile, plan, before);
   if (!dryRun) {
-    await writeHookState(worktreeRoot, {
+    const state: OwnedHookState = {
       v: HOOK_STATE_VERSION,
       kind,
       fingerprint,
-      backupPath: plan.backupPath,
+      backupPath: plan.backupPath ?? (previous?.hookFile === info.hookFile ? previous.backupPath : null),
       installedAt: new Date().toISOString(),
-    });
+      hookFile: info.hookFile,
+      created: wasManaged ? previous?.created : before === null,
+      blockHash: hashId(`${block}\n`, 64),
+    };
+    await writeHookState(worktreeRoot, state);
   }
   return {
     changed: plan.changed,
@@ -460,20 +528,23 @@ async function restorableBackupPath(
   filePath: string,
   state: HookState | null,
 ): Promise<string | null> {
-  const recorded = state?.backupPath ?? null;
-  if (recorded !== null && (await fileExists(recorded))) return recorded;
   const deterministic = join(
     await repoStateDir(worktreeRoot),
     "hooks",
     `${basename(filePath)}.superskill.bak`,
   );
+  const recorded = state?.backupPath;
+  if (recorded != null && (typeof recorded !== "string" || resolve(recorded) !== resolve(deterministic))) return null;
+  if (await hookPathReason(worktreeRoot, deterministic) !== null) return null;
   if (await fileExists(deterministic)) return deterministic;
   return null;
 }
 
-async function restoreBackupBytes(backupPath: string, filePath: string): Promise<boolean> {
+async function restoreBackupBytes(worktreeRoot: string, backupPath: string, filePath: string, remaining: Buffer, mode: number, expected: Buffer): Promise<boolean> {
   try {
-    await copyFile(backupPath, filePath);
+    const backup = await readBytes(backupPath);
+    if (backup === null || (!backup.equals(remaining) && !Buffer.concat([backup, NEWLINE_BYTES]).equals(remaining))) return false;
+    await atomicWrite(worktreeRoot, filePath, backup, mode, expected);
     return true;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -482,6 +553,18 @@ async function restoreBackupBytes(backupPath: string, filePath: string): Promise
     );
     return false;
   }
+}
+
+function regionOwned(existing: Buffer, region: BlockRegion, state: HookState | null, lefthook = false): boolean {
+  const content = existing.subarray(region.start, region.end).toString("utf-8");
+  const recordedHash = (state as OwnedHookState | null)?.blockHash;
+  if (recordedHash) return hashId(content, 64) === recordedHash;
+  if (lefthook) return false;
+  const firstNewline = content.indexOf("\n");
+  const header = content.slice(0, firstNewline);
+  const fingerprint = header.match(/^# >>> superskill worktree-start fingerprint: ([a-f0-9]{12})$/)?.[1];
+  const end = content.lastIndexOf(`\n${HOOK_END}`);
+  return fingerprint !== undefined && end > firstNewline && hashId(content.slice(firstNewline + 1, end), 12) === fingerprint;
 }
 
 async function removeBlockLike(
@@ -506,34 +589,46 @@ async function removeBlockLike(
       notes: ["unterminated superskill block; manual fix required"],
     };
   }
+  if (!regionOwned(existing, region, state)) {
+    return { removed: false, restored: false, notes: ["modified or unrecognized superskill hook block; left unchanged"] };
+  }
   const remaining = Buffer.concat([existing.subarray(0, region.start), existing.subarray(region.end)]);
   const mode = (await fileMode(filePath)) ?? DEFAULT_HOOK_MODE;
   const removable = /^(#![^\n]*\n?)?\s*$/.test(remaining.toString("utf-8"));
 
   if (!removable) {
-    await atomicWrite(filePath, remaining, mode);
+    const backupPath = await restorableBackupPath(worktreeRoot, filePath, state);
+    const backup = backupPath === null ? null : await readBytes(backupPath);
+    if (backup !== null && !backup.equals(remaining) && Buffer.concat([backup, NEWLINE_BYTES]).equals(remaining) &&
+      await restoreBackupBytes(worktreeRoot, backupPath!, filePath, remaining, mode, existing)) {
+      return { removed: true, restored: true, notes: ["restored matching pre-existing hook bytes"] };
+    }
+    await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
     notes.push("removed superskill block; preserved surrounding hook content");
     return { removed: true, restored: false, notes };
   }
 
   const backupPath = await restorableBackupPath(worktreeRoot, filePath, state);
   if (backupPath !== null) {
-    if (await restoreBackupBytes(backupPath, filePath)) {
+    if (await restoreBackupBytes(worktreeRoot, backupPath, filePath, remaining, mode, existing)) {
       notes.push("restored backup of pre-existing hook");
       return { removed: true, restored: true, notes };
     }
-    await atomicWrite(filePath, remaining, mode);
-    notes.push("backup could not be restored; kept stripped hook file");
+    await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
+    notes.push("backup could not be restored or did not match remaining content; kept stripped hook file");
     return { removed: true, restored: false, notes };
   }
 
-  if (state !== null && MANAGED_HOOK_KINDS.has(state.kind)) {
+  if (state !== null && MANAGED_HOOK_KINDS.has(state.kind) && (state as OwnedHookState).created === true &&
+    remaining.equals(SHEBANG_BYTES)) {
+    await requireHookPath(worktreeRoot, filePath);
+    if (!(await readBytes(filePath))?.equals(existing)) throw new Error(`${filePath} changed during uninstall; left unchanged`);
     await rm(filePath, { force: true });
     notes.push("removed hook file created by superskill");
     return { removed: true, restored: false, notes };
   }
 
-  await atomicWrite(filePath, remaining, mode);
+  await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
   notes.push("hook state missing or corrupt: stripped superskill block and kept the hook file");
   return { removed: true, restored: false, notes };
 }
@@ -544,7 +639,8 @@ async function removeLefthookBlock(
   state: HookState | null,
 ): Promise<BlockRemoval> {
   const repoRoot = (await gitTopLevel(worktreeRoot)) ?? worktreeRoot;
-  const filePath = info.kind === "lefthook" ? info.hookFile : join(repoRoot, ".lefthook-local.yml");
+  const filePath = (state as OwnedHookState | null)?.hookFile ?? (info.kind === "lefthook" ? info.hookFile : join(repoRoot, ".lefthook-local.yml"));
+  await requireHookPath(worktreeRoot, filePath);
   const existing = await readBytes(filePath);
   if (existing === null || !existing.toString("utf-8").includes(HOOK_START)) {
     return { removed: false, restored: false, notes: ["no superskill block found in .lefthook-local.yml"] };
@@ -560,29 +656,34 @@ async function removeLefthookBlock(
       notes: ["unterminated superskill block; manual fix required"],
     };
   }
+  if (!regionOwned(existing, region, state, true)) {
+    return { removed: false, restored: false, notes: ["modified or unrecognized superskill lefthook block; left unchanged"] };
+  }
   const remaining = Buffer.concat([existing.subarray(0, region.start), existing.subarray(region.end)]);
   const mode = (await fileMode(filePath)) ?? 0o644;
 
   if (remaining.toString("utf-8").trim().length > 0) {
-    await atomicWrite(filePath, remaining, mode);
+    await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
     return { removed: true, restored: false, notes: ["removed superskill block from .lefthook-local.yml"] };
   }
 
   const backupPath = await restorableBackupPath(worktreeRoot, filePath, state);
   if (backupPath !== null) {
-    if (await restoreBackupBytes(backupPath, filePath)) {
+    if (await restoreBackupBytes(worktreeRoot, backupPath, filePath, remaining, mode, existing)) {
       return { removed: true, restored: true, notes: ["restored backup of pre-existing .lefthook-local.yml"] };
     }
-    await atomicWrite(filePath, remaining, mode);
+    await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
     return { removed: true, restored: false, notes: ["backup could not be restored; kept stripped .lefthook-local.yml"] };
   }
 
-  if (state !== null && MANAGED_HOOK_KINDS.has(state.kind)) {
+  if (state !== null && MANAGED_HOOK_KINDS.has(state.kind) && (state as OwnedHookState).created === true && remaining.length === 0) {
+    await requireHookPath(worktreeRoot, filePath);
+    if (!(await readBytes(filePath))?.equals(existing)) throw new Error(`${filePath} changed during uninstall; left unchanged`);
     await rm(filePath, { force: true });
     return { removed: true, restored: false, notes: ["removed .lefthook-local.yml created by superskill"] };
   }
 
-  await atomicWrite(filePath, remaining, mode);
+  await atomicWrite(worktreeRoot, filePath, remaining, mode, existing);
   return {
     removed: true,
     restored: false,
@@ -600,8 +701,15 @@ async function managedHookFile(worktreeRoot: string, kind: string, info: HookMan
 }
 
 export async function uninstallPostCheckoutHook(worktreeRoot: string): Promise<HookUninstallResult> {
-  const state = await readHookState(worktreeRoot);
+  const stateFile = join(await repoStateDir(worktreeRoot), "hook.state");
+  const unsafeState = await hookPathReason(worktreeRoot, stateFile);
+  if (unsafeState !== null) return { removed: false, restored: false, notes: [unsafeState] };
+  const state = await readHookState(worktreeRoot) as OwnedHookState | null;
   const info = await detectHookManager(worktreeRoot);
+  const filePath = state?.hookFile ?? (state?.kind === "lefthook" ? join((await gitTopLevel(worktreeRoot)) ?? worktreeRoot, ".lefthook-local.yml") : await managedHookFile(worktreeRoot, state?.kind ?? info.kind, info));
+  if (typeof filePath !== "string") return { removed: false, restored: false, notes: ["invalid recorded hook target; left unchanged"] };
+  const unsafe = await hookPathReason(worktreeRoot, filePath);
+  if (unsafe !== null) return { removed: false, restored: false, notes: [unsafe] };
   const kind: "block" | "husky" | "lefthook" | "precommit" =
     state?.kind ?? (info.kind === "none" ? "block" : info.kind);
   const notes: string[] = [];
@@ -616,14 +724,16 @@ export async function uninstallPostCheckoutHook(worktreeRoot: string): Promise<H
     restored = outcome.restored;
     notes.push(...outcome.notes);
   } else {
-    const filePath = await managedHookFile(worktreeRoot, kind, info);
     const outcome = await removeBlockLike(worktreeRoot, filePath, state);
     removed = outcome.removed;
     restored = outcome.restored;
     notes.push(...outcome.notes);
   }
 
-  await clearHookState(worktreeRoot);
+  if (removed && state !== null) {
+    await requireHookPath(worktreeRoot, stateFile);
+    await clearHookState(worktreeRoot);
+  }
   return { removed, restored, notes };
 }
 

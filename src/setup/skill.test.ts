@@ -25,18 +25,59 @@ describe("shared skill install", () => {
 
   it("ships a SKILL.md source with frontmatter and marker", () => {
     const content = readFileSync(skillSourceFile(), "utf-8");
-    expect(content).toMatch(/^---\nname: superskill\n/);
+    expect(content).toMatch(/^---\nname: superskill\ndescription: Routes /);
+    const description = content.match(/^description: (.+)$/m)?.[1] ?? "";
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain("Use when this host exposes superskill MCP tools");
+    expect(content).toContain("not a standalone API or offline service");
+    expect(content).toContain("OpenCode Code Mode uses `tools.superskill.<tool>`");
+    expect(content).toContain("Claude Code exposes `mcp__superskill__<tool>`");
+    expect(content).toContain("never guess or mechanically rewrite a tool name");
+    expect(content).toContain("already-installed CLI");
+    expect(content).toContain("`superskill --help`");
+    expect(content).toContain("Do not install tools or use `npx` unless network use is explicitly approved");
     expect(content).toContain(SKILL_MARKER);
     expect(content).toContain("project_context");
-    expect(content).toContain("worktree assessment");
-    expect(content).toContain("before verification or completion");
+    expect(content).toContain('action: "register"');
+    expect(content).toContain("workspace_path");
+    expect(content).toContain("Session registration and completion are coordination bookkeeping");
+    expect(content).toContain("completion persists a session note");
+    expect(content).toContain("additional ADRs, learnings, tasks, or reports unless requested or required by project policy");
+    expect(content).toContain("Redact prompt text by default");
+    expect(content).toContain("`include_prompts` only for bounded excerpts from the current project");
+    expect(content).toContain("when explicitly requested and needed");
+    expect(content).toContain("Never expose secrets, credentials, or unrelated history");
+    expect(content).toContain("access other project history only with explicit scope and authorization");
     expect(content).toContain("explore|implement|review|ship");
-    expect(content).toContain("ordered local stack");
-    expect(content).toContain("At every session start");
-    expect(content).toContain("initializes a missing graph");
-    expect(content).not.toContain("usually the repo directory name");
-    expect(content).toContain("Workers do not independently push or create PRs");
-    expect(content).toContain("proven merged into main");
+    expect(content).toContain("Reuse the same session");
+    expect(content).toContain("reroute when task, files, or phase meaningfully change");
+    expect(content).toContain("Simple questions and read-only lookups need no session, plan, HLD/LLD, or human-question ritual");
+    expect(content).toContain("graph IDs such as `constitution` and `principle:<existing-id>`");
+    expect(content).toContain("offset_bytes");
+    expect(content).toContain("max_bytes");
+    expect(content).toContain("read_complete");
+    expect(content).toContain("next_offset_bytes");
+    expect(content).toContain("whole checkout in a locked recovery archive");
+    expect(content).toContain("repository's actual default branch");
+    expect(content).toContain("eligible clean, idle, session-owned checkouts after session completion once they are proven integrated");
+    expect(content).toContain("Built-in session maintenance may automatically quarantine or relocate eligible clean, idle, session-owned checkouts after session completion");
+    expect(content).toContain("returns recovery metadata, and never deletes it");
+    expect(content).toContain("An assessment alone does not authorize manual actions");
+    expect(content).toContain("Manual cleanup, cache apply/GC, permanent removal, policy/config changes, and installs require explicit authorization");
+    expect(content).toContain("built-in session-maintenance preservation path below is the exception");
+    expect(content).toContain("`persist: false`");
+    expect(content).toContain("`apply: false`");
+    expect(content).toContain("`apply: true`");
+    expect(content).toContain("`dismiss: true` only when dismissal is explicitly requested");
+    expect(content).toContain("host-discovered `watchdog` MCP tool by its exact exposed name");
+    expect(content).toContain("OpenCode Code Mode: `tools.superskill.watchdog`");
+    expect(content).toContain("Claude Code: `mcp__superskill__watchdog`");
+    expect(content).not.toContain("Diagnose with `tools.superskill.watchdog`");
+    expect(content).not.toContain("catalog/");
+    expect(content).not.toContain("HTML");
+    expect(content).not.toMatch(/never expose secrets or prompt text/i);
+    expect(content).not.toContain("may be archived with explicit authorization");
+    expect(content).not.toContain("permission for network access, installs, global configuration, fixes, dismissals, cache GC, cleanup");
   });
 
   it("installs to ~/.agents/skills/superskill/SKILL.md", () => {
@@ -46,6 +87,7 @@ describe("shared skill install", () => {
     expect(result.path).toBe(file);
     expect(existsSync(file)).toBe(true);
     expect(readFileSync(file, "utf-8")).toContain(SKILL_MARKER);
+    expect(readFileSync(file, "utf-8")).toBe(readFileSync(skillSourceFile(), "utf-8"));
   });
 
   it("is idempotent", () => {

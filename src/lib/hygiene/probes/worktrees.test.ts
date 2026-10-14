@@ -7,12 +7,19 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_HYGIENE_POLICY } from "../policy.js";
 import type { HygieneProbeOptions } from "../types.js";
 import { hashId } from "../../worktree/paths.js";
+import { auditWorktreeSafety, type WorktreeSafetyVerdict } from "../../worktree/safety.js";
 import {
   parsePruneDryRun,
   parseWorktreeListPorcelain,
-  runWorktreesProbe,
+  runWorktreesProbe as runProbe,
   type WorktreeExec,
 } from "./worktrees.js";
+
+function safeVerdict(path: string): WorktreeSafetyVerdict {
+  return { worktree: path, dirty: false, untracked: false, ignoredFiles: [], ignoredTruncated: false, unpushedCommits: 0, stashCount: 0, inProgressOps: [], locked: false, hasSubmodules: false, safeToReclaimLocalCaches: true, reasons: [] };
+}
+
+const runWorktreesProbe: typeof runProbe = (opts, deps) => runProbe(opts, { audit: async (path) => safeVerdict(path), ...deps });
 
 const MS_PER_DAY = 86_400_000;
 const NOW = Date.UTC(2026, 0, 15);
@@ -75,6 +82,7 @@ function options(repoPaths: string[], overrides: Partial<HygieneProbeOptions> = 
     sizes: false,
     policy: { ...DEFAULT_HYGIENE_POLICY, worktreeStaleMinAgeDays: MIN_AGE_DAYS },
     now: NOW,
+    activeWorktreePaths: [],
     ...overrides,
   };
 }
@@ -129,6 +137,7 @@ function probeHandler(): Handler {
       return new Error(`unexpected call: ${args.join(" ")}`);
     }
     const target = args[1];
+    if (args[2] === "merge-base") return { stdout: "" };
     if (args[2] === "rev-parse") {
       return target === REPO
         ? { stdout: "true\n" }
@@ -226,7 +235,7 @@ describe("runWorktreesProbe", () => {
       plan: `git -C "${REPO}" worktree prune`,
       meta: { repo: REPO, count: 1 },
     });
-    expect(prunable!.reason).toContain("1 stale registration(s)");
+    expect(prunable!.reason).toContain("1 registration(s) reported prunable by git");
 
     const due = result.items.find((item) => item.id === `worktrees:${hashId(`${REPO}/wt-due`)}`);
     expect(due).toMatchObject({
@@ -236,7 +245,7 @@ describe("runWorktreesProbe", () => {
       ageDays: 20,
       tier: "consent",
       due: true,
-      reason: "clean, fully pushed, idle 20d",
+      reason: "clean, integrated into primary, no active operations or sessions, idle 20d",
       plan: `git -C "${REPO}" worktree remove "${REPO}/wt-due"`,
       meta: {
         repo: REPO,
@@ -303,6 +312,37 @@ describe("runWorktreesProbe", () => {
 
     expect(result.items).toEqual([]);
     expect(result.skipped).toBeNull();
+  });
+
+  it.each([
+    { inProgressOps: ["rebase-merge"] },
+    { stashCount: 1 },
+    { hasSubmodules: true },
+    { reasons: ["status could not be read; treat as unsafe"] },
+  ])("withholds removal plans when the shared audit is unsafe: %j", async (unsafe) => {
+    const { exec } = makeExec(probeHandler());
+    const result = await runWorktreesProbe(options([REPO]), { exec, audit: async (path) => ({ ...safeVerdict(path), ...unsafe }) });
+    const item = result.items.find((entry) => entry.path === `${REPO}/wt-due`)!;
+    expect(item.due).toBe(false);
+    expect(item.plan).toBeNull();
+  });
+
+  it("requires proven primary integration and no active sessions", async () => {
+    const base = probeHandler();
+    const { exec } = makeExec((args) => args[2] === "merge-base" ? fail(1) : base(args));
+    const unmerged = await runWorktreesProbe(options([REPO]), { exec });
+    expect(unmerged.items.find((entry) => entry.path === `${REPO}/wt-due`)).toMatchObject({ due: false, plan: null, reason: expect.stringContaining("integration") });
+    const integrated = makeExec(base).exec;
+    const active = await runWorktreesProbe(options([REPO], { activeWorktreePaths: [`${REPO}/wt-due`] }), { exec: integrated });
+    expect(active.items.find((entry) => entry.path === `${REPO}/wt-due`)).toMatchObject({ due: false, plan: null, reason: expect.stringContaining("active agent session") });
+    const unknown = await runWorktreesProbe(options([REPO], { activeWorktreePaths: undefined }), { exec: integrated });
+    expect(unknown.items.find((entry) => entry.path === `${REPO}/wt-due`)).toMatchObject({ due: false, plan: null, reason: expect.stringContaining("check unavailable") });
+  });
+
+  it("does not start git probes after its time budget", async () => {
+    const { exec, calls } = makeExec(probeHandler());
+    await runWorktreesProbe(options([REPO], { deadline: 0 }), { exec });
+    expect(calls).toEqual([]);
   });
 
   it("skips when rev-parse does not confirm a work tree", async () => {
@@ -442,7 +482,7 @@ describe("runWorktreesProbe with real git", () => {
       const worktree = join(base, "wt-one");
       await git(repo, ["worktree", "add", "-q", "-b", "one", worktree]);
 
-      const result = await runWorktreesProbe(options([repo]), { exec: realExec() });
+      const result = await runWorktreesProbe(options([repo]), { exec: realExec(), audit: auditWorktreeSafety });
 
       expect(result.skipped).toBeNull();
       expect(result.items).toHaveLength(1);

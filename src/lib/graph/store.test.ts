@@ -289,6 +289,14 @@ describe("addNode", () => {
 });
 
 describe("addEdge", () => {
+  it("treats skill_skill edges as undirected and does not conflate delimited identifiers", () => {
+    const graph: Graph = { nodes: [], edges: [{ type: "skill_skill", from: "b", to: "a", w: 0.2, co_activations: 1 }] };
+    expect(addEdge(graph, { type: "skill_skill", from: "a", to: "b", w: 0.3, co_activations: 2 }).edges).toEqual([
+      { type: "skill_skill", from: "a", to: "b", w: 0.3, co_activations: 2 },
+    ]);
+    const first = addEdge({ nodes: [], edges: [] }, { type: "skill_skill", from: "a", to: "b:c", w: 0.2, co_activations: 1 });
+    expect(addEdge(first, { type: "skill_skill", from: "a:b", to: "c", w: 0.2, co_activations: 1 }).edges).toHaveLength(2);
+  });
   it("adds a new edge to the graph", () => {
     const graph = createEmptyGraph();
     const edge: ProjectSkillEdge = {
@@ -364,6 +372,19 @@ describe("updateNode", () => {
 });
 
 describe("removeNode", () => {
+  it("does not remove edges for other endpoint types with the same identifier", () => {
+    const graph: Graph = {
+      nodes: [makeProjectNode(), makeSkillNode("project"), makeSessionNode("project", 1)],
+      edges: [
+        { type: "project_skill", from: "project", to: "project", w: 0.5, activations: 0 },
+        { type: "session_skill", from: "project", to: "project", role: "primary" },
+        { type: "session_file", from: "project", to: "project", action: "read" },
+      ],
+    };
+    expect(removeNode(graph, "skill", "project").edges).toEqual([graph.edges[2]]);
+    expect(removeNode(graph, "project", "project").edges).toEqual(graph.edges.slice(1));
+    expect(removeNode(graph, "session", "project").edges).toEqual([graph.edges[0]]);
+  });
   it("removes a node by type and id", () => {
     const graph: Graph = {
       nodes: [makeProjectNode(), makeSkillNode("skill-a")],
@@ -398,13 +419,21 @@ describe("removeNode", () => {
 });
 
 describe("pruneSessions", () => {
+  it("retains the most recently appended session when timestamps tie", () => {
+    const graph: Graph = { nodes: [makeSessionNode("earlier", 1, { outcome: "success" }), makeSessionNode("later", 1, { outcome: "success" })], edges: [] };
+    expect(pruneSessions(graph, 1).nodes.map(node => node.id)).toEqual(["later"]);
+  });
+  it("preserves open and insight-bearing sessions outside the rolling window", () => {
+    const graph: Graph = { nodes: [makeSessionNode("open", 1), makeSessionNode("insight", 2, { outcome: "success", insights: ["preserve"] }), makeSessionNode("recent", 3, { outcome: "success" })], edges: [] };
+    expect(pruneSessions(graph, 1).nodes).toHaveLength(3);
+  });
   it("keeps only the last N sessions sorted by timestamp", () => {
     const graph: Graph = {
       nodes: [
         makeProjectNode(),
-        makeSessionNode("s1", 1000),
-        makeSessionNode("s2", 3000),
-        makeSessionNode("s3", 2000),
+        makeSessionNode("s1", 1000, { outcome: "success" }),
+        makeSessionNode("s2", 3000, { outcome: "success" }),
+        makeSessionNode("s3", 2000, { outcome: "success" }),
       ],
       edges: [],
     };
@@ -430,8 +459,8 @@ describe("pruneSessions", () => {
     };
     const graph: Graph = {
       nodes: [
-        makeSessionNode("s1", 1000),
-        makeSessionNode("s2", 2000),
+        makeSessionNode("s1", 1000, { outcome: "success" }),
+        makeSessionNode("s2", 2000, { outcome: "success" }),
       ],
       edges: [edge1, edge2],
     };
@@ -462,6 +491,11 @@ describe("pruneSessions", () => {
 });
 
 describe("decayWeights", () => {
+  it("sanitizes activated as well as inactive non-finite weights", () => {
+    const edge: ProjectSkillEdge = { type: "project_skill", from: "project", to: "a", w: NaN, activations: 0 };
+    const result = decayWeights({ nodes: [], edges: [edge] }, new Set(["a"]), 0.05, 0.1);
+    expect(result.edges[0]).toMatchObject({ w: 0.1 });
+  });
   it("decays project_skill edges not in activated set", () => {
     const edge1: ProjectSkillEdge = {
       type: "project_skill",
@@ -500,7 +534,7 @@ describe("decayWeights", () => {
     expect(e.w).toBe(0.1);
   });
 
-  it("does not affect non-project_skill edges", () => {
+  it("decays inactive skill_skill edges", () => {
     const skillEdge: SkillSkillEdge = {
       type: "skill_skill",
       from: "skill-a",
@@ -510,7 +544,13 @@ describe("decayWeights", () => {
     };
     const graph: Graph = { nodes: [], edges: [skillEdge] };
     const updated = decayWeights(graph, new Set<string>(), 0.05, 0.1);
-    expect((updated.edges[0] as SkillSkillEdge).w).toBe(0.7);
+    expect((updated.edges[0] as SkillSkillEdge).w).toBe(0.665);
+  });
+
+  it("preserves co-activation weights only when both skills were activated", () => {
+    const edge: SkillSkillEdge = { type: "skill_skill", from: "a", to: "b", w: 0.8, co_activations: 2 };
+    expect(decayWeights({ nodes: [], edges: [edge] }, new Set(["a", "b"]), 0.05, 0.1).edges[0]).toEqual(edge);
+    expect(decayWeights({ nodes: [], edges: [edge] }, new Set(["a"]), 0.05, 0.1).edges[0]).toMatchObject({ w: 0.76 });
   });
 
   it("does not mutate the original graph", () => {
@@ -577,6 +617,14 @@ describe("mutateGraph", () => {
     await expect(mutateGraph(testDir, () => { throw new Error("cancelled"); })).rejects.toThrow("cancelled");
     const graph = await mutateGraph(testDir, (latest) => addNode(latest, makeSessionNode("next", 1)));
     expect(graph.nodes).toHaveLength(2);
+  });
+
+  it("preserves the original graph when a mutation returns invalid weights", async () => {
+    const original: Graph = { nodes: [makeProjectNode()], edges: [] };
+    await writeGraph(testDir, original);
+    await expect(mutateGraph(testDir, graph => addNode(graph, makeSkillNode("bad", { w: NaN })))).rejects.toThrow(/Invalid graph/);
+    expect((await loadGraph(testDir)).nodes).toEqual(original.nodes);
+    expect(await readdir(join(testDir, ".superskill"))).toEqual(["graph.json"]);
   });
 
   it("times out instead of stealing an existing writer's lock", async () => {

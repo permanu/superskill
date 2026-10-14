@@ -1,7 +1,66 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
+import { MAX_EVENTS_BYTES } from "./recorder.js";
 import type { ActivationEvent } from "./types.js";
+
+const SAFE_ERROR_CODES = new Set([
+  "EACCES", "EISDIR", "ELOOP", "EMFILE", "ENFILE", "ENOTDIR", "ENOENT", "EPERM", "EROFS", "EIO",
+  "INVALID_DATA", "TRUNCATED", "UNKNOWN",
+]);
+
+export class TelemetryReadError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    const safeCode = SAFE_ERROR_CODES.has(code) ? code : "UNKNOWN";
+    super(`Telemetry events are unavailable (${safeCode}).`);
+    this.name = "TelemetryReadError";
+    this.code = safeCode;
+  }
+}
+
+function errorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && SAFE_ERROR_CODES.has(code) ? code : "UNKNOWN";
+}
+
+async function readEventsText(eventsPath: string): Promise<string | null> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let text: string | null = null;
+  let failure: TelemetryReadError | undefined;
+  try {
+    handle = await open(eventsPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (!info.isFile()) throw new TelemetryReadError("EISDIR");
+    if (info.size > MAX_EVENTS_BYTES) throw new TelemetryReadError("TRUNCATED");
+
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    while (bytes < MAX_EVENTS_BYTES) {
+      const buffer = Buffer.alloc(Math.min(64 * 1024, MAX_EVENTS_BYTES - bytes));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(buffer.subarray(0, bytesRead));
+      bytes += bytesRead;
+    }
+    if ((await handle.stat()).size > bytes) throw new TelemetryReadError("TRUNCATED");
+    text = Buffer.concat(chunks, bytes).toString("utf-8");
+  } catch (error) {
+    if (error instanceof TelemetryReadError) failure = error;
+    else if (errorCode(error) !== "ENOENT") failure = new TelemetryReadError(errorCode(error));
+  }
+  if (handle) {
+    try {
+      await handle.close();
+    } catch (error) {
+      failure ??= new TelemetryReadError(errorCode(error));
+    }
+  }
+  if (failure) throw failure;
+  return text;
+}
 
 export interface ReadEventsResult {
   events: ActivationEvent[];
@@ -9,15 +68,8 @@ export interface ReadEventsResult {
 }
 
 export async function readTelemetryEvents(eventsPath: string): Promise<ReadEventsResult> {
-  let raw: string;
-  try {
-    raw = await readFile(eventsPath, "utf-8");
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { events: [], malformed: 0 };
-    console.error("[telemetry] cannot read events:", (e as Error).message);
-    return { events: [], malformed: 0 };
-  }
+  const raw = await readEventsText(eventsPath);
+  if (raw === null) return { events: [], malformed: 0 };
   const events: ActivationEvent[] = [];
   let malformed = 0;
   for (const line of raw.split("\n")) {
@@ -33,6 +85,7 @@ export async function readTelemetryEvents(eventsPath: string): Promise<ReadEvent
       malformed += 1;
     }
   }
+  if (malformed > 0) throw new TelemetryReadError("INVALID_DATA");
   return { events, malformed };
 }
 

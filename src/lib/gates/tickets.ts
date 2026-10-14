@@ -32,24 +32,9 @@ export interface Ticket {
 }
 
 function parseStoredAcceptance(value: unknown): SpecAcceptance[] {
-  if (!Array.isArray(value)) return [];
-  const inputs: AcceptanceInput[] = [];
-  for (const raw of value) {
-    if (typeof raw === "string") {
-      inputs.push(raw);
-      continue;
-    }
-    if (raw !== null && typeof raw === "object") {
-      const obj = raw as Record<string, unknown>;
-      inputs.push({
-        id: typeof obj.id === "string" ? obj.id : undefined,
-        text: typeof obj.text === "string" ? obj.text : "",
-        command: typeof obj.command === "string" ? obj.command : undefined,
-        manual: typeof obj.manual === "string" ? obj.manual : undefined,
-      });
-    }
-  }
-  return normalizeAcceptance(inputs);
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("Ticket acceptance must be an array");
+  return normalizeAcceptance(value as AcceptanceInput[]);
 }
 
 function parseEvidenceRefs(value: unknown): TicketEvidenceRef[] {
@@ -102,8 +87,9 @@ export async function listTickets(vaultFs: VaultFS, ticketsDir: string): Promise
   let files: string[];
   try {
     files = await vaultFs.list(ticketsDir, 1);
-  } catch {
-    return [];
+  } catch (e: unknown) {
+    if (e instanceof Error && "code" in e && (e.code === "ENOENT" || e.code === "FILE_NOT_FOUND")) return [];
+    throw e;
   }
 
   const tickets: Ticket[] = [];

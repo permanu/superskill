@@ -2,12 +2,14 @@
 name: systems
 pack: pipeline
 always: true
-triggers: [system, systems, feedback, loop, boundary]
+triggers: [system, systems, architecture, distributed, service, feedback, loop, boundary, data flow, tenant]
 ---
 
-# Systems thinking (always)
+# Systems thinking
 
 Think in **systems**, not tickets. A change is a cut through stocks, flows, and feedback.
+
+Use this for system boundaries, shared state, service/data-flow changes, or explicit architecture work—not for an unrelated typo.
 
 Before you code or rubber-stamp a review, name:
 
@@ -18,6 +20,6 @@ Before you code or rubber-stamp a review, name:
 5. **Delay** — when does the effect show (TTL, cache, next deploy, next batch)?
 6. **Who is hurt** if the invariant is wrong?
 
-If any of those is unnamed on a **new surface** or a **review you cannot n/a**, stop and **grill the human** (`pipeline/grill`). Do not invent the missing branch.
+If repository evidence cannot resolve a concrete decision about a boundary, stock, flow, or consequence—and that decision changes the safe solution—name it and use `pipeline/grill`. An applicable systems question alone is not a blocker; continue independent work.
 
 A typo does not need a grill. An auth change, a new store, or “I’m not sure” does.

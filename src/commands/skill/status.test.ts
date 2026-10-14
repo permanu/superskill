@@ -128,4 +128,13 @@ describe("statusCommand", () => {
     expect(result.unaudited_skills).toEqual(["sketchy-skill"]);
     expect(result.warnings.join(" ")).toContain("without a skills.sh audit");
   });
+
+  it("uses the context workspace rather than the server cwd", async () => {
+    const workspacePath = join(projectDir, "workspace");
+    await writeGraph(workspacePath, ["native/workspace-skill"]);
+    const result = await statusCommand({}, { ...createMockCtx(projectDir), workspacePath });
+    expect(result.initialized).toBe(true);
+    expect(result.skills.map((skill) => skill.id)).toEqual(["native/workspace-skill"]);
+    expect(result.graph_path).toBe(join(workspacePath, ".superskill", "graph.json"));
+  });
 });

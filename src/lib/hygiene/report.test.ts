@@ -154,10 +154,11 @@ describe("buildHygieneReport", () => {
     });
 
     expect(maxActive).toBe(2);
-    expect(seen).toEqual([
+    expect(seen).toMatchObject([
       { repoPaths: ["/repo/a", "/repo/b"], sizes: false, policy: DEFAULT_HYGIENE_POLICY, now: 42 },
       { repoPaths: ["/repo/a", "/repo/b"], sizes: false, policy: DEFAULT_HYGIENE_POLICY, now: 42 },
     ]);
+    expect(seen.every((opts) => typeof opts.deadline === "number")).toBe(true);
   });
 
   it("stringifies non-Error probe rejections", async () => {

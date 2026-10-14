@@ -1,6 +1,6 @@
 # C - Sources
 
-Baseline: latest stable
+Baseline: latest
 Last verified: 2026-10-04
 
 ## Primary

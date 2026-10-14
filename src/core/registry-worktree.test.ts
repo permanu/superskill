@@ -29,6 +29,7 @@ const GC_FILTERS = [
   "project",
   "all",
   "undo",
+  "journal_id",
   "purge",
   "confirm",
 ] as const;
@@ -89,12 +90,13 @@ describe("worktree MCP registrations", () => {
   it("adapts read-only worktree tool args", () => {
     const registry = createRegistry();
     expect(
-      registry.get("worktree_env")!.adaptArgs!({ json: true, shell: "fish", providers: ["pnpm"] }),
-    ).toEqual({ json: true, shell: "fish", providers: ["pnpm"] });
+      registry.get("worktree_env")!.adaptArgs!({ json: true, shell: "fish", providers: ["pnpm"], timeout_ms: 5000 }),
+    ).toEqual({ json: true, shell: "fish", providers: ["pnpm"], timeoutMs: 5000 });
     expect(registry.get("worktree_env")!.adaptArgs!({})).toEqual({
       json: false,
       shell: undefined,
       providers: undefined,
+      timeoutMs: undefined,
     });
     expect(registry.get("worktree_audit")!.adaptArgs!({ sizes: true, worktree: "/wt" })).toEqual({
       json: false,
@@ -171,6 +173,7 @@ describe("worktree MCP registrations", () => {
       project: "demo",
       all: true,
       undo: "journal-1",
+      journal_id: "journal-2",
       purge: true,
       confirm: true,
       worktree: "/wt",
@@ -189,6 +192,7 @@ describe("worktree MCP registrations", () => {
       project: "demo",
       all: true,
       undo: "journal-1",
+      journalId: "journal-2",
       purge: true,
       worktree: "/wt",
       apply: true,
@@ -210,6 +214,7 @@ describe("worktree MCP registrations", () => {
       project: undefined,
       all: false,
       undo: undefined,
+      journalId: undefined,
       purge: false,
       worktree: undefined,
       apply: false,

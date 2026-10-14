@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFile, readdir } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
-import matter from "gray-matter";
+import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
+import matter from "../lib/markdown-matter.js";
 import { mapConcurrent } from "../lib/concurrency.js";
 import { compileSnippet } from "./harness/index.js";
+import { collectRuleFiles, isRuleFilename } from "./files.js";
+import { keywordKeys } from "./index-builder.js";
+import { isLanguageWideGlob } from "./router.js";
 import {
   RULE_ENFORCEMENTS,
   RULE_LANGUAGES,
@@ -23,7 +26,7 @@ import {
   type ValidationReport,
 } from "./types.js";
 
-const RESERVED_FILES = new Set(["INDEX.md", "sources.md", "categories.md"]);
+export { isRuleFilename } from "./files.js";
 
 const FENCE_TAGS: Record<RuleLanguage, string[]> = {
   rust: ["rust"],
@@ -39,6 +42,7 @@ const FENCE_TAGS: Record<RuleLanguage, string[]> = {
 export interface ValidateOptions {
   compile?: boolean;
   knownIds?: ReadonlySet<string>;
+  requireNonEmpty?: boolean;
 }
 
 const READ_CONCURRENCY = 12;
@@ -102,12 +106,9 @@ function truncate(text: string, max = 600): string {
   return text.length <= max ? text : `${text.slice(0, max)}[...]`;
 }
 
-export function isRuleFilename(name: string): boolean {
-  return name.endsWith(".md") && !RESERVED_FILES.has(name);
-}
-
 function analyzeFences(lines: string[]): { blocks: FenceBlock[]; dangling: boolean } {
   const blocks: FenceBlock[] = [];
+  let malformed = false;
   let open: { marker: string; length: number; tag: string; lines: string[] } | null = null;
   for (const line of lines) {
     const match = /^ {0,3}(`{3,}|~{3,})[ \t]*(.*)$/.exec(line);
@@ -126,9 +127,10 @@ function analyzeFences(lines: string[]): { blocks: FenceBlock[]; dangling: boole
       open = null;
       continue;
     }
+    if (fence[0] === open.marker && fence.length >= open.length && info !== "") malformed = true;
     open.lines.push(line);
   }
-  return { blocks, dangling: open !== null };
+  return { blocks, dangling: open !== null || malformed };
 }
 
 const ELLIPSIS_CHAR = "\u2026";
@@ -165,33 +167,73 @@ function hasCommentElision(text: string): boolean {
   return /(^|\s)\.\.(\s|$)/.test(text);
 }
 
-function commentHasElision(line: string, state: { block: boolean }, lang: RuleLanguage | null): boolean {
-  if (state.block) {
-    const end = line.indexOf("*/");
-    const content = end >= 0 ? line.slice(0, end) : line;
-    if (end >= 0) state.block = false;
-    return hasCommentElision(content);
+interface CodeScanState {
+  quote: { end: string; escaped: boolean } | null;
+  block: number;
+}
+
+function scanCodeLine(line: string, state: CodeScanState, lang: RuleLanguage | null): { code: string; comments: string } {
+  let code = "";
+  let comments = "";
+  for (let i = 0; i < line.length;) {
+    if (state.quote) {
+      if (state.quote.escaped && line[i] === "\\") i += 2;
+      else if (line.startsWith(state.quote.end, i)) {
+        i += state.quote.end.length;
+        state.quote = null;
+      } else i += 1;
+      continue;
+    }
+    if (state.block > 0) {
+      if (line.startsWith("*/", i)) { state.block -= 1; i += 2; }
+      else if (lang === "rust" && line.startsWith("/*", i)) { state.block += 1; i += 2; }
+      else comments += line[i++];
+      continue;
+    }
+    if ((lang === "python" && line[i] === "#") || (lang !== "python" && line.startsWith("//", i))) {
+      comments += line.slice(i);
+      break;
+    }
+    if (lang !== "python" && line.startsWith("/*", i)) {
+      state.block = 1;
+      i += 2;
+      continue;
+    }
+    const rawRust = lang === "rust" ? /^(?:br|r)(#*)"/.exec(line.slice(i)) : null;
+    const rawCpp = lang === "cpp" ? /^R"([^\s()\\]{0,16})\(/.exec(line.slice(i)) : null;
+    const rawSwift = lang === "swift" ? /^(#+)("""|")/.exec(line.slice(i)) : null;
+    if (rawRust || rawCpp || rawSwift) {
+      const marker = rawRust ?? rawCpp ?? rawSwift!;
+      state.quote = { end: rawRust ? `"${rawRust[1]}` : rawCpp ? `)${rawCpp[1]}"` : `${rawSwift![2]}${rawSwift![1]}`, escaped: false };
+      code += " ";
+      i += marker[0].length;
+      continue;
+    }
+    const char = line[i];
+    if (char === '"' || char === "'" || (char === "`" && (lang === "go" || lang === "typescript"))) {
+      if (char === "'" && lang === "rust" && !/^'(?:\\(?:u\{[a-f0-9]+\}|x[a-f0-9]{2}|.)|[^'\\])'/i.test(line.slice(i))) {
+        code += line[i++];
+        continue;
+      }
+      const triple = (lang === "python" || lang === "java" || lang === "swift") && line.startsWith(char.repeat(3), i);
+      const end = triple ? char.repeat(3) : char;
+      state.quote = { end, escaped: !(char === "`" && lang === "go") };
+      code += " ";
+      i += end.length;
+      continue;
+    }
+    code += line[i++];
   }
-  const slash = line.indexOf("//");
-  if (slash >= 0 && line[slash - 1] !== ":" && hasCommentElision(line.slice(slash + 2))) return true;
-  // `#` starts comments in Python only; in C/C++ it starts preprocessor lines,
-  // where `...` is variadic macro syntax rather than an elision.
-  if (lang === "python") {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#") && hasCommentElision(trimmed.slice(1))) return true;
-  }
-  const start = line.indexOf("/*");
-  if (start >= 0) {
-    const end = line.indexOf("*/", start + 2);
-    const content = end >= 0 ? line.slice(start + 2, end) : line.slice(start + 2);
-    if (end < 0) state.block = true;
-    return hasCommentElision(content);
-  }
-  return false;
+  return { code, comments };
+}
+
+function stripInlineCode(line: string): string {
+  return line.replace(/(`+).*?\1(?!`)/g, " ");
 }
 
 function validateBody(abs: string, body: string, lang: RuleLanguage | null, issues: ValidationIssue[]): BodyResult {
   const lines = body.split(/\r?\n/);
+  const fenced = fenceMask(lines);
   const summaryIndex = lines.findIndex((line) => line.trim() !== "");
   const summaryLine = summaryIndex >= 0 ? lines[summaryIndex] : "";
   let summary = "";
@@ -217,6 +259,7 @@ function validateBody(abs: string, body: string, lang: RuleLanguage | null, issu
   const sections: { title: string; index: number }[] = [];
   const counts = new Map<string, number>();
   for (let i = summaryValid ? summaryIndex + 1 : Math.max(summaryIndex, 0); i < lines.length; i += 1) {
+    if (fenced.has(i)) continue;
     const match = /^##\s+(.+?)\s*$/.exec(lines[i]);
     if (!match) continue;
     const title = canonical.get(match[1].trim().toLowerCase());
@@ -286,10 +329,13 @@ function validateBody(abs: string, body: string, lang: RuleLanguage | null, issu
   const condition = /\b(if|when|unless|before|after|once|whenever|only)\b/i;
   const seenTokens = new Set<string>();
   const seenHedges = new Set<string>();
-  const fenced = fenceMask(lines);
-  const blockComment = { block: false };
+  const prose = lines.map((line, i) => fenced.has(i) ? "" : stripInlineCode(line));
+  const scanState: CodeScanState = { quote: null, block: 0 };
   for (let i = 0; i < lines.length; i += 1) {
-    const matches = lines[i].match(forbidden);
+    if (!fenced.has(i)) { scanState.quote = null; scanState.block = 0; }
+    const scanned = fenced.has(i) ? scanCodeLine(lines[i], scanState, lang) : { code: prose[i], comments: "" };
+    const checked = `${scanned.code} ${scanned.comments}`;
+    const matches = checked.match(forbidden);
     if (matches) {
       for (const match of matches) {
         const token = match.toLowerCase();
@@ -305,15 +351,15 @@ function validateBody(abs: string, body: string, lang: RuleLanguage | null, issu
         );
       }
     }
-    if (isBareElisionLine(lines[i].trim(), lang)) {
+    if (isBareElisionLine(scanned.code.trim(), lang) && scanned.comments === "") {
       issues.push(issue("snippet-elision", `bare elision marker "${lines[i].trim()}" on line ${i + 1}`, abs));
-    } else if (lines[i].includes(ELLIPSIS_CHAR)) {
-      issues.push(issue("unicode-ellipsis", `unicode ellipsis used as elision on line ${i + 1}`, abs, "warning"));
-    } else if (fenced.has(i) && commentHasElision(lines[i], blockComment, lang)) {
+    } else if (checked.includes(ELLIPSIS_CHAR)) {
+      issues.push(issue("unicode-ellipsis", `unicode ellipsis used as elision on line ${i + 1}`, abs));
+    } else if (fenced.has(i) && hasCommentElision(scanned.comments)) {
       issues.push(issue("comment-elision", `elision inside a comment on line ${i + 1}`, abs, "warning"));
     }
     if (!fenced.has(i)) {
-      const hedges = lines[i].match(hedging);
+      const hedges = prose[i].match(hedging);
       if (hedges) {
         for (const hedge of hedges) {
           const key = hedge.toLowerCase();
@@ -322,10 +368,10 @@ function validateBody(abs: string, body: string, lang: RuleLanguage | null, issu
           issues.push(issue("hedging", `hedging phrase "${hedge}" on line ${i + 1}`, abs, "warning"));
         }
       }
-      if (asNeeded.test(lines[i])) {
-        const previous = i > 0 ? lines[i - 1] : "";
-        const next = i + 1 < lines.length ? lines[i + 1] : "";
-        if (!condition.test(lines[i]) && !condition.test(previous) && !condition.test(next)) {
+      if (asNeeded.test(prose[i])) {
+        const previous = i > 0 ? prose[i - 1] : "";
+        const next = i + 1 < lines.length ? prose[i + 1] : "";
+        if (!condition.test(prose[i]) && !condition.test(previous) && !condition.test(next)) {
           issues.push(issue("vague-condition", `"as needed" without a condition on line ${i + 1}`, abs, "warning"));
         }
       }
@@ -346,7 +392,6 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
   let data: Record<string, unknown>;
   let content: string;
   try {
-    // Passing options bypasses gray-matter's global cache, which retains failed parses.
     const parsed = matter(raw, {});
     data = (parsed.data ?? {}) as Record<string, unknown>;
     content = parsed.content;
@@ -362,6 +407,10 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
       issues.push(issue("field-required", `missing or empty required field "${key}"`, abs));
       fundamental = false;
     }
+  }
+  if (data.baseline !== undefined && data.baseline !== "latest") {
+    issues.push(issue("baseline-invalid", '"baseline" must be the literal string "latest"', abs));
+    fundamental = false;
   }
 
   const severity = data.severity;
@@ -427,6 +476,12 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
         parsedTriggers[key] = value as string[];
       }
       triggers = parsedTriggers;
+      if (isRuleLanguage(data.lang) &&
+          !(triggers.keywords ?? []).some((value) => keywordKeys(value).length > 0) &&
+          !(triggers.symbols ?? []).some((value) => value.trim() !== "") &&
+          !(triggers.files ?? []).some((value) => !isLanguageWideGlob(value, data.lang as string))) {
+        issues.push(issue("triggers-unreachable", "triggers need a keyword, symbol, or discriminative file glob; language-wide globs only gate language", abs));
+      }
     }
   }
 
@@ -488,7 +543,8 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
   if (isNonEmptyString(data.prefix) && !fileStem.startsWith(`${data.prefix}-`)) {
     issues.push(issue("prefix-mismatch", `file stem "${fileStem}" must start with prefix "${data.prefix}-"`, abs));
   }
-  const parentName = basename(dirname(abs));
+  const root = rootForRule(abs);
+  const parentName = root ? relative(root, abs).split(sep)[0] : basename(dirname(abs));
   if (isRuleLanguage(parentName) && isRuleLanguage(data.lang) && data.lang !== parentName) {
     issues.push(issue("lang-dir-mismatch", `lang "${data.lang}" does not match directory "${parentName}"`, abs));
   }
@@ -522,63 +578,62 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
 }
 
 function relativeToCatalog(abs: string): string {
-  const parent = dirname(abs);
-  if (isRuleLanguage(basename(parent))) return join(basename(parent), basename(abs));
-  return basename(abs);
+  const root = rootForRule(abs);
+  return root ? relative(root, abs).split(sep).join("/") : basename(abs);
 }
 
-function rootForRule(abs: string): string {
-  const parent = dirname(abs);
-  return isRuleLanguage(basename(parent)) ? dirname(parent) : parent;
-}
-
-async function collectPackIds(dir: string, ids: Set<string>, lang: RuleLanguage): Promise<void> {
-  let files: string[];
-  try {
-    files = (await readdir(dir)).filter(isRuleFilename).sort();
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code ?? "unknown";
-    if (code !== "ENOENT") console.error(`[rules] cannot scan ${dir}: ${code}`);
-    return;
+function rootForRule(abs: string): string | null {
+  for (let dir = dirname(abs); dirname(dir) !== dir; dir = dirname(dir)) {
+    if (isRuleLanguage(basename(dir))) return dirname(dir);
   }
-  const collected: string[] = await mapConcurrent(files, READ_CONCURRENCY, async (file) => {
-    const fallback = `${lang}-${file.replace(/\.md$/, "")}`;
-    try {
-      const raw = await readFile(join(dir, file), "utf-8");
-      const { data } = matter(raw, {});
-      const id = (data as Record<string, unknown> | undefined)?.id;
-      return isNonEmptyString(id) ? id.trim() : fallback;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code && code !== "ENOENT") console.error(`[rules] cannot read ${join(dir, file)}: ${code}`);
-      return fallback;
-    }
-  });
-  for (const id of collected) ids.add(id);
+  return null;
 }
 
 async function collectKnownIds(root: string): Promise<Set<string>> {
-  const ids = new Set<string>();
-  if (isRuleLanguage(basename(root))) {
-    await collectPackIds(root, ids, basename(root) as RuleLanguage);
-  }
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code && code !== "ENOENT") console.error(`[rules] cannot scan ${root}: ${code}`);
-    return ids;
-  }
-  for (const entry of entries) {
-    const name = entry.name;
-    if (!entry.isDirectory() || !isRuleLanguage(name)) continue;
-    await collectPackIds(join(root, name), ids, name);
-  }
-  return ids;
+  const files = await collectRuleFiles(root, (path, error) => {
+    const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+    if (code !== "ENOENT") console.error(`[rules] cannot scan ${path}: ${code}`);
+  });
+  const collected = await mapConcurrent(files, READ_CONCURRENCY, async (file) => {
+    try {
+      const raw = await readFile(file, "utf-8");
+      if (!raw.trimStart().startsWith("---")) return null;
+      const { data } = matter(raw, {});
+      const stem = basename(file, ".md");
+      if (!isRuleLanguage(data.lang) || !isNonEmptyString(data.id) ||
+          !isNonEmptyString(data.prefix) || !/^[a-z][a-z0-9-]*$/.test(data.prefix) ||
+          !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/.test(stem) ||
+          !stem.startsWith(`${data.prefix}-`) || data.id !== `${data.lang}-${stem}`) return null;
+      return data.id;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code && code !== "ENOENT") console.error(`[rules] cannot read ${file}: ${code}`);
+      return null;
+    }
+  });
+  return new Set(collected.filter((id): id is string => id !== null));
 }
 
-async function validateIndex(dir: string, ruleFiles: string[]): Promise<ValidationIssue[]> {
+async function validateLayout(dir: string): Promise<ValidationIssue[]> {
+  const issues: ValidationIssue[] = [];
+  for (const name of ["sources", "categories"]) {
+    const path = join(dir, `${name}.md`);
+    try {
+      const text = await readFile(path, "utf-8");
+      if (name === "sources" && !/^Baseline:[ \t]*latest[ \t]*$/m.test(text)) {
+        issues.push(issue("sources-baseline", 'sources.md must declare "Baseline: latest"', path));
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+      issues.push(code === "ENOENT"
+        ? issue(`${name}-file-missing`, `${name}.md is missing`, path)
+        : issue("read-failed", `cannot read ${name}.md (${code})`, path));
+    }
+  }
+  return issues;
+}
+
+async function validateIndex(dir: string, ruleFiles: string[], verified: number): Promise<ValidationIssue[]> {
   const issues: ValidationIssue[] = [];
   const indexPath = join(dir, "INDEX.md");
   let text: string;
@@ -594,19 +649,40 @@ async function validateIndex(dir: string, ruleFiles: string[]): Promise<Validati
     return issues;
   }
 
+  if (!/^Baseline:[ \t]*latest[ \t]*$/m.test(text)) {
+    issues.push(issue("index-baseline", 'INDEX.md must declare "Baseline: latest"', indexPath));
+  }
+  const counts = /^Rules:[ \t]*(\d+)[ \t]*\(verified:[ \t]*(\d+)\)[ \t]*$/m.exec(text);
+  if (!counts || Number(counts[1]) !== ruleFiles.length || Number(counts[2]) !== verified) {
+    issues.push(issue("index-count", `INDEX.md must declare "Rules: ${ruleFiles.length} (verified: ${verified})"`, indexPath));
+  }
+
   const listed = new Set<string>();
-  const linkRe = /^\s*[-*]\s+\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gm;
+  const linkRe = /(?<!!)\[[^\]\n]*\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"\n]*")?\s*\)/g;
   let match: RegExpExecArray | null;
   while ((match = linkRe.exec(text)) !== null) {
-    const target = match[1].replace(/^<|>$/g, "").split("#")[0].trim();
-    if (target === "" || /^[a-z][a-z0-9+.-]*:\/\//i.test(target)) continue;
+    const raw = match[1].replace(/^<|>$/g, "");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) continue;
+    let target: string;
+    try {
+      target = decodeURIComponent(raw.split(/[?#]/)[0]);
+    } catch {
+      issues.push(issue("index-extra", `INDEX.md link has invalid URL escapes: "${raw}"`, indexPath));
+      continue;
+    }
+    if (target === "") continue;
+    if (target.startsWith("/") || /[\\\u0000-\u001f]/.test(target) || /^[a-z][a-z0-9+.-]*:/i.test(target) || target.split("/").includes("..")) {
+      issues.push(issue("index-extra", `INDEX.md link "${raw}" must stay within this pack`, indexPath));
+      continue;
+    }
+    target = posix.normalize(target);
+    if (["INDEX.md", "sources.md", "categories.md"].includes(basename(target))) continue;
     if (!target.endsWith(".md")) {
       issues.push(issue("index-extra", `INDEX.md links non-markdown target "${target}"`, indexPath));
       continue;
     }
-    if (target.includes("/")) {
-      issues.push(issue("index-extra", `INDEX.md link "${target}" must reference a file in this directory`, indexPath));
-      continue;
+    if (listed.has(target)) {
+      issues.push(issue("index-duplicate", `INDEX.md lists "${target}" more than once`, indexPath));
     }
     listed.add(target);
   }
@@ -644,8 +720,8 @@ export async function validateFile(filePath: string, options: ValidateOptions = 
   if (options.knownIds) {
     knownIds = options.knownIds;
   } else {
-    const discovered = await collectKnownIds(rootForRule(abs));
-    knownIds = discovered.size > 0 ? discovered : null;
+    const root = rootForRule(abs);
+    knownIds = root ? await collectKnownIds(root) : null;
   }
 
   const parsed = parseRule(abs, raw, knownIds);
@@ -678,13 +754,15 @@ export async function validatePack(langDir: string, options: ValidateOptions = {
   const dir = resolve(langDir);
   let files: string[];
   try {
-    files = (await readdir(dir)).filter(isRuleFilename).sort();
+    files = await collectRuleFiles(dir);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code ?? "unknown";
     if (code === "ENOENT") {
       return {
-        errors: [],
-        warnings: [issue("pack-missing", `rules directory not found: ${dir}`, dir, "warning")],
+        errors: options.requireNonEmpty ? [issue("pack-missing", `requested rules pack not found: ${dir}`, dir)] : [],
+        warnings: options.requireNonEmpty
+          ? []
+          : [issue("pack-missing", `rules directory not found: ${dir}`, dir, "warning")],
         ruleCount: 0,
         checkedCount: 0,
       };
@@ -699,13 +777,12 @@ export async function validatePack(langDir: string, options: ValidateOptions = {
 
   let knownIds = options.knownIds;
   if (!knownIds) {
-    const fromParent = await collectKnownIds(dirname(dir));
-    knownIds = fromParent.size > 0 ? fromParent : await collectKnownIds(dir);
+    knownIds = await collectKnownIds(isRuleLanguage(basename(dir)) ? dirname(dir) : dir);
   }
 
   const concurrency = options.compile === false ? READ_CONCURRENCY : 1;
   const results = await mapConcurrent(files, concurrency, (file) =>
-    validateFile(join(dir, file), { compile: options.compile, knownIds }),
+    validateFile(file, { compile: options.compile, knownIds }),
   );
 
   const issues: ValidationIssue[] = [];
@@ -716,7 +793,12 @@ export async function validatePack(langDir: string, options: ValidateOptions = {
     ruleCount += 1;
     if (!result.issues.some((entry) => entry.severity === "error")) checkedCount += 1;
   }
-  issues.push(...(await validateIndex(dir, files)));
+  issues.push(...(await validateLayout(dir)));
+  issues.push(...(await validateIndex(dir, files.map((file) => relative(dir, file).split(sep).join("/")),
+    results.filter((result) => result.rule?.status === "verified").length)));
+  if (options.requireNonEmpty && checkedCount === 0) {
+    issues.push(issue("no-rules-checked", "no valid rules were checked in this requested pack", dir));
+  }
 
   return {
     errors: issues.filter((entry) => entry.severity === "error"),
@@ -735,8 +817,10 @@ export async function validateAll(root = "catalog/rules", options: ValidateOptio
     const code = (e as NodeJS.ErrnoException).code ?? "unknown";
     if (code === "ENOENT") {
       return {
-        errors: [],
-        warnings: [issue("root-missing", `rules root not found: ${base}`, base, "warning")],
+        errors: options.requireNonEmpty ? [issue("root-missing", `requested rules root not found: ${base}`, base)] : [],
+        warnings: options.requireNonEmpty
+          ? []
+          : [issue("root-missing", `rules root not found: ${base}`, base, "warning")],
         ruleCount: 0,
         checkedCount: 0,
       };
@@ -749,24 +833,38 @@ export async function validateAll(root = "catalog/rules", options: ValidateOptio
     };
   }
 
-  const knownIds = await collectKnownIds(base);
+  const knownIds = options.knownIds ?? await collectKnownIds(base);
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
   let ruleCount = 0;
   let checkedCount = 0;
   const languages = entries
-    .filter((entry) => entry.isDirectory() && isRuleLanguage(entry.name))
+    .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
   const languageConcurrency = options.compile === false ? 4 : 1;
   const reports = await mapConcurrent(languages, languageConcurrency, (lang) =>
     validatePack(join(base, lang), { compile: options.compile, knownIds }),
   );
+  for (const lang of languages) {
+    if (!isRuleLanguage(lang)) errors.push(issue("pack-language", `unknown language pack "${lang}"`, join(base, lang)));
+  }
   for (const report of reports) {
     errors.push(...report.errors);
     warnings.push(...report.warnings);
     ruleCount += report.ruleCount;
     checkedCount += report.checkedCount;
+  }
+  for (const entry of entries.filter((entry) => entry.isFile() && isRuleFilename(entry.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = join(base, entry.name);
+    const result = await validateFile(path, { compile: options.compile, knownIds });
+    errors.push(issue("rule-location", "rule files must be inside a language pack", path));
+    errors.push(...result.issues.filter((entry) => entry.severity === "error"));
+    warnings.push(...result.issues.filter((entry) => entry.severity === "warning"));
+    ruleCount += 1;
+  }
+  if (options.requireNonEmpty && checkedCount === 0) {
+    errors.push(issue("no-rules-checked", "no valid rules were checked in the requested rules root", base));
   }
   return { errors, warnings, ruleCount, checkedCount };
 }

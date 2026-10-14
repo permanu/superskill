@@ -236,11 +236,14 @@ function handleExport(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
   const declaration = node.childForFieldName("declaration");
   if (declaration) {
     walk(declaration, builder, { ...ctx, exported: true });
+    if (node.children.some((child) => child.type === "default")) {
+      builder.addExport(declaration.childForFieldName("name")?.text ?? "default", declaration, "default");
+    }
     return;
   }
   const value = node.childForFieldName("value");
   if (value && value.type === "identifier") {
-    builder.addExport(value.text, value);
+    builder.addExport(value.text, value, "default");
     return;
   }
   const source = node.childForFieldName("source");
@@ -257,7 +260,7 @@ function handleExport(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
         if (specifier) {
           builder.addImport(specifier, name.text, node, alias?.text ?? name.text);
         } else {
-          builder.addExport(alias?.text ?? name.text, spec);
+          builder.addExport(name.text, spec, alias?.text ?? name.text);
         }
       }
     } else if (child.type === "namespace_export") {

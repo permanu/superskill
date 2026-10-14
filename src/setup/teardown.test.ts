@@ -138,22 +138,22 @@ describe("teardownClient", () => {
     expect(readFileSync(detected.mcpConfigPath, "utf-8")).toContain("someone-elses-server");
   });
 
-  it("removes the mdc instruction (Cursor)", () => {
+  it("preserves an unmarked user mdc instruction (Cursor)", () => {
     const detected = makeDetected("cursor");
     writeFileSync(detected.instructionPath!, "---\nalwaysApply: true\n---\n");
     const result = teardownClient(detected);
-    expect(result.instructionRemoved).toBe(true);
-    expect(existsSync(detected.instructionPath!)).toBe(false);
+    expect(result.instructionRemoved).toBe(false);
+    expect(readFileSync(detected.instructionPath!, "utf-8")).toBe("---\nalwaysApply: true\n---\n");
   });
 
-  it("removes the config-array instruction path and file (OpenCode)", () => {
+  it("removes the config-array instruction path without deleting user notes (OpenCode)", () => {
     const detected = makeDetected("opencode");
     writeFileSync(detected.mcpConfigPath, JSON.stringify({ instructions: [detected.instructionPath, "/other/path"] }));
     writeFileSync(detected.instructionPath!, "notes");
     const result = teardownClient(detected);
-    expect(result.instructionRemoved).toBe(true);
+    expect(result.instructionRemoved).toBe(false);
     expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8")).instructions).toEqual(["/other/path"]);
-    expect(existsSync(detected.instructionPath!)).toBe(false);
+    expect(readFileSync(detected.instructionPath!, "utf-8")).toBe("notes");
   });
 
   it("leaves the config array alone when the instruction path is not listed", () => {

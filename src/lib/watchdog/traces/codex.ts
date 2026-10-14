@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import { recordInput } from "./codex-input.js";
-import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SessionTrace, TraceSessionRef } from "../types.js";
 import {
   addCall,
   capText,
-  DEFAULT_MAX_CALLS,
-  DEFAULT_MAX_TRACE_BYTES,
   errorText,
   listDirs,
   listFiles,
   newTrace,
   pushUserTurn,
+  readTextBounded,
+  readTraceLines,
   safeStat,
+  traceLimits,
   type TraceListOptions,
   type TraceLoadOptions,
   type TraceSource,
@@ -36,17 +36,7 @@ function sessionsRoot(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 async function readHead(path: string): Promise<string> {
-  const handle = await open(path, "r").catch(() => null);
-  if (!handle) return "";
-  try {
-    const buffer = Buffer.alloc(HEAD_SCAN_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, HEAD_SCAN_BYTES, 0);
-    return buffer.toString("utf-8", 0, bytesRead);
-  } catch {
-    return "";
-  } finally {
-    await handle.close();
-  }
+  return (await readTextBounded(path, HEAD_SCAN_BYTES))?.text ?? "";
 }
 
 function parseStartedAt(name: string, fallback: number): number {
@@ -58,6 +48,7 @@ function parseStartedAt(name: string, fallback: number): number {
 }
 
 async function listSessions(opts: TraceListOptions = {}): Promise<TraceSessionRef[]> {
+  if (opts.project === null) return [];
   const root = sessionsRoot();
   const refs: TraceSessionRef[] = [];
   const projectFilter = opts.project ? resolve(opts.project) : undefined;
@@ -72,12 +63,21 @@ async function listSessions(opts: TraceListOptions = {}): Promise<TraceSessionRe
           const info = await safeStat(path);
           if (!info) continue;
           const startedAt = parseStartedAt(file, info.mtimeMs);
-          if (opts.since !== undefined && startedAt < opts.since) continue;
+          if (opts.since !== undefined && info.mtimeMs < opts.since) continue;
 
           const head = await readHead(path);
-          if (head.includes('"thread_source":"subagent"')) continue;
-          const cwdMatch = /"cwd":"([^"]+)"/.exec(head);
-          const project = cwdMatch ? cwdMatch[1] : undefined;
+          let project: string | undefined;
+          let subagent = false;
+          for (const line of head.split("\n")) {
+            try {
+              const parsed = JSON.parse(line) as { type?: string; payload?: { cwd?: string; thread_source?: string } } | null;
+              if (parsed?.type !== "session_meta") continue;
+              if (typeof parsed.payload?.cwd === "string") project = parsed.payload.cwd;
+              subagent = parsed.payload?.thread_source === "subagent";
+              break;
+            } catch { continue; }
+          }
+          if (subagent) continue;
           if (projectFilter && (project === undefined || (resolve(project) !== projectFilter && !resolve(project).startsWith(`${projectFilter}/`)))) {
             continue;
           }
@@ -179,22 +179,7 @@ function messageText(payload: CodexLine["payload"]): string {
 
 async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Promise<SessionTrace> {
   const trace = newTrace(ref);
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_TRACE_BYTES;
-  const maxCalls = opts.maxCalls ?? DEFAULT_MAX_CALLS;
-
-  const info = await safeStat(ref.storagePath);
-  if (info && info.size > maxBytes) trace.truncated = true;
-
-  let raw: string;
-  const handle = await open(ref.storagePath, "r").catch(() => null);
-  if (!handle) return trace;
-  try {
-    const buffer = Buffer.alloc(Math.min(info?.size ?? maxBytes, maxBytes));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    raw = buffer.toString("utf-8", 0, bytesRead);
-  } finally {
-    await handle.close();
-  }
+  const { maxBytes, maxCalls } = traceLimits(opts);
 
   const pending = new Map<string, number>();
   const cells = new Map<string, number>();
@@ -205,19 +190,16 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
   let reasoning = 0;
   let lastCwd: string | undefined;
 
-  for (const line of raw.split("\n")) {
+  for await (const line of readTraceLines(ref.storagePath, maxBytes, MAX_LINE_BYTES, trace)) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    if (Buffer.byteLength(trimmed, "utf-8") > MAX_LINE_BYTES) {
-      trace.truncated = true;
-      continue;
-    }
     let parsed: CodexLine;
     try {
       parsed = JSON.parse(trimmed) as CodexLine;
     } catch {
       continue;
     }
+    if (!parsed || typeof parsed !== "object") continue;
 
     const payload = parsed.payload;
     if (parsed.type === "session_meta") {
@@ -243,8 +225,12 @@ async function loadTrace(ref: TraceSessionRef, opts: TraceLoadOptions = {}): Pro
           try { input = JSON.parse(input) as unknown; } catch { input = payload.arguments; }
         }
         const before = trace.toolCalls.length;
-        if (before >= maxCalls) { trace.truncated = true; continue; }
-        const summary = recordInput(trace, name, input);
+        if (before >= maxCalls) {
+          trace.truncated = true;
+          if (typeof payload.call_id === "string") { pending.delete(payload.call_id); waits.delete(payload.call_id); }
+          continue;
+        }
+        const summary = recordInput(trace, name, input, maxCalls);
         const signature = createHash("sha256").update(typeof input === "string" ? input : JSON.stringify(input) ?? "").digest("hex");
         addCall(trace, {
           name,

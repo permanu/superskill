@@ -7,9 +7,8 @@ describe("planDelegation", () => {
     const p = planDelegation("fix a typo", ["typescript"]);
     expect(p.entry).toBe("superskill");
     expect(p.defaults).toEqual([
+      "memory/graph",
       "pipeline/norms",
-      "pipeline/systems",
-      "optimizer/algorithm",
       "security/index",
     ]);
     expect(p.specialists.map((s) => s.agent)).toContain("typescript");
@@ -30,16 +29,35 @@ describe("planDelegation", () => {
     expect(p.specialists.some((s) => s.agent === "typescript")).toBe(false);
   });
 
-  it("adds grill on review so humans close open branches", () => {
+  it("does not force grill on a review without a named unresolved decision", () => {
     const p = planDelegation("review this diff", ["typescript"]);
     expect(p.specialists.some((s) => s.agent === "review")).toBe(true);
-    expect(p.specialists.some((s) => s.agent === "grill")).toBe(true);
+    expect(p.specialists.some((s) => s.agent === "grill")).toBe(false);
+    expect(planDelegation("review this diff and grill the unresolved authorization decision").specialists.some((s) => s.agent === "grill")).toBe(true);
   });
 
-  it("delegates qa to the qa specialist, not implement", () => {
-    const p = planDelegation("qa viz click through the graph", ["typescript"]);
-    expect(p.specialists.some((s) => s.agent === "qa")).toBe(true);
+  it("routes application browser QA to UI review, not graph-note QA", () => {
+    const p = planDelegation("run browser e2e and click through the settings flow", ["typescript"]);
+    expect(p.specialists.some((s) => s.agent === "ui" && s.pack === "ui/review")).toBe(true);
+    expect(p.specialists.some((s) => s.pack === "pipeline/qa")).toBe(false);
     expect(p.specialists.some((s) => s.agent === "typescript")).toBe(false);
+  });
+
+  it("routes explicit generated graph-note QA narrowly", () => {
+    const p = planDelegation("run graph viz to verify generated notes", ["typescript"]);
+    expect(p.specialists.some((s) => s.agent === "qa" && s.pack === "pipeline/qa")).toBe(true);
+    expect(p.specialists.some((s) => s.agent === "ui")).toBe(false);
+    expect(planDelegation("explain Graphviz syntax").specialists.some((s) => s.pack === "pipeline/qa")).toBe(false);
+    const byFile = planDelegation("check the output", [], { files: ["src/lib/code-notes.ts"] });
+    expect(byFile.specialists.some((s) => s.pack === "pipeline/qa")).toBe(true);
+  });
+
+  it("keeps optional algorithm guidance task-triggered", () => {
+    const typo = planDelegation("fix typo in README.md");
+    expect(typo.defaults).not.toContain("optimizer/algorithm");
+    expect(typo.specialists.some((s) => s.pack === "optimizer/algorithm")).toBe(false);
+    const concurrency = planDelegation("fix a concurrency algorithm regression", ["typescript"]);
+    expect(concurrency.specialists.some((s) => s.pack === "optimizer/algorithm")).toBe(true);
   });
 
   it("routes a security bug to security + review, not a typo path", () => {

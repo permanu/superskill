@@ -2,7 +2,7 @@
 // Single SuperSkill entry: diagnose, then name specialists. Host stays one agent;
 // packs are the specialists. Sequence is not a waterfall.
 
-import { routingStack, type RoutingContext } from "./graph/router.js";
+import { isGraphNoteQaTask, routingStack, type RoutingContext } from "./graph/router.js";
 
 export interface Specialist {
   agent: string;
@@ -17,7 +17,7 @@ export interface Orchestration {
   loop: boolean;
 }
 
-const DEFAULTS = ["pipeline/norms", "pipeline/systems", "optimizer/algorithm", "security/index"];
+const DEFAULTS = ["memory/graph", "pipeline/norms", "security/index"];
 
 type Rule = {
   agent: string;
@@ -29,12 +29,14 @@ type Rule = {
 
 const RULES: Rule[] = [
   { agent: "investigate", pack: "pipeline/investigate", reason: "failure/incident language", re: /\b(bug|fail|error|crash|flake|incident|regress)\b/i },
-  { agent: "qa", pack: "pipeline/qa", reason: "verify in the harness browser", re: /\b(qa|e2e|visual|browser|click|viz)\b/i },
+  { agent: "ui", pack: "ui/review", reason: "application browser/e2e QA", re: /\b(e2e|browser|click(?:through|ing|ed)?|playwright|cypress|webdriver|visual)\b/i },
+  { agent: "optimizer", pack: "optimizer/algorithm", reason: "algorithmic/concurrency work", re: /\b(algorithm\w*|complexity|big[- ]?o|concurren\w*|parallel\w*|race condition|deadlock|performance|optimi[sz]\w*|throughput|hot path|hld|lld)\b/i },
+  { agent: "systems", pack: "pipeline/systems", reason: "system design and boundaries", re: /\b(system\w*|architecture|architectural|distributed|tenant boundary|data flow|feedback loop|new service|new store|new database|persistent state|workflow|queue)\b/i },
   { agent: "review", pack: "review/architect", reason: "review/merge/diff", re: /\b(review|pr\b|diff|architect)\b/i },
   { agent: "security", pack: "security/compliance", reason: "auth/tenancy/audit", re: /\b(owasp|pentest|soc2|authz?|secret|compliance|cve|xss|csrf|idor|vulnerabilit|security)\b/i },
   { agent: "tdd", pack: "pipeline/tdd", reason: "test-first slice", re: /\b(tdd|test-driven|red-green)\b/i },
   { agent: "plan", pack: "pipeline/plan", reason: "spec/grill before build", re: /\b(prd|spec|grill|brainstorm|write a plan)\b/i },
-  { agent: "grill", pack: "pipeline/grill", reason: "human-in-the-loop on open branches", re: /\b(grill|hitl|human in the loop|tradeoff|unclear)\b/i },
+  { agent: "grill", pack: "pipeline/grill", reason: "explicit unresolved decision request", re: /\b(grill|hitl|human in the loop|unresolved (?:decision|choice|branch)|cannot (?:resolve|decide)|needs a decision)\b/i },
   { agent: "verify", pack: "pipeline/verify", reason: "evidence before done", re: /\b(verify|claim done|before (?:commit|merge|pr))\b/i },
   { agent: "sre", pack: "devops/sre", reason: "SLO/incident/error budget", re: /\b(slo|sre|error.?budget|on-call|toil|golden signal)\b/i },
   { agent: "platform", pack: "devops/cloud", reason: "ship/deploy/infra", re: /\b(deploy|terraform|kubernetes|rollback|aws|gcp|azure|vps)\b/i },
@@ -60,7 +62,11 @@ export function planDelegation(task: string, stack: string[] = [], context: Rout
   if (context.phase === "review") add({ agent: "review", pack: "review/architect", reason: "review phase" });
   if (context.phase === "ship") add({ agent: "platform", pack: "devops/cloud", reason: "ship phase" });
 
+  const graphNoteQa = isGraphNoteQaTask(task, context.files);
+  if (graphNoteQa) add({ agent: "qa", pack: "pipeline/qa", reason: "generated graph-note QA" });
+
   for (const r of RULES) {
+    if (graphNoteQa && r.agent === "ui") continue;
     if (r.re.test(task)) add({ agent: r.agent, pack: r.pack, reason: r.reason });
   }
 
@@ -76,11 +82,7 @@ export function planDelegation(task: string, stack: string[] = [], context: Rout
     add({ agent: "review", pack: "review/architect", reason: "security fix needs review" });
     add({ agent: "investigate", pack: "pipeline/investigate", reason: "security incident" });
   }
-  if (specialists.some((s) => s.agent === "review" || s.agent === "plan")) {
-    add({ agent: "grill", pack: "pipeline/grill", reason: "HITL on unresolved review/design branches" });
-  }
-
-  const implementish = !/\b(review|deploy|owasp|pentest|qa|e2e|viz|security|cve)\b/i.test(task);
+  const implementish = !/\b(review|deploy|owasp|pentest|qa|e2e|browser|click|visual|playwright|cypress|webdriver|viz|security|cve)\b/i.test(task);
   const hasLang = specialists.some((s) => ["go", "rust", "python", "swift", "typescript"].includes(s.agent));
   if (implementish && context.phase !== "review" && context.phase !== "ship" && !hasLang) {
     for (const s of stackNorm) {

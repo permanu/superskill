@@ -43,6 +43,7 @@ const CLI_TO_MCP_OVERRIDES: Record<string, string> = {
   "graph open": "graph_traverse",
   hygiene: "hygiene_report",
   "skill init": "init",
+  "skill validate": "skill_validate",
   "skill status": "status",
   "skill activate": "superskill",
   "skill list": "skill_list_installed",

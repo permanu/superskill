@@ -155,6 +155,11 @@ describe("worktree audit", () => {
     expect(reclaim?.consent).toBe(true);
     expect(reclaim?.detail).toContain("explicit consent");
 
+    await writeFile(join(linked, "node_modules", "unrecorded.txt"), "user data\n");
+    const uncovered = await auditRepo(linked);
+    expect(uncovered.worktrees.find((item) => item.info.path === linked)?.items.some((item) => item.id === "reclaim:node:node-modules")).toBe(false);
+    await rm(join(linked, "node_modules", "unrecorded.txt"));
+
     await writeFile(join(linked, "node_modules", "pkg", "index.js"), "tampered\n");
     const after = await auditRepo(linked);
     const tampered = after.worktrees.find((item) => item.info.path === linked);

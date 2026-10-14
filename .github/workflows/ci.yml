@@ -6,31 +6,46 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run check:versions
+      - name: Test scripts and skill evaluations
+        shell: bash
+        run: |
+          shopt -s nullglob
+          test_files=(scripts/*.test.mjs scripts/skill-evals/*.test.mjs)
+          node --test --test-concurrency=2 "${test_files[@]}"
 
   # Fast contract/schema check: no toolchains required.
   rules:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
       - run: npm run build
+      - run: node scripts/check-skill-authoring.mjs
       - run: node dist/rules/cli.js validate --no-compile
 
   # Per-language compile matrix: each pack is validated with its real toolchain.
@@ -45,31 +60,33 @@ jobs:
         lang: [rust, typescript, python, go, swift, java, c, cpp]
     name: rules (${{ matrix.lang }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
           cache: 'npm'
       - name: Set up Rust
         if: matrix.lang == 'rust'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
       - name: Set up Go
         if: matrix.lang == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version: 'stable'
       - name: Set up Java
         if: matrix.lang == 'java'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: 'temurin'
           java-version: '23'
       - name: Set up Swift
         if: matrix.lang == 'swift'
-        uses: swift-actions/setup-swift@v2
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
       - name: Set up Python
         if: matrix.lang == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.x'
       - name: Ensure clang (C/C++)
@@ -78,7 +95,7 @@ jobs:
           clang --version || { sudo apt-get update && sudo apt-get install -y clang; }
       - name: Cache Rust harness (crate registry + warm target dir)
         if: matrix.lang == 'rust'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -89,7 +106,7 @@ jobs:
             rust-harness-${{ runner.os }}-
       - name: Cache Java harness jars
         if: matrix.lang == 'java'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.superskill/cache/jars
           key: java-jars-${{ runner.os }}-${{ hashFiles('src/rules/harness/java.ts') }}
@@ -98,7 +115,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Validate ${{ matrix.lang }} pack with compile + strict toolchain
-        run: node dist/rules/cli.js validate --lang ${{ matrix.lang }} --strict
+        env:
+          RULE_LANGUAGE: ${{ matrix.lang }}
+        run: node dist/rules/cli.js validate --lang "$RULE_LANGUAGE" --strict
 
   test:
     runs-on: ubuntu-latest
@@ -107,8 +126,10 @@ jobs:
       matrix:
         node: ['22.16.0', '24']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
           cache: 'npm'
@@ -121,15 +142,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
       - run: npm run build
       - run: npm run verify:grammars
-      - uses: actions/upload-artifact@v4
+      - run: node scripts/verify-package.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dist
           path: dist/

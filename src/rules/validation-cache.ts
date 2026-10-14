@@ -14,7 +14,7 @@ import { mapConcurrent } from "../lib/concurrency.js";
 import { validateAll } from "./validate.js";
 
 /** Bump when the cache schema OR validation semantics change. */
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 
 export interface CatalogValidationSummary {
   ruleCount: number;

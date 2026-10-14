@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { CommandContext } from "../core/types.js";
-import { VaultFS } from "../lib/vault-fs.js";
+import { validateProjectSlug } from "../config.js";
+import { VaultError, VaultFS } from "../lib/vault-fs.js";
 import { loadGraph } from "../lib/graph/store.js";
 import { hygieneCommand } from "./hygiene.js";
 import {
-  listTraceSessions,
+  collectTraceSessions,
   loadTraceByRef,
   findTraceRef,
   latestTraceRef,
   describeTraceSources,
 } from "../lib/watchdog/traces/index.js";
+import { MAX_TRACE_SOURCE_ERRORS, traceErrorCode } from "../lib/watchdog/traces/source.js";
 import { listVaultTraces, loadVaultTrace } from "../lib/watchdog/traces/vault.js";
-import type { TraceSessionRef, SessionTrace } from "../lib/watchdog/types.js";
+import type { TraceSessionRef, SessionTrace, TraceSourceIssue } from "../lib/watchdog/types.js";
 import { renderDigest } from "../lib/watchdog/digest.js";
 import {
   detectErrorRate,
@@ -31,7 +30,7 @@ import {
   detectVerificationGap,
   findingId,
 } from "../lib/watchdog/detectors.js";
-import { collectRepoContext, type RepoContext } from "../lib/watchdog/repo-context.js";
+import { collectRepoContext, resolveRepoRoot, type RepoContext } from "../lib/watchdog/repo-context.js";
 import { detectDeadSkills } from "../lib/watchdog/skills.js";
 import { detectPlugins } from "../lib/watchdog/plugins.js";
 import {
@@ -51,6 +50,7 @@ import {
   setFindingStatus,
 } from "../lib/watchdog/store.js";
 import { renderReport, renderStatus } from "../lib/watchdog/report.js";
+import { quarantineTmpFiles } from "../lib/watchdog/quarantine.js";
 
 const MAX_WINDOW_SESSIONS = 25;
 const MAX_DIGESTS = 8;
@@ -67,6 +67,8 @@ export interface WatchdogArgs {
   project?: string;
   /** Ignore the current project filter and review sessions across all projects. */
   allProjects?: boolean;
+  confirm?: boolean;
+  includePrompts?: boolean;
   persist?: boolean;
   findingIds?: string[];
   categories?: string[];
@@ -100,6 +102,8 @@ export interface StatusResult {
 export type WatchdogResult = DigResult | FixRunResult | StatusResult;
 
 export async function watchdogCommand(args: WatchdogArgs, ctx: CommandContext): Promise<WatchdogResult> {
+  if (args.allProjects && args.confirm !== true) throw new VaultError("INVALID_ARGUMENT", "Cross-project history requires confirm: true.");
+  if (args.project) validateProjectSlug(args.project);
   const vaultFs = vaultFor(ctx, args.project);
   switch (args.action) {
     case "dig":
@@ -114,8 +118,8 @@ export async function watchdogCommand(args: WatchdogArgs, ctx: CommandContext): 
 }
 
 function vaultFor(ctx: CommandContext, project?: string): VaultFS {
-  if (!project || project === ctx.projectSlug) return ctx.vaultFs;
-  return new VaultFS(ctx.vaultPath, { projectSlug: project });
+  if (project && project !== ctx.projectSlug) throw new VaultError("PERMISSION_DENIED", "Watchdog project must match the scoped workspace project.");
+  return ctx.vaultFs;
 }
 
 /**
@@ -176,6 +180,21 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 function severityRank(severity: Severity): number {
   return SEVERITY_ORDER.indexOf(severity);
+}
+
+function addSourceIssue(issues: TraceSourceIssue[], source: string, code: string): void {
+  const sourceId = /^[a-z0-9-]{1,40}$/.test(source) ? source : "unknown";
+  const safeCode = traceErrorCode({ code });
+  if (issues.some((issue) => issue.source === sourceId && issue.code === safeCode)) return;
+  if (issues.length >= MAX_TRACE_SOURCE_ERRORS) return;
+  issues.push({ source: sourceId, code: safeCode });
+}
+
+function traceIssues(trace: SessionTrace): TraceSourceIssue[] {
+  const issues: TraceSourceIssue[] = [];
+  for (const code of trace.sourceErrors ?? []) addSourceIssue(issues, trace.ref.tool, code);
+  if (trace.truncated) addSourceIssue(issues, trace.ref.tool, "TRUNCATED");
+  return issues;
 }
 
 export function mergeFindings(groups: Finding[][]): Finding[] {
@@ -241,66 +260,65 @@ async function collectSkillFindings(repoRoot: string): Promise<Finding[]> {
   }
 }
 
-function sessionFindings(trace: SessionTrace, repo: RepoContext | null): Finding[] {
+function sessionFindings(trace: SessionTrace, repo: RepoContext | null, includePrompts = false): Finding[] {
   const findings: Finding[] = [
-    ...detectToolErrorLoop(trace),
-    ...detectRepeatedCalls(trace),
+    ...detectToolErrorLoop(trace, includePrompts),
+    ...detectRepeatedCalls(trace, includePrompts),
     ...detectNavigationThrash(trace),
-    ...detectFailedReads(trace),
-    ...detectOversizeOutputs(trace),
-    ...detectPromptCorrections(trace),
+    ...detectFailedReads(trace, includePrompts),
+    ...detectOversizeOutputs(trace, includePrompts),
+    ...detectPromptCorrections(trace, includePrompts),
     ...detectErrorRate(trace),
-    ...detectSessionNoteSignals(trace),
+    ...detectSessionNoteSignals(trace, includePrompts),
   ];
   if (repo) findings.push(...detectVerificationGap(trace, repo));
   return findings;
 }
 
-async function loadAnyTrace(ctx: CommandContext, ref: TraceSessionRef): Promise<SessionTrace> {
-  if (ref.tool === "superskill") return loadVaultTrace(ctx.vaultFs, ref);
+async function loadAnyTrace(vaultFs: VaultFS, ref: TraceSessionRef): Promise<SessionTrace> {
+  if (ref.tool === "superskill") return loadVaultTrace(vaultFs, ref);
   return loadTraceByRef(ref);
-}
-
-async function repoPathForSlug(vaultPath: string, slug: string): Promise<string | null> {
-  try {
-    const raw = await readFile(join(vaultPath, "project-map.json"), "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const [repo, value] of Object.entries(parsed)) {
-      if (value === slug) return repo;
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 /** undefined = no filter; null = skip harness sources; string = filter to this repo path. */
 async function harnessProjectFilter(args: WatchdogArgs, ctx: CommandContext): Promise<string | null | undefined> {
-  if (args.allProjects) return undefined;
-  if (args.project) return await repoPathForSlug(ctx.vaultPath, args.project);
-  return process.cwd();
+  if (args.allProjects === true) return undefined;
+  if (!ctx.projectSlug) return null;
+  return resolveRepoRoot(ctx.workspacePath ?? process.cwd());
+}
+
+function historyVault(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS): VaultFS {
+  return args.allProjects === true && args.confirm === true ? new VaultFS(ctx.vaultPath) : vaultFs;
+}
+
+function vaultHistoryOptions(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS) {
+  return args.allProjects === true && args.confirm === true
+    ? { allProjects: true, confirm: true }
+    : { projectSlug: args.project ?? ctx.projectSlug ?? vaultFs.projectSlug ?? null };
 }
 
 async function resolveRef(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS): Promise<TraceSessionRef | null> {
-  const scopedSlug = args.allProjects ? null : args.project ?? ctx.projectSlug ?? null;
+  const filter = await harnessProjectFilter(args, ctx);
+  const historyFs = historyVault(args, ctx, vaultFs);
+  const historyOpts = vaultHistoryOptions(args, ctx, vaultFs);
   if (args.sessionId) {
     const [tool, id] = args.sessionId.includes(":") ? args.sessionId.split(":") : [args.tool, args.sessionId];
-    if (tool && tool !== "superskill" && id) {
-      const ref = await findTraceRef(tool, id);
+    if (filter !== null && tool && tool !== "superskill" && id) {
+      const ref = await findTraceRef(tool, id, { project: filter });
       if (ref) return ref;
     }
-    if (!args.tool || args.tool !== "superskill") {
+    if (filter !== null && !tool) {
       for (const source of ["opencode", "claude-code", "codex"]) {
-        const ref = await findTraceRef(source, args.sessionId);
+        const ref = await findTraceRef(source, args.sessionId, { project: filter });
         if (ref) return ref;
       }
     }
+    if (tool && tool !== "superskill") return null;
     // Universal fallback: find the vault session note by id.
-    const vaultRefs = await listVaultTraces(vaultFs, { projectSlug: scopedSlug, limit: 40 }).catch(() => []);
-    return vaultRefs.find((ref) => ref.id === args.sessionId) ?? null;
+    const vaultRefs = await listVaultTraces(historyFs, { ...historyOpts, limit: 40 });
+    return vaultRefs.find((ref) => ref.id === id) ?? null;
   }
 
-  const filter = await harnessProjectFilter(args, ctx);
   if (filter !== null) {
     const harnessRef = await latestTraceRef({
       tool: args.tool,
@@ -312,8 +330,8 @@ async function resolveRef(args: WatchdogArgs, ctx: CommandContext, vaultFs: Vaul
   if (args.tool && args.tool !== "superskill") return null;
 
   // Universal fallback: vault session notes cover every harness.
-  const vaultRefs = await listVaultTraces(vaultFs, {
-    projectSlug: scopedSlug,
+  const vaultRefs = await listVaultTraces(historyFs, {
+    ...historyOpts,
     limit: 1,
   });
   return vaultRefs[0] ?? null;
@@ -326,6 +344,7 @@ async function finalizeReport(
   persist: boolean,
   vaultFs: VaultFS,
 ): Promise<DigResult> {
+  report.incomplete ??= false;
   report.digests = digests.slice(0, MAX_DIGESTS);
   report.findings = capFindings(report.findings);
   report.summary = summarizeFindings(report.findings);
@@ -338,7 +357,7 @@ async function finalizeReport(
   }
 
   let persistedPath: string | undefined;
-  const canPersist = Boolean(ctx.projectSlug) || vaultFs !== ctx.vaultFs;
+  const canPersist = !report.incomplete && (Boolean(ctx.projectSlug) || vaultFs !== ctx.vaultFs);
   if (persist && canPersist) {
     try {
       persistedPath = await saveReport(vaultFs, report);
@@ -351,7 +370,9 @@ async function finalizeReport(
   return {
     action: "dig",
     report,
-    rendered: renderReport(report),
+    rendered: report.incomplete
+      ? `${renderReport(report)}\n\nINCOMPLETE: source data could not be fully assessed (${(report.sourceErrors ?? []).map(({ source, code }) => `${source}:${code}`).join(", ") || "unknown source error"}). This is not a clean result.`
+      : renderReport(report),
     ...(persistedPath !== undefined ? { persisted_path: persistedPath } : {}),
     sources: describeTraceSources(),
   };
@@ -360,7 +381,8 @@ async function finalizeReport(
 async function runDig(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS): Promise<DigResult> {
   const scope = args.scope ?? "session";
   const persist = args.persist !== false;
-  const repo = await collectRepoContext(process.cwd()).catch(() => null);
+  const filter = await harnessProjectFilter(args, ctx);
+  const repo = filter === null ? null : await collectRepoContext(filter ?? ctx.workspacePath ?? process.cwd()).catch(() => null);
   const repoRoot = repo?.root;
 
   if (scope === "env") {
@@ -389,12 +411,12 @@ async function runDig(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS)
 
   let trace: SessionTrace;
   try {
-    trace = await loadAnyTrace(ctx, ref);
+    trace = await loadAnyTrace(historyVault(args, ctx, vaultFs), ref);
   } catch (err: unknown) {
-    throw new Error(`Could not read ${ref.tool} session ${ref.id}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not read ${ref.tool} session ${ref.id} (${traceErrorCode(err)}).`);
   }
 
-  const groups: Finding[][] = [sessionFindings(trace, repo)];
+  const groups: Finding[][] = [sessionFindings(trace, repo, args.includePrompts === true)];
   if (repo) groups.push(await collectRepoFindings(repo));
   if (repoRoot) groups.push(await collectSkillFindings(repoRoot));
 
@@ -407,42 +429,51 @@ async function runDig(args: WatchdogArgs, ctx: CommandContext, vaultFs: VaultFS)
     findings: mergeFindings(groups),
     summary: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
     digests: [],
+    ...(traceIssues(trace).length > 0 ? { incomplete: true, sourceErrors: traceIssues(trace) } : {}),
   };
-  return finalizeReport(report, [renderDigest(trace)], ctx, persist, vaultFs);
+  return finalizeReport(report, [renderDigest(trace, 2400, { includePrompts: args.includePrompts })], ctx, persist, vaultFs);
 }
 
 async function digWindow(args: WatchdogArgs, ctx: CommandContext, repo: RepoContext | null, includeEnv: boolean, vaultFs: VaultFS): Promise<DigResult> {
   const since = args.since ? parseSince(args.since) : args.count ? undefined : Date.now() - 7 * 86_400_000;
   const limit = Math.min(args.count ?? 20, MAX_WINDOW_SESSIONS);
   const filter = await harnessProjectFilter(args, ctx);
-  const refs = filter === null ? [] : await listTraceSessions({
-    tool: args.tool,
-    ...(filter !== undefined ? { project: filter } : {}),
-    ...(since !== undefined ? { since } : {}),
-    limit,
-  });
+  const traceList = filter === null
+    ? { sessions: [], sourceErrors: [] as TraceSourceIssue[] }
+    : await collectTraceSessions({
+      tool: args.tool,
+      ...(filter !== undefined ? { project: filter } : {}),
+      ...(since !== undefined ? { since } : {}),
+      limit,
+    });
+  const refs = traceList.sessions;
+  const sourceErrors = [...traceList.sourceErrors];
 
   // Universal fallback: include recent vault session notes (any harness).
   let vaultRefs: TraceSessionRef[] = [];
   if (!args.tool || args.tool === "superskill") {
-    vaultRefs = await listVaultTraces(vaultFs, {
-      projectSlug: args.allProjects ? null : args.project ?? ctx.projectSlug ?? null,
+    vaultRefs = await listVaultTraces(historyVault(args, ctx, vaultFs), {
+      ...vaultHistoryOptions(args, ctx, vaultFs),
       ...(since !== undefined ? { since } : {}),
       limit: 10,
-    }).catch(() => []);
+    });
   }
   const allRefs = [...refs, ...vaultRefs.filter((vaultRef) => !refs.some((ref) => ref.id === vaultRef.id))];
 
   const traces = await mapLimit(allRefs, LOAD_CONCURRENCY, async (ref) => {
     try {
-      return await loadAnyTrace(ctx, ref);
-    } catch {
+      return await loadAnyTrace(historyVault(args, ctx, vaultFs), ref);
+    } catch (err) {
+      addSourceIssue(sourceErrors, ref.tool, traceErrorCode(err));
       return null;
     }
   });
   const loaded = traces.filter((trace): trace is SessionTrace => trace !== null);
+  for (const trace of loaded) {
+    for (const issue of traceIssues(trace)) addSourceIssue(sourceErrors, issue.source, issue.code);
+  }
 
-  const groups: Finding[][] = loaded.map((trace) => sessionFindings(trace, repo));
+  const groups: Finding[][] = loaded.map((trace) => sessionFindings(trace, repo, args.includePrompts === true));
   if (repo) groups.push(await collectRepoFindings(repo));
   if (repo?.root) groups.push(await collectSkillFindings(repo.root));
   if (loaded.length >= 5) groups.push(await detectPlugins(loaded));
@@ -463,14 +494,15 @@ async function digWindow(args: WatchdogArgs, ctx: CommandContext, repo: RepoCont
     findings: mergeFindings(groups),
     summary: { critical: 0, high: 0, medium: 0, low: 0, total: 0 },
     digests: [],
+    ...(sourceErrors.length > 0 ? { incomplete: true, sourceErrors } : {}),
   };
-  return finalizeReport(report, loaded.map((trace) => renderDigest(trace, 1200)), ctx, args.persist !== false, vaultFs);
+  return finalizeReport(report, loaded.map((trace) => renderDigest(trace, 1200, { includePrompts: args.includePrompts })), ctx, args.persist !== false, vaultFs);
 }
 
 async function collectEnvFindings(ctx: CommandContext, repo: RepoContext | null): Promise<Finding[]> {
   const findings = await detectEnvironment().catch(() => [] as Finding[]);
   try {
-    const hygiene = await hygieneCommand({ sizes: false }, ctx);
+    const hygiene = await hygieneCommand({ sizes: false, repoPaths: repo ? [repo.root] : [] }, ctx);
     findings.push(...hygieneItemsToFindings(hygiene));
   } catch (err: unknown) {
     console.error(`[watchdog] hygiene probe failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -542,29 +574,8 @@ async function quarantineLeakedTmp(dryRun: boolean): Promise<FixAction> {
   };
   if (dryRun || scan.files.length === 0) return action;
 
-  const quarantineDir = join(homedir(), ".superskill", "quarantine", new Date().toISOString().replace(/[:.]/g, "-"));
   try {
-    await mkdir(quarantineDir, { recursive: true });
-    const moved: Array<{ name: string; original: string; bytes: number }> = [];
-    for (const file of scan.files) {
-      const name = file.path.split("/").pop() ?? file.path;
-      await rename(file.path, join(quarantineDir, name));
-      moved.push({ name, original: file.path, bytes: file.bytes });
-    }
-    await writeFile(
-      join(quarantineDir, "manifest.json"),
-      JSON.stringify(
-        {
-          createdAt: new Date().toISOString(),
-          reason: "watchdog fix: leaked .tmp files",
-          files: moved,
-          undo: `Move the files in this directory back to ~/.superskill (original paths in manifest).`,
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const quarantineDir = await quarantineTmpFiles(scan);
     return { ...action, path: quarantineDir };
   } catch (err: unknown) {
     return {

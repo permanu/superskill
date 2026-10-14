@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, rm } from "fs/promises";
+import { mkdir, mkdtemp, writeFile, rm, symlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { searchText, searchStructured } from "./search-engine.js";
 
 describe("search-engine", () => {
   let vaultRoot: string;
+  const outsideRoots: string[] = [];
 
   beforeEach(async () => {
     vaultRoot = join(tmpdir(), `search-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -14,6 +15,29 @@ describe("search-engine", () => {
 
   afterEach(async () => {
     await rm(vaultRoot, { recursive: true, force: true });
+    await Promise.all(outsideRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it("rejects an explicitly selected symlink outside the vault in both search modes", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "search-outside-"));
+    outsideRoots.push(outside);
+    await writeFile(join(outside, "private.md"), "---\ntype: private\n---\n\n# Secret needle\n");
+    await symlink(outside, join(vaultRoot, "escape"));
+    await expect(searchText(vaultRoot, "needle", { pathFilter: "escape" })).rejects.toThrow();
+    await expect(searchStructured(vaultRoot, { type: "private" }, { pathFilter: "escape" })).rejects.toThrow();
+  });
+
+  it("excludes personal notes from both search modes", async () => {
+    await mkdir(join(vaultRoot, "personal"));
+    await writeFile(join(vaultRoot, "personal", "private.md"), "---\ntype: private\n---\n\n# Personal needle\n");
+    expect(await searchText(vaultRoot, "needle")).toEqual([]);
+    expect(await searchStructured(vaultRoot, { type: "private" })).toEqual([]);
+  });
+
+  it("does not return unsafe filenames from structured search", async () => {
+    await writeFile(join(vaultRoot, "line\nbreak.md"), "---\ntype: task\n---\n\n# Multiline filename\n");
+    const result = await searchStructured(vaultRoot, { type: "task" });
+    expect(result).toEqual([]);
   });
 
   it.each([-1, 0, 1.5, NaN, Infinity])("rejects invalid direct search limit %s", async (limit) => {

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { formatBytes as formatBytesImpl } from "../../lib/format-bytes.js";
 import { buildProviderContext } from "../../lib/worktree/context.js";
 import {
   resolveProjectLabels,
+  resolveWorktreeFilter,
   runGc,
   type GcFilters,
   type GcPlan,
@@ -35,6 +35,7 @@ export interface WorktreeGcArgs {
   purge?: boolean;
   yes?: boolean;
   undo?: string;
+  journalId?: string;
   json?: boolean;
   verbose?: boolean;
 }
@@ -48,7 +49,7 @@ export interface WorktreeGcOutcome {
   plan?: GcPlan;
   quarantined?: QuarantineResult;
   purge?: PurgeResult;
-  restore?: { restored: string[]; skipped: Array<{ path: string; reason: string }> };
+  restore?: { restored: string[]; skipped: Array<{ path: string; reason: string }>; planned?: string[] };
   notes: string[];
   verbose: boolean;
 }
@@ -102,15 +103,26 @@ export async function worktreeGcCommand(args: WorktreeGcArgs, ctx: CommandContex
   const verbose = args.verbose === true;
   const wantsAll = args.all === true;
   const worktreeValue = args.worktree?.trim() ?? "";
-  const worktreePath = worktreeValue.length > 0 ? resolve(worktreeValue) : null;
-  const target = worktreePath !== null && existsSync(worktreePath) ? worktreePath : (ctx.workspacePath ?? process.cwd());
+  const workspace = ctx.workspacePath ?? process.cwd();
+  const resolution = worktreeValue.length > 0 ? await resolveWorktreeFilter(worktreeValue, workspace, { all: wantsAll }) : null;
+  if (resolution?.note) notes.push(resolution.note);
+  if (resolution !== null && resolution.path === null && !wantsAll) {
+    notes.push("worktree scope unresolved; nothing changed");
+    return { action: "plan", applied: false, cacheRoot, notes, verbose } satisfies WorktreeGcOutcome;
+  }
+  const target = resolution?.path ?? workspace;
   const built = await buildProviderContext(target);
 
   if (args.undo !== undefined && args.undo.trim().length > 0) {
-    const restore = await restoreQuarantine(built.repoRoot, args.undo.trim(), { cacheRoot });
+    const apply = args.yes === true;
+    let restore = await restoreQuarantine(built.repoRoot, args.undo.trim(), { cacheRoot, apply });
+    if (restore.restored.length === 0 && restore.skipped.length > 0 && restore.skipped.every((entry) => entry.reason === "manifest missing or unreadable")) {
+      restore = await restoreQuarantine(built.repoRoot, args.undo.trim(), { worktreeRoot: target, apply });
+    }
+    if (!apply) notes.push("restore plan only; pass --yes to restore quarantined data");
     return {
       action: "restore",
-      applied: false,
+      applied: apply && restore.restored.length > 0,
       cacheRoot,
       repoId: built.repoId,
       repoRoot: built.repoRoot,
@@ -122,17 +134,29 @@ export async function worktreeGcCommand(args: WorktreeGcArgs, ctx: CommandContex
 
   if (args.purge === true) {
     const apply = args.yes === true;
-    const purge = await purgeQuarantine({
+    const olderThanDays = args.olderThan === undefined ? 14 : parseDuration(args.olderThan);
+    if (olderThanDays === null) throw new Error(`invalid --older-than "${args.olderThan}"; refusing purge`);
+    const cached = await purgeQuarantine({
       apply,
-      olderThanDays: 14,
+      olderThanDays,
       cacheRoot,
-      repoRoot: built.repoRoot,
+      repoRoot: wantsAll ? undefined : built.repoRoot,
+      journalId: args.journalId,
     });
+    const local = await purgeQuarantine({
+      apply,
+      olderThanDays,
+      repoRoot: built.repoRoot,
+      worktreeRoot: target,
+      journalId: args.journalId,
+    });
+    const purge: PurgeResult = { journalId: cached.journalId, purged: [...cached.purged, ...local.purged], skipped: [...cached.skipped, ...local.skipped], bytes: cached.bytes + local.bytes };
     notes.push(
       apply
         ? `purged ${purge.purged.length} quarantine dir(s), freed ${formatBytes(purge.bytes)} (permanent)`
-        : "purge plan only; pass --yes to delete quarantined dirs older than 14 days",
+        : `purge plan only; pass --yes to delete validated quarantined dirs older than ${olderThanDays} days`,
     );
+    notes.push("worktree metadata and unvalidated legacy quarantine are retained for manual review");
     return {
       action: "purge",
       applied: apply,
@@ -162,19 +186,19 @@ export async function worktreeGcCommand(args: WorktreeGcArgs, ctx: CommandContex
 
   const olderThanDays = args.olderThan === undefined ? undefined : parseDuration(args.olderThan);
   if (args.olderThan !== undefined && olderThanDays === null) {
-    notes.push(`ignored invalid --older-than "${args.olderThan}"`);
+    throw new Error(`invalid --older-than "${args.olderThan}"`);
   }
   const newerThanDays = args.newerThan === undefined ? undefined : parseDuration(args.newerThan);
   if (args.newerThan !== undefined && newerThanDays === null) {
-    notes.push(`ignored invalid --newer-than "${args.newerThan}"`);
+    throw new Error(`invalid --newer-than "${args.newerThan}"`);
   }
   const minBytes = args.minSize === undefined ? undefined : parseSize(args.minSize);
   if (args.minSize !== undefined && minBytes === null) {
-    notes.push(`ignored invalid --min-size "${args.minSize}"`);
+    throw new Error(`invalid --min-size "${args.minSize}"`);
   }
   const maxBytes = args.maxSize === undefined ? undefined : parseSize(args.maxSize);
   if (args.maxSize !== undefined && maxBytes === null) {
-    notes.push(`ignored invalid --max-size "${args.maxSize}"`);
+    throw new Error(`invalid --max-size "${args.maxSize}"`);
   }
 
   const filters: GcFilters = {
@@ -291,7 +315,7 @@ export function renderWorktreeGc(result: unknown): string {
     lines.push(
       `quarantined (reversible): ${outcome.quarantined.moved.length} dirs, ${formatBytes(bytes)} — journal ${outcome.quarantined.journalId}`,
     );
-    lines.push(`  undo: superskill-cli worktree gc --undo ${outcome.quarantined.journalId}`);
+    lines.push(`  undo: superskill-cli worktree gc --undo ${outcome.quarantined.journalId} --yes`);
     for (const entry of outcome.quarantined.skipped) {
       lines.push(`  skipped ${entry.path}: ${entry.reason}`);
     }
@@ -313,6 +337,7 @@ export function renderWorktreeGc(result: unknown): string {
   if (action === "restore" && outcome.restore) {
     lines.push("");
     lines.push(`restored: ${outcome.restore.restored.length} path(s)`);
+    for (const path of outcome.restore.planned ?? []) lines.push(`  planned: ${path}`);
     for (const path of outcome.restore.restored) lines.push(`  + ${path}`);
     for (const entry of outcome.restore.skipped) {
       lines.push(`  skipped ${entry.path}: ${entry.reason}`);

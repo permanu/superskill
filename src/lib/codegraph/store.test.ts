@@ -99,4 +99,29 @@ describe("CodeGraphStore", () => {
     expect(stats.parseErrors).toBe(1);
     expect(stats.filesSkipped).toBe(2);
   });
+
+  it("keeps sorted snapshots isolated from caller mutations and invalidates them on insertion", () => {
+    const inputNode = { ...nodeA, span: { ...nodeA.span } };
+    const inputEdge = { ...edge, span: { ...edge.span } };
+    const store = new CodeGraphStore();
+    store.addNode(inputNode);
+    store.addEdge(inputEdge);
+    const nodes = store.nodes();
+    const edges = store.edges();
+    inputNode.id = "changed-input";
+    inputEdge.to = "changed-input";
+    nodes[0].name = "changed-output";
+    nodes[0].span.startLine = 99;
+    edges[0].to = "changed-output";
+    edges[0].span.startLine = 99;
+    nodes.length = 0;
+    edges.length = 0;
+    store.getNode(nodeA.id)!.span.startLine = 88;
+    expect(store.nodes()).toEqual([nodeA]);
+    expect(store.edges()).toEqual([edge]);
+    store.addNode(nodeB);
+    store.addEdge({ ...edge, confidence: "INFERRED" });
+    expect(store.nodes()).toEqual([nodeA, nodeB]);
+    expect(store.edges()).toHaveLength(2);
+  });
 });

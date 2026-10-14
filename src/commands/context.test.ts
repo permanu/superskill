@@ -11,7 +11,7 @@ function createCommandContext(vaultFs: VaultFS, overrides?: Partial<CommandConte
     vaultFs,
     vaultPath: vaultFs.root,
     sessionRegistry: {} as any,
-    config: {} as any,
+    config: { vaultPath: vaultFs.root, maxInjectTokens: 1500, sessionTtlHours: 2 },
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     ...overrides,
   };
@@ -121,6 +121,16 @@ Arch details.
   });
 
   describe("full mode", () => {
+    it("honors an explicit full-mode budget including the freshness warning", async () => {
+      await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
+      await vaultFs.write("projects/test-project/context.md", `---\ntype: context\nupdated: 2000-01-01\n---\n\n# Context\n${"bounded context ".repeat(1000)}`);
+      const result = await contextCommand({ project: "test-project", detailLevel: "full", maxTokens: 100 }, ctx);
+      expect(result.truncated).toBe(true);
+      expect(result.stale_context).toBe(true);
+      expect(result.context_md).toContain("Context stale");
+      expect(result.token_estimate).toBeLessThanOrEqual(100);
+    });
+
     it("returns full context without truncation", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
@@ -218,7 +228,7 @@ type: context
     it("prepends shared files with inject: always to context", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
-      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+      await mkdir(join(vaultRoot, "projects/test-project/shared/patterns"), { recursive: true });
 
       await vaultFs.write(
         "projects/test-project/context.md",
@@ -235,7 +245,7 @@ Some project details.
       );
 
       await vaultFs.write(
-        "shared/patterns/test-pattern.md",
+        "projects/test-project/shared/patterns/test-pattern.md",
         `---
 inject: always
 ---
@@ -257,7 +267,7 @@ Always validate inputs.
     it("skips shared files without inject: always", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
-      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+      await mkdir(join(vaultRoot, "projects/test-project/shared/patterns"), { recursive: true });
 
       await vaultFs.write(
         "projects/test-project/context.md",
@@ -272,7 +282,7 @@ updated: "2026-05-08"
       );
 
       await vaultFs.write(
-        "shared/patterns/no-inject.md",
+        "projects/test-project/shared/patterns/no-inject.md",
         `---
 type: pattern
 ---
@@ -291,7 +301,7 @@ This should not appear.
     it("inject:always content appears before truncation", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
       await mkdir(join(vaultRoot, "projects/test-project"), { recursive: true });
-      await mkdir(join(vaultRoot, "shared/patterns"), { recursive: true });
+      await mkdir(join(vaultRoot, "projects/test-project/shared/patterns"), { recursive: true });
 
       const longContent = "x".repeat(5000);
       await vaultFs.write(
@@ -309,7 +319,7 @@ ${longContent}
       );
 
       await vaultFs.write(
-        "shared/patterns/critical-pattern.md",
+        "projects/test-project/shared/patterns/critical-pattern.md",
         `---
 inject: always
 ---
@@ -323,6 +333,20 @@ INJECT_MARKER_UNIQUE_STRING
       const result = await contextCommand({ project: "test-project", maxTokens: 50 }, ctx);
 
       expect(result.context_md).toContain("INJECT_MARKER_UNIQUE_STRING");
+    });
+
+    it.each(["summary", "full"] as const)("injects only project-local shared notes in %s mode, with or without a jail", async (detailLevel) => {
+      await vaultFs.write("projects/test-project/context.md", "# Context\nProject details\n");
+      await vaultFs.write("shared/global.md", "---\ninject: always\n---\nROOT_PRIVATE_MARKER\n");
+      await vaultFs.write("projects/other-project/shared/other.md", "---\ninject: always\n---\nOTHER_PRIVATE_MARKER\n");
+      await vaultFs.write("projects/test-project/shared/local.md", "---\ninject: always\n---\nLOCAL_MARKER\n");
+
+      for (const fs of [vaultFs, new VaultFS(vaultRoot, { projectSlug: "test-project" })]) {
+        const result = await contextCommand({ project: "test-project", detailLevel, maxTokens: 10000 }, createCommandContext(fs));
+        expect(result.context_md).toContain("LOCAL_MARKER");
+        expect(result.context_md).not.toContain("ROOT_PRIVATE_MARKER");
+        expect(result.context_md).not.toContain("OTHER_PRIVATE_MARKER");
+      }
     });
   });
 

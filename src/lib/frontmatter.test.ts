@@ -3,6 +3,21 @@ import { parseFrontmatter, serializeFrontmatter, createFrontmatter, mergeFrontma
 import type { Frontmatter } from "./frontmatter.js";
 
 describe("parseFrontmatter", () => {
+  it.each(["javascript", "js", "javascript "])("never evaluates %s frontmatter", (language) => {
+    const marker = "__superskillFrontmatterExecution";
+    const state = globalThis as unknown as Record<string, unknown>;
+    delete state[marker];
+    const input = `---${language}\n(() => { globalThis.${marker} = true; return { type: 'task' }; })()\n---\nContent`;
+    try {
+      const result = parseFrontmatter(input);
+      expect(state[marker]).toBeUndefined();
+      expect(result.data).toEqual({});
+      expect(result.content).toBe(input);
+    } finally {
+      delete state[marker];
+    }
+  });
+
   const cases = [
     {
       name: "with frontmatter",

@@ -2,7 +2,7 @@
 
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile, symlink, stat, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,6 +32,41 @@ describe("deriveSlug", () => {
 });
 
 describe("registerProject", () => {
+  it.each(["[]", "null", '{"/other/repo":42}', '{"/other/repo":"../escape"}'])("preserves structurally invalid mappings: %s", async raw => {
+    const path = join(vault, "project-map.json");
+    await writeFile(path, raw);
+    await expect(registerProject(vault, work, "work")).rejects.toThrow(/invalid|valid project map/i);
+    expect(await readFile(path, "utf-8")).toBe(raw);
+  });
+
+  it("rejects a symlinked lock without reading or deleting its target", async () => {
+    const target = join(work, "foreign-lock");
+    const raw = JSON.stringify({ pid: 999999999, createdAt: 1, token: "other" });
+    await writeFile(target, raw);
+    await mkdir(join(vault, "coordination/locks"), { recursive: true });
+    await symlink(target, join(vault, "coordination/locks/project-map.lock"));
+    await expect(registerProject(vault, work, "work")).rejects.toThrow(/symlink|unsafe/i);
+    expect(await readFile(target, "utf-8")).toBe(raw);
+  });
+
+  it("serializes concurrent registrations without losing entries and writes private files", async () => {
+    const repos = Array.from({ length: 12 }, (_, index) => join(work, `repo-${index}`));
+    await Promise.all(repos.map(repo => mkdir(repo)));
+    await Promise.all(repos.map(repo => registerProject(vault, repo)));
+    const map = JSON.parse(await readFile(join(vault, "project-map.json"), "utf-8"));
+    expect(Object.keys(map).sort()).toEqual(repos.sort());
+    expect((await stat(join(vault, "project-map.json"))).mode & 0o777).toBe(0o600);
+    expect((await readdir(vault)).filter(file => file.includes(".tmp") || file.endsWith(".lock"))).toEqual([]);
+  });
+
+  it("refuses to read or overwrite a symlinked project map", async () => {
+    const target = join(work, "external.json");
+    await writeFile(target, "{}");
+    await symlink(target, join(vault, "project-map.json"));
+    await expect(registerProject(vault, work, "work")).rejects.toThrow(/symlink|unsafe/i);
+    expect(await readFile(target, "utf-8")).toBe("{}");
+  });
+
   it("maps a directory to a derived slug and is idempotent", async () => {
     const repo = join(work, "My Repo");
     await mkdir(repo, { recursive: true });

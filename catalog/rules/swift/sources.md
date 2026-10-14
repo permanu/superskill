@@ -3,6 +3,11 @@
 Baseline: latest
 Last verified: 2026-10-05
 
+## Contents
+
+- [Primary](#primary)
+- [Further reading](#further-reading)
+
 ## Primary
 
 - [The Swift Programming Language - Error Handling](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/errorhandling/) - err, api: throwing, catching, typed throws, `try?`/`try!`, defer cleanup, NSError interop.

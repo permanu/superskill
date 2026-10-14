@@ -131,7 +131,7 @@ describe("startSession", () => {
   it("creates a new session node in the graph", () => {
     const graph = makeBaseGraph("skill-a", 0.5);
     const { graph: updated, sessionId } = startSession(graph, "test intent");
-    expect(sessionId).toMatch(/^s_\d+_[a-f0-9]{4}$/);
+    expect(sessionId).toMatch(/^s_[a-f0-9-]{36}$/);
     const session = updated.nodes.find((n) => n.type === "session") as SessionNode;
     expect(session).toBeDefined();
     expect(session.intent).toBe("test intent");
@@ -183,6 +183,14 @@ describe("recordActivation", () => {
       (e) => e.type === "session_file" && e.from === sessionId,
     );
     expect(fileEdges).toHaveLength(2);
+  });
+
+  it("preserves actions on previously recorded files that were not touched again", () => {
+    const started = startSession(makeBaseGraph("skill-a", 0.5), "test");
+    const once = recordActivation(started.graph, started.sessionId, "skill-a", ["previous"]);
+    const withRead: Graph = { ...once, edges: once.edges.map(edge => edge.type === "session_file" ? { ...edge, action: "read" } : edge) };
+    const updated = recordActivation(withRead, started.sessionId, "skill-a", ["new"]);
+    expect(updated.edges.find(edge => edge.type === "session_file" && edge.to === "previous")).toMatchObject({ action: "read" });
   });
 
   it("boosts project_skill edge weight on activation", () => {
@@ -255,6 +263,52 @@ describe("recordActivation", () => {
     const graph = makeBaseGraph("skill-a", 0.5);
     const updated = recordActivation(graph, "nonexistent", "skill-a", []);
     expect(updated.nodes).toHaveLength(2);
+  });
+
+  it("ignores unknown skills and completed sessions without creating dangling edges", () => {
+    const started = startSession(makeBaseGraph("skill-a", 0.5), "test");
+    expect(recordActivation(started.graph, started.sessionId, "missing", [])).toBe(started.graph);
+    const ended = endSession(started.graph, started.sessionId, "success", []);
+    expect(recordActivation(ended, started.sessionId, "skill-a", [])).toBe(ended);
+  });
+
+  it("creates a project edge for a known installed skill and keeps repeated primary roles", () => {
+    const started = startSession({ nodes: [makeProjectNode(), makeSkillNode("skill-a", 0.5)], edges: [] }, "test");
+    const once = recordActivation(started.graph, started.sessionId, "skill-a", ["a", "a"]);
+    const twice = recordActivation(once, started.sessionId, "skill-a", ["a", "b", "b"]);
+    expect(twice.edges.find(edge => edge.type === "project_skill")).toMatchObject({ w: 0.595, activations: 2 });
+    expect(twice.edges.find(edge => edge.type === "session_skill")).toMatchObject({ role: "primary" });
+    expect((twice.nodes.find(node => node.type === "session") as SessionNode).files).toEqual(["a", "b"]);
+  });
+
+  it("bounds unique session files and skills and the corresponding edge counts", () => {
+    const nodes = Array.from({ length: 300 }, (_, index) => makeSkillNode(`skill-${index}`, 0.5));
+    const started = startSession({ nodes: [makeProjectNode(), ...nodes], edges: [] }, "test");
+    let graph = recordActivation(started.graph, started.sessionId, nodes[0].id, Array.from({ length: 2000 }, (_, index) => `file-${index}`));
+    for (const node of nodes) graph = recordActivation(graph, started.sessionId, node.id, []);
+    const session = graph.nodes.find(node => node.type === "session") as SessionNode;
+    expect(session.files.length).toBeLessThanOrEqual(1000);
+    expect(session.skills.length).toBeLessThanOrEqual(100);
+    expect(graph.edges.filter(edge => edge.type === "session_skill")).toHaveLength(session.skills.length);
+    expect(graph.edges.filter(edge => edge.type === "session_file")).toHaveLength(session.files.length);
+  });
+
+  it("normalizes reverse co-activation edges without delimiter collisions", () => {
+    const ids = ["a", "b:c", "a:b", "c"];
+    const started = startSession({ nodes: [makeProjectNode(), ...ids.map(id => makeSkillNode(id, 0.5))], edges: [] }, "test");
+    let graph = started.graph;
+    for (const id of [...ids].reverse()) graph = recordActivation(graph, started.sessionId, id, []);
+    const edges = graph.edges.filter((edge): edge is SkillSkillEdge => edge.type === "skill_skill");
+    expect(edges).toHaveLength(6);
+    expect(edges.every(edge => edge.from < edge.to)).toBe(true);
+  });
+
+  it("counts a co-activation once per skill pair in a session", () => {
+    const started = startSession({ nodes: [makeProjectNode(), makeSkillNode("a", 0.5), makeSkillNode("b", 0.5)], edges: [] }, "test");
+    let graph = recordActivation(started.graph, started.sessionId, "b", []);
+    graph = recordActivation(graph, started.sessionId, "a", []);
+    graph = recordActivation(graph, started.sessionId, "b", []);
+    expect(graph.edges.find(edge => edge.type === "skill_skill")).toMatchObject({ from: "a", to: "b", co_activations: 1, w: 0.1 });
   });
 });
 
@@ -353,6 +407,32 @@ describe("findOrCreateSession", () => {
 });
 
 describe("endSession", () => {
+  it("is idempotent and preserves insights from the first completion", () => {
+    const started = startSession(makeBaseGraph("skill-a", 0.5), "test");
+    const once = endSession(started.graph, started.sessionId, "success", ["keep this"]);
+    expect(endSession(once, started.sessionId, "partial", [])).toBe(once);
+  });
+
+  it("preserves insights beyond the rolling session window", () => {
+    let graph = makeBaseGraph("skill-a", 0.5);
+    const first = startSession(graph, "insight session");
+    graph = endSession(first.graph, first.sessionId, "success", ["durable insight"]);
+    for (let i = 0; i < 55; i++) {
+      const next = startSession(graph, `next ${i}`);
+      graph = endSession(next.graph, next.sessionId, "success", []);
+    }
+    expect(graph.nodes.find(node => node.id === first.sessionId)).toMatchObject({ insights: ["durable insight"] });
+  });
+
+  it("produces finite bounded weights from non-finite inputs", () => {
+    for (const value of [NaN, Infinity, -Infinity, -1, 10]) {
+      for (const result of [boostWeight(value), normalizeStars(value), normalizeInstalls(value)]) {
+        expect(Number.isFinite(result)).toBe(true);
+        expect(result).toBeGreaterThanOrEqual(0);
+        expect(result).toBeLessThanOrEqual(1);
+      }
+    }
+  });
   it("sets outcome and insights on session", () => {
     const graph = makeBaseGraph("skill-a", 0.5);
     const { graph: g1, sessionId } = startSession(graph, "test");

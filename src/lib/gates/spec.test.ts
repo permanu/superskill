@@ -84,6 +84,10 @@ describe("acceptance helpers", () => {
     expect(parseAcceptanceItem("looks right | manual: needs eyes")).toEqual({ text: "looks right", manual: "needs eyes" });
     expect(parseAcceptanceItem("plain text")).toBe("plain text");
   });
+
+  it.each([null, 7, { text: 7 }, { text: "x", command: 7 }, { id: 7, text: "x" }])("rejects malformed acceptance input explicitly: %j", (input) => {
+    expect(() => normalizeAcceptance([input as never])).toThrow(/Acceptance item 1/i);
+  });
 });
 
 describe("validateSpec", () => {
@@ -120,6 +124,17 @@ describe("validateSpec", () => {
     expect(validateAcceptance([{ id: "A2", text: "x", command: "a\nb" }])).toContain(
       "Acceptance A2: values must be single-line",
     );
+  });
+
+  it("rejects acceptance ids and ambiguous runners that cannot round-trip", () => {
+    expect(validateAcceptance([{ id: "A 1", text: "x", command: "npm test" }])).toContain("Acceptance id must contain only letters, numbers, underscores, or hyphens: A 1");
+    expect(validateAcceptance([{ id: "A1", text: "x", command: "npm test", manual: "looks fine" }])).toContain("Acceptance A1: choose either a command or a manual reason, not both");
+    expect(validateAcceptance([{ id: "A1", text: "x", command: "npm test\rmalformed" }])).toContain("Acceptance A1: values must be single-line");
+  });
+
+  it("reports malformed spec shapes instead of treating them as valid", () => {
+    expect(validateSpec({ ...completeSpec(), risks: "risk" as never })).toContain("risks must be an array of non-empty strings");
+    expect(validateSpec({ ...completeSpec(), goal: 7 as never })).toContain("goal must be a string");
   });
 });
 

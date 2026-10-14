@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { moduleNodeId } from "./extractors/common.js";
 import { resolveSpecifier, scanRepo, type FileIndex } from "./scan.js";
 import { CodeGraphStore, edgeKey } from "./store.js";
 import type { CodeEdge, CodeNode, Confidence, ScanResult } from "./types.js";
+import { containedPath, isWithinRoot } from "./paths.js";
 
 export type ClaimKind =
   | "file-exists"
@@ -118,12 +119,20 @@ function normalizeSegments(path: string): string {
 export function claimPath(rootAbs: string, input: string): string {
   let clean = toPosix(input.trim());
   if (clean.startsWith("file:")) clean = clean.slice("file:".length);
+  if (!clean || clean.includes("\0") || /^[A-Za-z]:/.test(clean)) throw new Error("claims: invalid path");
+  if (!isWithinRoot(rootAbs, resolve(rootAbs, clean))) throw new Error("claims: path outside scan root");
   if (isAbsolute(clean)) clean = toPosix(relative(rootAbs, clean));
   return normalizeSegments(clean);
 }
 
 async function isFileOnDisk(rootAbs: string, rel: string): Promise<boolean> {
-  const info = await stat(resolve(rootAbs, rel)).catch(() => null);
+  const abs = await containedPath(rootAbs, rel);
+  const info = await lstat(abs).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    console.error("[codegraph] claim file lookup failed:", error.code ?? "unknown error");
+    throw error;
+  });
+  await containedPath(rootAbs, rel);
   return info?.isFile() ?? false;
 }
 
@@ -378,9 +387,12 @@ async function verifyNoOtherImporters(
   if (incoming.length === 0) {
     return {
       claim,
-      verdict: "verified",
-      reason: `no imports edge targets ${file} in the graph scan (EXTRACTED scan)`,
-      evidence: [nodeEvidence(module, `module ${file}`)],
+      verdict: "unverifiable",
+      reason: `no imports edge targets ${file}, but importer edge coverage is incomplete`,
+      evidence: [nodeEvidence(module, `module ${file}`), {
+        kind: "scan",
+        detail: "Incomplete importer coverage: heuristic specifier resolution, dynamic imports, Swift modules, Java packages and C/C++ include paths are not complete dependency analysis.",
+      }],
     };
   }
 
@@ -432,9 +444,12 @@ async function verifyNoOtherCallers(
   if (incoming.length === 0) {
     return {
       claim,
-      verdict: "verified",
-      reason: `no calls edge targets "${claim.symbol}" in the graph scan (EXTRACTED scan)`,
-      evidence: nodes.map((node) => nodeEvidence(node)),
+      verdict: "unverifiable",
+      reason: `no calls edge targets "${claim.symbol}", but caller edge coverage is incomplete`,
+      evidence: [...nodes.map((node) => nodeEvidence(node)), {
+        kind: "scan",
+        detail: "Incomplete caller coverage: aliases, namespace/default re-exports, callbacks, dynamic dispatch and cross-file bindings are heuristic; absence of an edge is not proof of no callers.",
+      }],
     };
   }
 
@@ -543,6 +558,10 @@ export async function verifyClaims(
   options: VerifyClaimsOptions = {},
 ): Promise<ClaimsReport> {
   const rootAbs = resolve(options.root ?? process.cwd());
+  for (const claim of claims) {
+    const path = claim.kind === "file-exists" ? claim.path : claim.kind === "import-resolves" ? claim.from : claim.file;
+    if (path !== undefined) await containedPath(rootAbs, claimPath(rootAbs, path));
+  }
   const scan = options.scan ?? (await scanRepo(rootAbs));
   const store = new CodeGraphStore(scan.graph);
   const results: ClaimResult[] = [];

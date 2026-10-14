@@ -68,7 +68,8 @@ export const pythonProvider: ToolchainProvider = {
     return [];
   },
 
-  async prune(_ctx: ProviderContext): Promise<PruneSpec | null> {
+  async prune(ctx: ProviderContext): Promise<PruneSpec | null> {
+    if (!ctx.projectFiles.includes("uv.lock") && !existsSync(join(ctx.projectRoot, "uv.lock")) && !existsSync(join(ctx.worktreeRoot, "uv.lock"))) return null;
     return {
       tool: "uv",
       command: "uv",

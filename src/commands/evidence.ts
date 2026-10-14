@@ -37,13 +37,20 @@ export async function evidenceCommand(
   evidence?: EvidenceRecord[];
   count?: number;
 }> {
+  if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 0 || args.limit > 500)) {
+    throw new Error("limit must be an integer between 0 and 500");
+  }
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const ticketsDir = `projects/${projectSlug}/tickets`;
 
   switch (args.action) {
     case "add": {
       if (!args.ticket) throw new Error("Ticket required for evidence add");
-      if (!args.command?.trim()) throw new Error("Command required for evidence add");
+      if (typeof args.command !== "string" || !args.command.trim()) throw new Error("Command required for evidence add");
+      if (args.exit !== undefined && !Number.isInteger(args.exit)) throw new Error("Evidence exit must be a finite integer");
+      if (args.ts !== undefined && (typeof args.ts !== "string" || !args.ts.trim() || !Number.isFinite(Date.parse(args.ts)))) throw new Error("Evidence timestamp must be a valid date string");
+      if (args.commit !== undefined && (typeof args.commit !== "string" || !args.commit.trim())) throw new Error("Evidence commit must be a non-empty string");
+      if (args.output !== undefined && typeof args.output !== "string") throw new Error("Evidence output must be a string");
 
       const ticketPath = await resolveTicketPath(ctx.vaultFs, ticketsDir, args.ticket);
       const ticket = parseTicket(await ctx.vaultFs.read(ticketPath), ticketPath);
@@ -85,7 +92,7 @@ export async function evidenceCommand(
       if (!ticket) throw new Error(`Not a ticket: ${ticketPath}`);
 
       const evidence = await readEvidence(ctx.vaultFs, projectSlug, ticket.id);
-      const listed = args.limit !== undefined ? evidence.slice(0, args.limit) : evidence;
+      const listed = evidence.slice(0, args.limit ?? 50);
       return {
         ticket: ticket.id,
         path: evidencePath(projectSlug, ticket.id),

@@ -41,11 +41,17 @@ function compareEdges(a: CodeEdge, b: CodeEdge): number {
   return a.span.startLine - b.span.startLine;
 }
 
+function snapshot<T extends CodeNode | CodeEdge>(entry: T): T {
+  return { ...entry, span: { ...entry.span } };
+}
+
 export class CodeGraphStore {
   root = "";
   private readonly nodeMap = new Map<string, CodeNode>();
   private readonly edgeMap = new Map<string, CodeEdge>();
   private readonly languageSet = new Set<LanguageId>();
+  private sortedNodes: CodeNode[] | null = null;
+  private sortedEdges: CodeEdge[] | null = null;
 
   constructor(graph?: CodeGraph) {
     if (graph) this.addGraph(graph);
@@ -53,7 +59,8 @@ export class CodeGraphStore {
 
   addNode(node: CodeNode): boolean {
     if (this.nodeMap.has(node.id)) return false;
-    this.nodeMap.set(node.id, node);
+    this.nodeMap.set(node.id, snapshot(node));
+    this.sortedNodes = null;
     if (node.language !== "external") this.languageSet.add(node.language);
     return true;
   }
@@ -61,7 +68,8 @@ export class CodeGraphStore {
   addEdge(edge: CodeEdge): boolean {
     const key = edgeKey(edge);
     if (this.edgeMap.has(key)) return false;
-    this.edgeMap.set(key, edge);
+    this.edgeMap.set(key, snapshot(edge));
+    this.sortedEdges = null;
     return true;
   }
 
@@ -74,7 +82,8 @@ export class CodeGraphStore {
   }
 
   getNode(id: string): CodeNode | undefined {
-    return this.nodeMap.get(id);
+    const node = this.nodeMap.get(id);
+    return node ? snapshot(node) : undefined;
   }
 
   hasNode(id: string): boolean {
@@ -90,11 +99,13 @@ export class CodeGraphStore {
   }
 
   nodes(): CodeNode[] {
-    return [...this.nodeMap.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    this.sortedNodes ??= [...this.nodeMap.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return this.sortedNodes.map(snapshot);
   }
 
   edges(): CodeEdge[] {
-    return [...this.edgeMap.values()].sort(compareEdges);
+    this.sortedEdges ??= [...this.edgeMap.values()].sort(compareEdges);
+    return this.sortedEdges.map(snapshot);
   }
 
   languages(): LanguageId[] {

@@ -57,6 +57,11 @@ describe("parseTicket", () => {
     const content = serializeFrontmatter({ type: "ticket", status: "weird" }, "# T\n");
     expect(parseTicket(content, "projects/p/tickets/ticket-001-t.md")!.status).toBe("backlog");
   });
+
+  it("does not discard malformed criteria while retaining only valid acceptance", () => {
+    const content = serializeFrontmatter({ type: "ticket", acceptance: [{ text: "tests pass", command: "npm test" }, 7] }, "# Ticket\n");
+    expect(() => parseTicket(content, "projects/p/tickets/ticket-001-t.md")).toThrow(/Acceptance item 2/);
+  });
 });
 
 describe("topoOrder", () => {

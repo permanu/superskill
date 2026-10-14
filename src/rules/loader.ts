@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import matter from "gray-matter";
+import matter from "../lib/markdown-matter.js";
+import { collectRuleFiles } from "./files.js";
 
 export type Severity = "must" | "should" | "prefer";
 export type RuleStatus = "draft" | "verified";
@@ -40,7 +40,6 @@ export interface LoadResult {
   warnings: RuleWarning[];
 }
 
-const NON_RULE_FILES = new Set(["INDEX.md", "sources.md", "categories.md"]);
 const SEVERITIES: ReadonlySet<string> = new Set(["must", "should", "prefer"]);
 const STATUSES: ReadonlySet<string> = new Set(["draft", "verified"]);
 const ENFORCEMENTS: ReadonlySet<string> = new Set(["tool", "review", "both"]);
@@ -123,40 +122,6 @@ function countSources(raw: unknown): number {
   return count;
 }
 
-function isRuleFileName(name: string): boolean {
-  return name.endsWith(".md") && !NON_RULE_FILES.has(name);
-}
-
-async function readDirSafe(absDir: string, relPath: string, warnings: RuleWarning[]): Promise<Dirent[]> {
-  try {
-    return await readdir(absDir, { withFileTypes: true });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      warnings.push({ path: relPath, message: `cannot read directory: ${messageOf(error)}` });
-    }
-    return [];
-  }
-}
-
-async function collectMarkdownFiles(
-  absDir: string,
-  root: string,
-  warnings: RuleWarning[],
-  out: string[],
-): Promise<void> {
-  const entries = await readDirSafe(absDir, relative(root, absDir) || ".", warnings);
-  entries.sort((a, b) => compareIds(a.name, b.name));
-  for (const entry of entries) {
-    const abs = join(absDir, entry.name);
-    if (entry.isDirectory()) {
-      await collectMarkdownFiles(abs, root, warnings, out);
-    } else if (entry.isFile() && isRuleFileName(entry.name)) {
-      out.push(abs);
-    }
-  }
-}
-
 async function parseRuleFile(
   abs: string,
   root: string,
@@ -232,19 +197,11 @@ async function parseRuleFile(
 
 export async function loadRules(root: string = rulesCatalogRoot()): Promise<LoadResult> {
   const warnings: RuleWarning[] = [];
-  const files: string[] = [];
-
-  const rootEntries = await readDirSafe(root, ".", warnings);
-  rootEntries.sort((a, b) => compareIds(a.name, b.name));
-  for (const entry of rootEntries) {
-    const abs = join(root, entry.name);
-    if (entry.isDirectory()) {
-      await collectMarkdownFiles(abs, root, warnings, files);
-    } else if (entry.isFile() && isRuleFileName(entry.name)) {
-      files.push(abs);
+  const files = await collectRuleFiles(root, (path, error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      warnings.push({ path: relative(root, path) || ".", message: `cannot read directory: ${messageOf(error)}` });
     }
-  }
-  files.sort(compareIds);
+  });
 
   const rules: ParsedRule[] = [];
   const seen = new Set<string>();

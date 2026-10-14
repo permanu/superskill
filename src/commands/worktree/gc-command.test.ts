@@ -2,12 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { CommandContext } from "../../core/types.js";
 import { resolveRepoIdentity } from "../../lib/worktree/paths.js";
+import { quarantinePaths } from "../../lib/worktree/quarantine.js";
 import { worktreeGcCommand, type WorktreeGcOutcome } from "./gc.js";
 
 const execFileAsync = promisify(execFile);
@@ -165,19 +166,13 @@ describe("worktreeGcCommand --worktree wiring", () => {
     );
   });
 
-  it("notes invalid duration and size filters instead of throwing", async () => {
-    const outcome = (await inDir(repo, () =>
-      worktreeGcCommand(
-        { olderThan: "nope", newerThan: "nah", minSize: "?", maxSize: "-1" },
-        makeCtx(),
-      ),
-    )) as WorktreeGcOutcome;
-
-    expect(outcome.action).toBe("plan");
-    expect(outcome.notes.join("\n")).toContain('ignored invalid --older-than "nope"');
-    expect(outcome.notes.join("\n")).toContain('ignored invalid --newer-than "nah"');
-    expect(outcome.notes.join("\n")).toContain('ignored invalid --min-size "?"');
-    expect(outcome.notes.join("\n")).toContain('ignored invalid --max-size "-1"');
+  it.each([
+    { olderThan: "nope" }, { newerThan: "nah" }, { minSize: "?" }, { maxSize: "-1" },
+  ])("rejects invalid filters rather than widening selection: %j", async (filters) => {
+    const identity = await resolveRepoIdentity(repo);
+    const candidate = await seedCandidate(identity.repoId, "go-build");
+    await expect(inDir(repo, () => worktreeGcCommand({ ...filters, apply: true, yes: true }, makeCtx()))).rejects.toThrow("invalid --");
+    expect(existsSync(candidate)).toBe(true);
   });
 
   it("maps a --project slug to its repo id and reports unknown slugs", async () => {
@@ -201,10 +196,16 @@ describe("worktreeGcCommand --worktree wiring", () => {
   });
 
   it("plans a purge without deleting and then purges old quarantine dirs", async () => {
-    const quarantineDir = join(cacheRoot, "_quarantine", "old-journal");
-    await mkdir(quarantineDir, { recursive: true });
-    await writeFile(join(quarantineDir, "data"), "x");
+    const identity = await resolveRepoIdentity(repo);
+    const candidate = await seedCandidate(identity.repoId, "go-build");
+    const quarantined = await quarantinePaths(repo, [candidate], { cacheRoot, journalId: "old-journal" });
+    expect(quarantined.moved).toHaveLength(1);
+    const quarantineDir = quarantined.quarantineDir;
     const when = new Date(Date.now() - 30 * DAY_MS);
+    const manifestPath = join(quarantineDir, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.ts = when.toISOString();
+    await writeFile(manifestPath, JSON.stringify(manifest));
     await utimes(quarantineDir, when, when);
 
     const plan = (await inDir(repo, () =>

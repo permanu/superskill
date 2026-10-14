@@ -1,6 +1,6 @@
 # Atomic Rules — Authoring Contract
 
-**Version:** 1.0 (frozen 2026-10-04)
+**Version:** 1.0 (frozen 2026-10-04; verification clarifications 2026-10-14)
 **Applies to:** `catalog/rules/**` and every authoring/verification agent.
 
 ## 0. What a rule is
@@ -42,7 +42,7 @@ Language codes: `rust typescript python go swift java c cpp`.
 | prefix | string | yes | from taxonomy (section 6) |
 | title | string | yes | one sentence describing the decision (not the mechanism) |
 | severity | must/should/prefer | yes | must = correctness/safety/data loss; should = idiomatic default; prefer = taste |
-| enforce | tool/review/both | yes | tool when a linter/compiler enforces it (add `tool` id); review otherwise |
+| enforce | tool/review/both | yes | tool when a linter/compiler enforces it (add `tool` id for tool or both); review otherwise; descriptive metadata, not automatic execution |
 | tool | string | no | e.g. `clippy::needless_return`, `ruff:TRY003`, `eslint:@typescript-eslint/no-explicit-any` |
 | compile_exempt | string | no | reason the Bad/Good snippets intentionally do not compile (e.g. demonstrating a compiler error, nightly-only feature). The validator skips the compile check with a warning; such rules stay `draft` until a verifier explicitly approves them |
 | baseline | string | yes | the literal string `latest` (section 8) |
@@ -93,7 +93,7 @@ Fenced code block with a complete, compilable recommended snippet (target ≤ 25
 Shared core (use where applicable):
 `type, err, mem, api, async, conc, perf, test, doc, obs, sec, style, proj, lint, anti, data, num, conv, pat, macro, const, io, net, ui, ffi`
 
-Language extensions are allowed but must be declared in that language's `categories.md`. Known rust extensions (from the adapted upstream pack): `own, unsafe, serde, coll, clo, opt, trait, name`.
+Language extensions are allowed but must be declared in that language's `categories.md`. Rust extensions (from the adapted upstream pack): `own, unsafe, serde, coll, closure, opt, trait, name`.
 
 ## 7. Status lifecycle
 
@@ -108,7 +108,7 @@ Rules target the **latest stable** of their language. Do not write version numbe
 - Frontmatter: `baseline: latest` (required; the literal string).
 - `sources.md`: `Baseline: latest`; you may additionally record which versions the cited sources currently show, for traceability only.
 - Author against current stable idioms. Preview/experimental features are never the default: omit them, or keep the rule `status: draft` with the caveat stated in `Why`.
-- Compile checks use whatever toolchain the environment provides; the verifier records the toolchain version used. CI uses the latest stable toolchains. A rule whose examples cannot be checked locally stays `draft` until CI checks it.
+- Compile checks use whatever toolchain the environment provides; the verifier records the toolchain version used. Inspect `.github/workflows/ci.yml` for the actual CI versions: a pinned or available compiler is not evidence of compatibility with the latest stable release. A rule whose examples cannot be checked locally stays `draft` until its required compile evidence exists.
 
 ## 9. INDEX.md
 
@@ -163,3 +163,11 @@ Targets sum to approximately 265 (rust-skills parity). Adjust per language where
 
 - Deterministic validator: `node dist/rules/cli.js validate [--lang <lang>] [--json] [--no-compile]` (owned by `src/rules/`).
 - Adversarial verifier: separate agent, fresh context, only the rule + its cited sources; flips `status` to `verified` only when all checks in section 7 pass.
+
+### Evidence boundaries
+
+- `--no-compile` proves structural checks only. A skipped toolchain, missing dependency, or `compile_exempt` warning is not a successful compile. Use `--strict` for required toolchains and record exemptions explicitly.
+- The deterministic validator checks source URL shape, not source availability or semantic support. Record the fetched primary URL, date, relevant claim, and verifier judgment separately. A passing validator does not grant `verified` status.
+- `enforce: tool|both` requires a `tool` id but does not run that tool. Record the actual linter/compiler invocation when claiming tool enforcement; review-only checks remain agent judgments.
+- Verification notes identify files, verifier, toolchain, exact commands, outcomes, exemptions, and unresolved findings. Do not imply that a prompt checklist, cached result, or another revision's run is fresh execution evidence.
+- Version and digest pins for harness dependencies are operational supply-chain metadata, not language-baseline claims. Keep reviewed digests in source control, verify fresh and cached bytes, and record the upstream checksum source when changing them. Never promote a first-use cache digest into a trusted pin.

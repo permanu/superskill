@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { SessionTrace, TraceSessionRef } from "../types.js";
+import type { SessionTrace, TraceSessionRef, TraceSourceIssue } from "../types.js";
 import { opencodeSource } from "./opencode.js";
 import { claudeCodeSource } from "./claude-code.js";
 import { codexSource } from "./codex.js";
-import type { TraceListOptions, TraceLoadOptions, TraceSource } from "./source.js";
+import { MAX_TRACE_SOURCE_ERRORS, traceErrorCode, type TraceListOptions, type TraceLoadOptions, type TraceSource } from "./source.js";
 
 export type { TraceListOptions, TraceLoadOptions, TraceSource } from "./source.js";
 
@@ -29,23 +29,36 @@ export function describeTraceSources(): TraceSourceStatus[] {
 }
 
 export async function listTraceSessions(opts: TraceListOptions = {}): Promise<TraceSessionRef[]> {
+  const result = await collectTraceSessions(opts);
+  if (result.sourceErrors.length > 0) {
+    const detail = result.sourceErrors.map(({ source, code }) => `${source}:${code}`).join(", ");
+    throw new Error(`Trace listing incomplete (${detail}).`);
+  }
+  return result.sessions;
+}
+
+export async function collectTraceSessions(opts: TraceListOptions = {}): Promise<{ sessions: TraceSessionRef[]; sourceErrors: TraceSourceIssue[] }> {
   const results: TraceSessionRef[] = [];
+  const sourceErrors: TraceSourceIssue[] = [];
   for (const source of TRACE_REGISTRY) {
     if (opts.tool !== undefined && opts.tool !== source.id) continue;
     try {
       results.push(...(await source.list(opts)));
-    } catch (err: unknown) {
-      console.error(`[watchdog] ${source.id} trace listing failed:`, err instanceof Error ? err.message : String(err));
+    } catch (error: unknown) {
+      if (sourceErrors.length < MAX_TRACE_SOURCE_ERRORS) {
+        const sourceId = /^[a-z0-9-]{1,40}$/.test(source.id) ? source.id : "unknown";
+        sourceErrors.push({ source: sourceId, code: traceErrorCode(error) });
+      }
     }
   }
   results.sort((a, b) => (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt));
-  return opts.limit !== undefined ? results.slice(0, opts.limit) : results;
+  return { sessions: opts.limit !== undefined ? results.slice(0, opts.limit) : results, sourceErrors };
 }
 
-export async function findTraceRef(tool: string, id: string): Promise<TraceSessionRef | null> {
+export async function findTraceRef(tool: string, id: string, opts: TraceListOptions = {}): Promise<TraceSessionRef | null> {
   const source = traceSource(tool);
   if (!source) return null;
-  const refs = await source.list({});
+  const refs = await source.list(opts);
   return refs.find((ref) => ref.id === id) ?? null;
 }
 

@@ -48,7 +48,7 @@ describe("go extractor", () => {
     const result = await extractFixture("go", FILE);
     const format = nodeByName(result, "Format", "function")!;
     expect(
-      hasEdge(result, format.id, externalNodeId("example.com/proj/util", "util"), "calls", "INFERRED"),
+      hasEdge(result, format.id, externalNodeId("example.com/proj/util", "Normalize"), "calls", "INFERRED"),
     ).toBe(true);
     const util = await extractFixture("go", "util/util.go");
     expect(nodeByName(util, "DefaultLevel", "const")?.exported).toBe(true);

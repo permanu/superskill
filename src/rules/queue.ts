@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, readFile, rename, unlink, type FileHandle } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,11 +71,9 @@ export interface CampaignState {
 export interface QueueOptions {
   /** Directory holding plan.json, state.json and locks/ (default: <repo>/workstreams). */
   workstreamsDir?: string;
-  /** Lock age after which another process may break it (default 10 minutes). */
   staleMs?: number;
   /** Lock acquisition attempts before giving up (default 20). */
   retries?: number;
-  /** Delay between lock acquisition attempts in ms (default 50). */
   retryDelayMs?: number;
   /** Owner recorded on claims (default: $SUPERSKILL_AGENT or pid-<pid>). */
   owner?: string;
@@ -142,6 +142,13 @@ export class LockTimeoutError extends Error {
 const DEFAULT_STALE_MS = 10 * 60 * 1000;
 const DEFAULT_RETRIES = 20;
 const DEFAULT_RETRY_DELAY_MS = 50;
+const MAX_RETRY_DELAY_MS = 250;
+
+interface LockOwner {
+  handle: FileHandle;
+  identity: Stats;
+  raw: string;
+}
 
 function repoRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -186,10 +193,24 @@ export async function loadPlan(workstreamsDir?: string): Promise<CampaignPlan> {
   const dir = resolve(workstreamsDir ?? defaultWorkstreamsDir());
   const raw = await readFile(planFile(dir), "utf-8");
   const parsed = JSON.parse(raw) as CampaignPlan;
-  if (!parsed || !Array.isArray(parsed.batches) || !Array.isArray(parsed.languages)) {
-    throw new Error(`[rules-queue] malformed plan at ${planFile(dir)}`);
-  }
+  validatePlan(parsed);
   return parsed;
+}
+
+function validatePlan(plan: CampaignPlan): void {
+  if (!plan || !Array.isArray(plan.batches) || !Array.isArray(plan.languages) ||
+      (plan.nonContent !== undefined && !Array.isArray(plan.nonContent))) {
+    throw new Error("[rules-queue] malformed plan");
+  }
+  const ids = new Set<string>();
+  for (const entry of [...plan.batches, ...(plan.nonContent ?? [])]) {
+    const id = entry?.id;
+    if (typeof id !== "string" || id.length === 0 || id.trim() !== id || Object.hasOwn(Object.prototype, id)) {
+      throw new Error(`[rules-queue] invalid plan id ${JSON.stringify(id)}`);
+    }
+    if (ids.has(id)) throw new Error(`[rules-queue] duplicate plan id ${JSON.stringify(id)}`);
+    ids.add(id);
+  }
 }
 
 /** Read state.json. Returns null when it has not been initialized yet. */
@@ -215,6 +236,7 @@ export async function readState(workstreamsDir?: string): Promise<CampaignState 
 
 /** Build a fresh state document from a plan. Pure; does not touch disk. */
 export function stateFromPlan(plan: CampaignPlan, now?: Date): CampaignState {
+  validatePlan(plan);
   const at = now?.toISOString() ?? null;
   const batches: Record<string, StateEntry> = {};
   for (const batch of plan.batches) {
@@ -238,19 +260,32 @@ export async function initState(opts: QueueOptions = {}): Promise<CampaignState>
 
 export async function writeStateFile(workstreamsDir: string, state: CampaignState): Promise<void> {
   await mkdir(workstreamsDir, { recursive: true });
-  const target = stateFile(workstreamsDir);
-  const tmp = `${target}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(state, null, 2) + "\n", "utf-8");
-  await rename(tmp, target);
+  await writeJsonFile(stateFile(workstreamsDir), state);
 }
 
 /** Write plan.json atomically (used by the plan-revision flow). */
 export async function writePlanFile(workstreamsDir: string, plan: CampaignPlan): Promise<void> {
+  validatePlan(plan);
   await mkdir(workstreamsDir, { recursive: true });
-  const target = planFile(workstreamsDir);
-  const tmp = `${target}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await writeFile(tmp, JSON.stringify(plan, null, 2) + "\n", "utf-8");
-  await rename(tmp, target);
+  await writeJsonFile(planFile(workstreamsDir), plan);
+}
+
+async function writeJsonFile(target: string, data: CampaignPlan | CampaignState): Promise<void> {
+  const raw = JSON.stringify(data, null, 2) + "\n";
+  const tmp = `${target}.tmp-${process.pid}-${randomBytes(16).toString("hex")}`;
+  const handle = await open(tmp, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(raw, "utf-8");
+    } finally {
+      await handle.close();
+    }
+    await rename(tmp, target);
+  } finally {
+    await unlink(tmp).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") console.error(`[rules-queue] cannot clean temporary file ${tmp}:`, error.message);
+    });
+  }
 }
 
 interface PlanState {
@@ -322,6 +357,12 @@ export class WorkstreamQueue {
     this.staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
     this.retries = opts.retries ?? DEFAULT_RETRIES;
     this.retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    if (!Number.isSafeInteger(this.retries) || this.retries < 1) {
+      throw new RangeError("[rules-queue] retries must be a positive finite integer");
+    }
+    for (const [name, value] of [["staleMs", this.staleMs], ["retryDelayMs", this.retryDelayMs]] as const) {
+      if (!Number.isFinite(value) || value < 0) throw new RangeError(`[rules-queue] ${name} must be finite and non-negative`);
+    }
     this.owner = opts.owner ?? process.env.SUPERSKILL_AGENT ?? `pid-${process.pid}`;
     this.now = opts.now ?? (() => new Date());
   }
@@ -427,12 +468,12 @@ export class WorkstreamQueue {
   }
 
   async list(filter: ListFilter = {}): Promise<QueueEntry[]> {
-    const { plan, state } = await this.readPlanState();
+    const { plan, state } = await this.withStateLock(() => this.readPlanState());
     return collectEntries(plan, state, filter);
   }
 
   async stats(): Promise<QueueStats> {
-    const { plan, state } = await this.readPlanState();
+    const { plan, state } = await this.withStateLock(() => this.readPlanState());
     const byStatus = emptyStatusCounts();
     const byLang: LanguageStats[] = [];
     let totalTarget = 0;
@@ -484,54 +525,110 @@ export class WorkstreamQueue {
     const lockDir = join(this.workstreamsDir, "locks");
     await mkdir(lockDir, { recursive: true });
     const lockPath = join(lockDir, "state.lock");
-    await this.acquireLock(lockPath);
+    const lock = await this.acquireLock(lockPath);
     try {
       return await fn();
     } finally {
-      await unlink(lockPath).catch(() => {});
+      try {
+        await this.unlinkOwnedLock(lockPath, lock.identity, lock.raw);
+      } finally {
+        await lock.handle.close();
+      }
     }
   }
 
   /** O_CREAT|O_EXCL lockfile acquisition with stale-lock recovery. */
-  private async acquireLock(lockPath: string): Promise<void> {
+  private async acquireLock(lockPath: string): Promise<LockOwner> {
     for (let attempt = 0; attempt < this.retries; attempt++) {
+      let handle: FileHandle;
       try {
-        const handle = await open(lockPath, "wx");
-        try {
-          await handle.writeFile(
-            JSON.stringify({ pid: process.pid, owner: this.owner, at: this.now().toISOString() }),
-            "utf-8"
-          );
-        } finally {
-          await handle.close();
-        }
-        return;
+        handle = await open(lockPath, "wx", 0o600);
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
         if (await this.breakStaleLock(lockPath)) continue;
-        await delay(this.retryDelayMs);
+        if (attempt + 1 < this.retries) {
+          await delay(Math.min(MAX_RETRY_DELAY_MS, this.retryDelayMs * 2 ** Math.min(attempt, 8)));
+        }
+        continue;
+      }
+      let identity: Stats | undefined;
+      try {
+        identity = await handle.stat();
+        const raw = JSON.stringify({
+          pid: process.pid, host: hostname(), token: randomBytes(16).toString("hex"),
+          owner: this.owner, at: this.now().toISOString(),
+        });
+        await handle.writeFile(raw, "utf-8");
+        return { handle, identity, raw };
+      } catch (error) {
+        try {
+          if (identity) await this.unlinkOwnedLock(lockPath, identity);
+        } finally {
+          await handle.close();
+        }
+        throw error;
       }
     }
     throw new LockTimeoutError(`[rules-queue] could not acquire lock ${lockPath} after ${this.retries} attempts`);
   }
 
   private async breakStaleLock(lockPath: string): Promise<boolean> {
-    let mtimeMs: number;
+    let handle: FileHandle | undefined;
     try {
-      mtimeMs = (await stat(lockPath)).mtimeMs;
-    } catch (e) {
-      // Lock disappeared between our attempt and the stat — retry immediately.
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") return true;
-      throw e;
-    }
-    if (Date.now() - mtimeMs <= this.staleMs) return false;
-    try {
-      await unlink(lockPath);
-      return true;
+      const identity = await lstat(lockPath);
+      if (!identity.isFile()) {
+        console.error(`[rules-queue] failed to break stale lock ${lockPath}:`, "not a regular file");
+        return false;
+      }
+      handle = await open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const opened = await handle.stat();
+      if (opened.ino !== identity.ino || opened.dev !== identity.dev) return false;
+      const raw = await handle.readFile("utf-8");
+      let owner: { pid?: unknown; host?: unknown } | null = null;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") owner = parsed;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+      if (typeof owner?.host === "string" && owner.host !== hostname()) return false;
+      if (typeof owner?.pid === "number" && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
+        try {
+          process.kill(owner.pid, 0);
+          return false;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ESRCH") {
+            if (code !== "EPERM") console.error(`[rules-queue] cannot check lock pid ${owner.pid}:`, (error as Error).message);
+            return false;
+          }
+        }
+      } else if (Date.now() - identity.mtimeMs <= this.staleMs) {
+        return false;
+      }
+      return await this.unlinkOwnedLock(lockPath, identity, raw);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return true;
       console.error(`[rules-queue] failed to break stale lock ${lockPath}:`, (e as Error).message);
       return false;
+    } finally {
+      await handle?.close();
+    }
+  }
+
+  private async unlinkOwnedLock(lockPath: string, identity: Stats, raw?: string): Promise<boolean> {
+    try {
+      const before = await lstat(lockPath);
+      if (before.ino !== identity.ino || before.dev !== identity.dev || !before.isFile()) return false;
+      if (raw !== undefined && await readFile(lockPath, "utf-8") !== raw) return false;
+      const after = await lstat(lockPath);
+      if (after.ino !== identity.ino || after.dev !== identity.dev) return false;
+      await unlink(lockPath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      console.error(`[rules-queue] cannot release lock ${lockPath}:`, (error as Error).message);
+      throw error;
     }
   }
 }

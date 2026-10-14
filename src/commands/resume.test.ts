@@ -38,6 +38,24 @@ describe("resumeCommand", () => {
   });
 
   describe("resume context", () => {
+    it("uses the context project instead of the server cwd", async () => {
+      const result = await resumeCommand({}, { ...ctx, projectSlug: "context-project" });
+      expect(result.project).toBe("context-project");
+    });
+
+    it("rejects mismatched scoped projects and invalid limits", async () => {
+      await expect(resumeCommand({ project: "other" }, { ...ctx, projectSlug: "current" })).rejects.toThrow(/different project/i);
+      for (const limit of [-1, 0, 1.5, NaN, Infinity, 101]) {
+        await expect(resumeCommand({ project: "test-project", limit }, ctx)).rejects.toThrow(/limit/i);
+      }
+    });
+
+    it("filters malformed frontmatter values instead of exposing typed nonstrings", async () => {
+      await vaultFs.write("projects/test-project/sessions/2024-01-15-session.md", "---\ntype: session\ntool: 42\noutcome: [bad]\nfiles_touched: [valid.ts, 42, null]\ncompleted: [done, false]\n---\n# Session");
+      const result = await resumeCommand({ project: "test-project" }, ctx);
+      expect(result.last_sessions[0]).toMatchObject({ tool: "unknown", outcome: "", files_touched: ["valid.ts"], completed: ["done"] });
+    });
+
     it("returns project slug", async () => {
       await vaultFs.write("project-map.json", JSON.stringify({ projects: { "test-project": "/tmp/test" } }));
 

@@ -6,69 +6,63 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Validate release tag and package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-notes.mjs --validate
       - run: sudo apt-get install -y ripgrep
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run lint
+      - name: Test scripts and skill evaluations
+        shell: bash
+        run: |
+          shopt -s nullglob
+          test_files=(scripts/*.test.mjs scripts/skill-evals/*.test.mjs)
+          node --test --test-concurrency=2 "${test_files[@]}"
       - run: npm run build
+      - run: node scripts/check-skill-authoring.mjs
+      - run: npm run verify:grammars
+      - run: node scripts/verify-package.mjs
       - run: npm run test:coverage
 
   github-release:
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-      - name: Extract changelog for this version
-        id: changelog
-        run: |
-          # Extract the section for this version from CHANGELOG.md
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          # Get content between this version header and the next version header
-          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
-          # Write to file to preserve newlines
-          echo "$NOTES" > /tmp/release-notes.md
-      - name: Get previous tag
-        id: prev_tag
-        run: |
-          PREV=$(git tag --sort=-v:refname | head -2 | tail -1)
-          echo "TAG=${PREV}" >> "$GITHUB_OUTPUT"
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          PREV="${{ steps.prev_tag.outputs.TAG }}"
-
-          # Build release body
-          {
-            cat /tmp/release-notes.md
-            echo ""
-            echo "---"
-            echo ""
-            echo "**Install:** \`npm install -g superskill\` or via Claude Code \`/plugin install superskill\`"
-            echo ""
-            echo "**Full Changelog:** https://github.com/permanu/superskill/compare/${PREV}...v${VERSION}"
-          } > /tmp/release-body.md
-
-          if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "GitHub release v${VERSION} already exists — skip"
+          node scripts/release-notes.mjs
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            printf 'GitHub release %s already exists — skip\n' "$RELEASE_TAG"
             exit 0
           fi
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --notes-file /tmp/release-body.md
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/release-body.md"

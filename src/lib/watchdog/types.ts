@@ -51,6 +51,11 @@ export interface TraceTokens {
   reasoning: number;
 }
 
+export interface TraceSourceIssue {
+  source: string;
+  code: string;
+}
+
 export interface SessionTrace {
   ref: TraceSessionRef;
   model?: string;
@@ -75,6 +80,7 @@ export interface SessionTrace {
   };
   /** True when the reader hit a cap and the trace is incomplete. */
   truncated: boolean;
+  sourceErrors?: string[];
 }
 
 export type FindingCategory =
@@ -141,6 +147,8 @@ export interface WatchdogReport {
   /** Compact per-session digests for agent reasoning (session/window scopes). */
   digests: string[];
   persistedPath?: string;
+  incomplete?: boolean;
+  sourceErrors?: TraceSourceIssue[];
 }
 
 export type FindingStatus = "open" | "applied" | "dismissed";

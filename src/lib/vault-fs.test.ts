@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, readFile, realpath, rm, stat, symlink } from "fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { chmod, mkdir, open, writeFile, readFile, realpath, rename, rm, stat, symlink, utimes } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { pathToFileURL } from "url";
 import { transpileModule, ModuleKind, ScriptTarget } from "typescript";
-import { homedir, tmpdir } from "os";
+import { homedir, hostname, tmpdir } from "os";
 import { join, dirname } from "path";
 import { VaultFS, VaultError } from "./vault-fs.js";
 
@@ -26,6 +26,7 @@ describe("VaultFS", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(vaultRoot, { recursive: true, force: true });
     await rm(testHome, { recursive: true, force: true });
     if (originalHome === undefined) delete process.env.HOME;
@@ -33,6 +34,92 @@ describe("VaultFS", () => {
   });
 
   describe("atomic updates", () => {
+    it("records private lock ownership with the local process and host", async () => {
+      await vaultFs.write("note.md", "original");
+      await vaultFs.update("note.md", async () => {
+        const lockPath = join(vaultRoot, ".note.md.lock");
+        const owner = JSON.parse(await readFile(lockPath, "utf-8"));
+        expect(owner).toMatchObject({ pid: process.pid, host: hostname() });
+        expect(owner.token).toEqual(expect.any(String));
+        expect(owner.ownerId).toEqual(expect.any(String));
+        expect((await stat(lockPath)).mode & 0o777).toBe(0o600);
+        return "updated";
+      });
+    });
+
+    it("recovers a fresh lock left by a provably exited local process", async () => {
+      await vaultFs.write("note.md", "original");
+      const result = await promisify(execFile)(process.execPath, ["-e", "process.stdout.write(String(process.pid))"]);
+      await writeFile(join(vaultRoot, ".note.md.lock"), JSON.stringify({
+        token: "exited-token", ownerId: "exited-owner", pid: Number(result.stdout), host: hostname(), createdAt: Date.now(),
+      }), { mode: 0o600 });
+      await vaultFs.update("note.md", () => "recovered", { timeoutMs: 500 });
+      expect(await vaultFs.read("note.md")).toBe("recovered");
+    });
+
+    it("never steals an old lock from a known-live local process", async () => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      const old = Date.now() - 24 * 60 * 60 * 1000;
+      const owner = JSON.stringify({ token: "live-token", ownerId: "live-owner", pid: process.pid, host: hostname(), createdAt: old });
+      await writeFile(lockPath, owner);
+      await utimes(lockPath, old / 1000, old / 1000);
+      await expect(vaultFs.update("note.md", () => "stolen", { timeoutMs: 25 })).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+      expect(await readFile(lockPath, "utf-8")).toBe(owner);
+      expect(await vaultFs.read("note.md")).toBe("original");
+    });
+
+    it("treats permission-denied process probes as live owners", async () => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      const old = Date.now() - 24 * 60 * 60 * 1000;
+      await writeFile(lockPath, JSON.stringify({ token: "protected-token", ownerId: "protected-owner", pid: process.pid, host: hostname(), createdAt: old }));
+      await utimes(lockPath, old / 1000, old / 1000);
+      vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EPERM" }); });
+      await expect(vaultFs.update("note.md", () => "stolen", { timeoutMs: 25 })).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+    });
+
+    it("preserves a known-live local owner even when other metadata is incomplete", async () => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      const old = Date.now() - 24 * 60 * 60 * 1000;
+      const content = JSON.stringify({ pid: process.pid, host: hostname(), token: "legacy-token" });
+      await writeFile(lockPath, content);
+      await utimes(lockPath, old / 1000, old / 1000);
+      await expect(vaultFs.update("note.md", () => "stolen", { timeoutMs: 25 })).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+      expect(await readFile(lockPath, "utf-8")).toBe(content);
+    });
+
+    it.each([false, true])("uses a lease for foreign-host locks (expired: %s)", async (expired) => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      const createdAt = Date.now() - (expired ? 24 * 60 * 60 * 1000 : 0);
+      await writeFile(lockPath, JSON.stringify({ token: "foreign-token", ownerId: "foreign-owner", pid: process.pid, host: `${hostname()}-foreign`, createdAt }));
+      await utimes(lockPath, createdAt / 1000, createdAt / 1000);
+      const update = vaultFs.update("note.md", () => "recovered", { timeoutMs: expired ? 500 : 25 });
+      if (expired) {
+        await update;
+        expect(await vaultFs.read("note.md")).toBe("recovered");
+      } else {
+        await expect(update).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
+        expect(await vaultFs.read("note.md")).toBe("original");
+      }
+    });
+
+    it("checks lock inode identity even when a replacement copies the token", async () => {
+      await vaultFs.write("note.md", "original");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      await expect(vaultFs.update("note.md", async () => {
+        const owner = await readFile(lockPath, "utf-8");
+        await writeFile(`${lockPath}.replacement`, owner);
+        await rename(`${lockPath}.replacement`, lockPath);
+        return "lost ownership";
+      })).rejects.toMatchObject({ code: "LOCK_LOST" });
+      expect(await vaultFs.read("note.md")).toBe("original");
+      expect(await readFile(lockPath, "utf-8")).toContain("token");
+    });
+
     it("serializes updates across independent operating system processes", async () => {
       const modules = join(vaultRoot, "worker-modules");
       await mkdir(modules);
@@ -137,6 +224,47 @@ describe("VaultFS", () => {
       expect(content).toContain("updated");
       expect(content).toContain("appended");
       expect(await vaultFs.read("alias.md")).toBe(content);
+    });
+  });
+
+  describe("update modes", () => {
+    it("atomically restricts permissions even when content is unchanged", async () => {
+      const path = join(vaultRoot, "note.md");
+      await writeFile(path, "unchanged");
+      await chmod(path, 0o644);
+      const original = await open(path, "r");
+      try {
+        const before = await original.stat();
+        await vaultFs.update("note.md", (current) => current, { mode: 0o600 });
+        const after = await stat(path);
+        expect(after.mode & 0o777).toBe(0o600);
+        expect(after.ino).not.toBe(before.ino);
+        expect((await original.stat()).mode & 0o777).toBe(0o644);
+        expect(await vaultFs.read("note.md")).toBe("unchanged");
+      } finally {
+        await original.close();
+      }
+    });
+
+    it("preserves existing permissions by default and skips a true no-op", async () => {
+      const path = join(vaultRoot, "note.md");
+      await writeFile(path, "original");
+      await chmod(path, 0o640);
+      await vaultFs.update("note.md", () => "updated");
+      const before = await stat(path);
+      expect(before.mode & 0o777).toBe(0o640);
+      await vaultFs.update("note.md", (current) => current);
+      expect((await stat(path)).ino).toBe(before.ino);
+    });
+
+    it.each([0o000, 0o200, 0o400, 0o600])("supports explicit owner-only mode %s on new files", async (mode) => {
+      await vaultFs.update("note.md", () => "private", { create: true, mode });
+      expect((await stat(join(vaultRoot, "note.md"))).mode & 0o777).toBe(mode);
+    });
+
+    it.each([NaN, Infinity, -1, 1.5, 0o100, 0o644, 0o700, 0o1600, 2 ** 32, 2 ** 32 + 0o600])("rejects invalid or nonrestrictive mode %s before changing files", async (mode) => {
+      await expect(vaultFs.update("new/note.md", () => "private", { create: true, mode })).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      expect(await vaultFs.exists("new")).toBe(false);
     });
   });
 
@@ -284,6 +412,46 @@ describe("VaultFS", () => {
     });
   });
 
+  describe("createExclusive", () => {
+    it("publishes one complete private file without overwriting competing creates", async () => {
+      const results = await Promise.allSettled(Array.from({ length: 8 }, (_, index) =>
+        new VaultFS(vaultRoot).createExclusive("private/deep/note.md", `writer-${index}`),
+      ));
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const failures = results.filter((result) => result.status === "rejected");
+      expect(failures).toHaveLength(7);
+      for (const result of failures) expect(result.reason).toMatchObject({ code: "EEXIST" });
+      expect(await vaultFs.read("private/deep/note.md")).toMatch(/^writer-\d$/);
+      expect((await stat(join(vaultRoot, "private/deep/note.md"))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(vaultRoot, "private"))).mode & 0o777).toBe(0o700);
+      expect((await stat(join(vaultRoot, "private/deep"))).mode & 0o777).toBe(0o700);
+    });
+
+    it("scans and audits both successful and rejected exclusive creates", async () => {
+      const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
+      await scoped.createExclusive("note.md", "safe");
+      const secret = `ghp_${"A".repeat(36)}`;
+      await expect(scoped.createExclusive("secret.md", secret)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect(await scoped.exists("secret.md")).toBe(false);
+      const raw = await readFile(join(testHome, ".superskill/audit/vault-writes.jsonl"), "utf-8");
+      const entries = raw.trim().split("\n").map((line) => JSON.parse(line));
+      expect(entries).toEqual([
+        expect.objectContaining({ op: "create", path: "note.md", bytes: 4, secretScan: "clean", projectSlug: "alpha" }),
+        expect.objectContaining({ op: "create", path: "secret.md", secretScan: "rejected", projectSlug: "alpha" }),
+      ]);
+      expect(raw).not.toContain(secret);
+    });
+
+    it("refuses existing files, confined symlinks, and escaping paths", async () => {
+      await vaultFs.write("original.md", "original");
+      await symlink("original.md", join(vaultRoot, "alias.md"));
+      await expect(vaultFs.createExclusive("original.md", "replacement")).rejects.toMatchObject({ code: "EEXIST" });
+      await expect(vaultFs.createExclusive("alias.md", "replacement")).rejects.toMatchObject({ code: "EEXIST" });
+      await expect(vaultFs.createExclusive("../escape.md", "replacement")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(await vaultFs.read("original.md")).toBe("original");
+    });
+  });
+
   describe("append", () => {
     it("appends to existing file", async () => {
       await vaultFs.write("append.md", "line1\n");
@@ -361,6 +529,125 @@ describe("VaultFS", () => {
     });
   });
 
+  describe("deleteIf", () => {
+    it("deletes and audits only matching current contents", async () => {
+      await vaultFs.write("note.md", "generated");
+      expect(await vaultFs.deleteIf("note.md", (current) => current === "user work")).toBe(false);
+      expect(await vaultFs.read("note.md")).toBe("generated");
+      expect(await vaultFs.deleteIf("note.md", async (current) => current === "generated")).toBe(true);
+      expect(await vaultFs.exists("note.md")).toBe(false);
+      const entries = (await readFile(join(testHome, ".superskill/audit/vault-writes.jsonl"), "utf-8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(entries.map((entry) => entry.op)).toEqual(["update", "delete"]);
+      expect(entries.at(-1)).toMatchObject({ path: "note.md", bytes: 9, secretScan: "clean" });
+    });
+
+    it("returns false for missing files without calling the predicate or creating directories", async () => {
+      const predicate = vi.fn(() => true);
+      expect(await vaultFs.deleteIf("missing/note.md", predicate)).toBe(false);
+      expect(predicate).not.toHaveBeenCalled();
+      expect(await vaultFs.exists("missing")).toBe(false);
+    });
+
+    it("evaluates the predicate after a pending update finishes", async () => {
+      expect(vaultFs.deleteIf).toBeTypeOf("function");
+      await vaultFs.write("note.md", "generated");
+      let entered!: () => void;
+      let finish!: () => void;
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      const blocked = new Promise<void>((resolve) => { finish = resolve; });
+      const update = vaultFs.update("note.md", async () => { entered(); await blocked; return "user work"; });
+      await ready;
+      const predicate = vi.fn((current: string) => current === "generated");
+      const deletion = new VaultFS(vaultRoot).deleteIf("note.md", predicate);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(predicate).not.toHaveBeenCalled();
+      } finally {
+        finish();
+        await update;
+      }
+      expect(await deletion).toBe(false);
+      expect(predicate).toHaveBeenCalledWith("user work");
+      expect(await vaultFs.read("note.md")).toBe("user work");
+    });
+
+    it("holds the mutation lock through the asynchronous predicate", async () => {
+      expect(vaultFs.deleteIf).toBeTypeOf("function");
+      await vaultFs.write("note.md", "generated");
+      let entered!: () => void;
+      let finish!: () => void;
+      const ready = new Promise<void>((resolve) => { entered = resolve; });
+      const blocked = new Promise<void>((resolve) => { finish = resolve; });
+      const deletion = vaultFs.deleteIf("note.md", async () => { entered(); await blocked; return false; });
+      await ready;
+      let updated = false;
+      const update = new VaultFS(vaultRoot).update("note.md", () => "user work").then(() => { updated = true; });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(updated).toBe(false);
+      } finally {
+        finish();
+        await Promise.all([deletion, update]);
+      }
+      expect(await vaultFs.read("note.md")).toBe("user work");
+    });
+
+    it.each(["replace", "rewrite"] as const)("preserves a noncooperating %s performed during the predicate", async (operation) => {
+      await vaultFs.write("note.md", "generated");
+      const path = join(vaultRoot, "note.md");
+      expect(await vaultFs.deleteIf("note.md", async () => {
+        if (operation === "replace") {
+          await writeFile(`${path}.replacement`, "user work");
+          await rename(`${path}.replacement`, path);
+        } else {
+          await writeFile(path, "user work");
+        }
+        return true;
+      })).toBe(false);
+      expect(await vaultFs.read("note.md")).toBe("user work");
+    });
+
+    it("preserves the file when the predicate throws and releases its lock", async () => {
+      await vaultFs.write("note.md", "generated");
+      await expect(vaultFs.deleteIf("note.md", () => { throw new Error("predicate failed"); })).rejects.toThrow("predicate failed");
+      expect(await vaultFs.read("note.md")).toBe("generated");
+      await vaultFs.update("note.md", () => "user work");
+      expect(await vaultFs.read("note.md")).toBe("user work");
+    });
+
+    it("refuses deletion after the mutation lock owner is replaced", async () => {
+      await vaultFs.write("note.md", "generated");
+      const lockPath = join(vaultRoot, ".note.md.lock");
+      await expect(vaultFs.deleteIf("note.md", async () => {
+        await writeFile(`${lockPath}.replacement`, "replacement-owner");
+        await rename(`${lockPath}.replacement`, lockPath);
+        return true;
+      })).rejects.toMatchObject({ code: "LOCK_LOST" });
+      expect(await vaultFs.read("note.md")).toBe("generated");
+      expect(await readFile(lockPath, "utf-8")).toBe("replacement-owner");
+    });
+
+    it("rejects an escaping final symlink introduced during the predicate", async () => {
+      await vaultFs.write("note.md", "generated");
+      const outside = join(testHome, "outside.md");
+      await writeFile(outside, "user work");
+      await expect(vaultFs.deleteIf("note.md", async () => {
+        await rm(join(vaultRoot, "note.md"));
+        await symlink(outside, join(vaultRoot, "note.md"));
+        return true;
+      })).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(await readFile(outside, "utf-8")).toBe("user work");
+    });
+
+    it("keeps the target when conditionally deleting a confined symlink alias", async () => {
+      await vaultFs.write("note.md", "generated");
+      await symlink("note.md", join(vaultRoot, "alias.md"));
+      expect(await vaultFs.deleteIf("alias.md", (current) => current === "generated")).toBe(true);
+      expect(await vaultFs.exists("alias.md")).toBe(false);
+      expect(await vaultFs.read("note.md")).toBe("generated");
+    });
+  });
+
   describe("move", () => {
     it("moves existing file", async () => {
       await vaultFs.write("old.md", "content");
@@ -387,6 +674,11 @@ describe("VaultFS", () => {
   });
 
   describe("exists", () => {
+    it("rejects symlinks that escape the vault", async () => {
+      await writeFile(join(testHome, "outside.md"), "outside");
+      await symlink(join(testHome, "outside.md"), join(vaultRoot, "escape.md"));
+      await expect(vaultFs.exists("escape.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
     it("returns true for existing file", async () => {
       await vaultFs.write("exists.md", "content");
       expect(await vaultFs.exists("exists.md")).toBe(true);
@@ -511,6 +803,25 @@ describe("VaultFS", () => {
   });
 
   describe("project isolation", () => {
+    it.each(["coordination/session-registry.json", ".superskill/state.json", "shared.md", "project-map.json", ".", ""])("denies every unresolved-project operation on %s", async (path) => {
+      const locked = new VaultFS(vaultRoot, { projectSlug: null });
+      await expect(locked.read(path)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.write(path, "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.update(path, () => "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.append(path, "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.createExclusive(path, "no")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.delete(path)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.deleteIf(path, () => true)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.move(path, "new.md")).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.list(path)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await expect(locked.exists(path)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    });
+
+    it("preserves trusted unscoped coordination access", async () => {
+      await vaultFs.write("coordination/state.json", "internal");
+      expect(await vaultFs.read("coordination/state.json")).toBe("internal");
+    });
+
     it("rewrites relative paths under projects/<slug>/", async () => {
       const scoped = new VaultFS(vaultRoot, { projectSlug: "alpha" });
       await scoped.write("note.md", "alpha-only");

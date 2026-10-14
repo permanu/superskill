@@ -44,6 +44,37 @@ describe("taskCommand", () => {
     expect(result.tasks![0]).toMatchObject({ status: "in-progress", priority: "p0", assigned_to: "agent-b" });
   });
 
+  it.each(["list", "board", "add", "update"] as const)("validates supplied enums for %s before filesystem access", async (action) => {
+    const listing = vi.spyOn(vaultFs, "list");
+    for (const status of ["", null, "invalid"]) {
+      await expect(taskCommand({ action, title: "Task", taskId: "task-001", status: status as never, project: "test-project" }, ctx)).rejects.toThrow(/Invalid status/);
+    }
+    for (const priority of ["", null, "invalid"]) {
+      await expect(taskCommand({ action, title: "Task", taskId: "task-001", priority: priority as never, project: "test-project" }, ctx)).rejects.toThrow(/Invalid priority/);
+    }
+    expect(listing).not.toHaveBeenCalled();
+    listing.mockRestore();
+  });
+
+  it.each([-1, 1.5, Number.NaN, Infinity, 501, "2", null])("rejects an invalid direct list limit: %j", async (limit) => {
+    await expect(taskCommand({ action: "list", project: "test-project", limit: limit as never }, ctx)).rejects.toThrow(/limit/i);
+    await expect(taskCommand({ action: "board", project: "test-project", limit: limit as never }, ctx)).rejects.toThrow(/limit/i);
+  });
+
+  it("preserves literal dollar sequences when updating a task title", async () => {
+    const task = await taskCommand({ action: "add", title: "Old", project: "test-project" }, ctx);
+    await taskCommand({ action: "update", taskId: task.task_id, title: "$& $$ $` $'", project: "test-project" }, ctx);
+    expect(await vaultFs.read(task.path!)).toContain("# $& $$ $` $'");
+  });
+
+  it("bounds direct list and board output to 50 by default and permits zero", async () => {
+    const paths = Array.from({ length: 51 }, (_, index) => `projects/test-project/tasks/task-${String(index + 1).padStart(3, "0")}-task.md`);
+    await Promise.all(paths.map((path) => vaultFs.write(path, "---\ntype: task\nstatus: backlog\n---\n# Task\n")));
+    expect((await taskCommand({ action: "list", project: "test-project" }, ctx)).tasks).toHaveLength(50);
+    expect((await taskCommand({ action: "board", project: "test-project" }, ctx)).board!.backlog).toHaveLength(50);
+    expect((await taskCommand({ action: "list", project: "test-project", limit: 0 }, ctx)).tasks).toEqual([]);
+  });
+
   describe("add task", () => {
     it("gives concurrent different task titles unique IDs", async () => {
       const results = await Promise.all(["First", "Second"].map((title) =>

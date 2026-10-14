@@ -30,10 +30,22 @@ export async function appendEvidence(
   project: string,
   record: EvidenceRecord,
 ): Promise<{ path: string; record: EvidenceRecord }> {
+  assertEvidenceRecord(record);
   const path = evidencePath(project, record.ticket);
   const line = `${JSON.stringify(record)}\n`;
   await appendLine(vaultFs, path, line);
   return { path, record };
+}
+
+function assertEvidenceRecord(value: unknown, ticketId?: string): asserts value is EvidenceRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an evidence record");
+  const record = value as Record<string, unknown>;
+  if (typeof record.ticket !== "string" || !/^ticket-\d+$/.test(record.ticket) || (ticketId !== undefined && record.ticket !== ticketId)) throw new Error("Evidence ticket must match the requested ticket");
+  if (typeof record.command !== "string" || !record.command.trim()) throw new Error("Evidence command must be a non-empty string");
+  if (!Number.isInteger(record.exit)) throw new Error("Evidence exit must be a finite integer");
+  if (typeof record.output !== "string") throw new Error("Evidence output must be a string");
+  if (typeof record.commit !== "string" || !record.commit.trim()) throw new Error("Evidence commit must be a non-empty string");
+  if (typeof record.ts !== "string" || !record.ts.trim() || !Number.isFinite(Date.parse(record.ts))) throw new Error("Evidence timestamp must be a valid date string");
 }
 
 async function appendLine(vaultFs: VaultFS, relativePath: string, line: string): Promise<void> {
@@ -60,21 +72,11 @@ export async function readEvidence(
     const line = lines[i].trim();
     if (!line) continue;
     try {
-      const parsed = JSON.parse(line) as Partial<EvidenceRecord>;
-      if (typeof parsed.ticket !== "string" || typeof parsed.command !== "string" || typeof parsed.ts !== "string") {
-        console.error(`[evidence] Skipping malformed line ${i + 1} in ${path}`);
-        continue;
-      }
-      records.push({
-        ticket: parsed.ticket,
-        command: parsed.command,
-        exit: typeof parsed.exit === "number" ? parsed.exit : 1,
-        output: typeof parsed.output === "string" ? parsed.output : "",
-        commit: typeof parsed.commit === "string" ? parsed.commit : "",
-        ts: parsed.ts,
-      });
-    } catch {
-      console.error(`[evidence] Skipping malformed line ${i + 1} in ${path}`);
+      const parsed: unknown = JSON.parse(line);
+      assertEvidenceRecord(parsed, ticketId);
+      records.push(parsed);
+    } catch (cause: unknown) {
+      throw new Error(`Malformed evidence at line ${i + 1} in ${path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
     }
   }
   return records;

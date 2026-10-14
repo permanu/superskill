@@ -1,78 +1,113 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readdir, stat } from "node:fs/promises";
+import { opendir, lstat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HygieneReport } from "../hygiene/types.js";
 import type { Finding } from "./types.js";
 import { findingId } from "./detectors.js";
 import { formatBytes } from "./digest.js";
+import { logSourceError } from "./traces/source.js";
 
 const TMP_RE = /\.tmp$/;
 const CACHE_MIN_BYTES = 512 * 1024 * 1024;
 const HARNESS_MIN_BYTES = 1024 * 1024 * 1024;
 const TOOL_OUTPUT_MIN_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRIES = 120_000;
+const MAX_SCAN_MS = 2000;
+const MAX_ROOTS = 32;
+
+interface ScanBudget {
+  remaining: number;
+  deadline: number;
+  truncated: boolean;
+}
+
+function bounded(value: number | undefined, cap: number): number {
+  return Number.isFinite(value ?? cap) ? Math.min(cap, Math.max(0, Math.floor(value ?? cap))) : cap;
+}
+
+function scanBudget(maxEntries?: number, maxMs?: number): ScanBudget {
+  return { remaining: bounded(maxEntries, MAX_ENTRIES), deadline: Date.now() + bounded(maxMs, MAX_SCAN_MS), truncated: false };
+}
+
+function exhausted(budget: ScanBudget): boolean {
+  if (budget.remaining <= 0 || Date.now() >= budget.deadline) budget.truncated = true;
+  return budget.truncated;
+}
+
+async function* scanEntries(path: string, budget: ScanBudget): AsyncGenerator<Dirent> {
+  if (exhausted(budget)) return;
+  try {
+    const info = await lstat(path);
+    if (!info.isDirectory() || info.isSymbolicLink()) return;
+    const dir = await opendir(path, { bufferSize: 32 });
+    for await (const entry of dir) {
+      if (exhausted(budget)) break;
+      budget.remaining -= 1;
+      yield entry;
+    }
+  } catch (err) { logSourceError("environment scan", err); }
+}
 
 export interface LeakedTmpScan {
   root: string;
   files: Array<{ path: string; bytes: number }>;
   totalBytes: number;
+  truncated?: boolean;
+}
+
+async function scanTmp(home: string, budget: ScanBudget): Promise<LeakedTmpScan> {
+  const root = join(home, ".superskill");
+  const files: Array<{ path: string; bytes: number }> = [];
+  let totalBytes = 0;
+  for await (const entry of scanEntries(root, budget)) {
+    if (!entry.isFile() || !TMP_RE.test(entry.name)) continue;
+    if (files.length >= 1000) { budget.truncated = true; break; }
+    const path = join(root, entry.name);
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink()) continue;
+      files.push({ path, bytes: info.size });
+      totalBytes += info.size;
+    } catch (err) {
+      logSourceError("temporary file stat", err);
+      continue;
+    }
+  }
+  return { root, files, totalBytes, truncated: budget.truncated };
 }
 
 export async function scanLeakedTmpFiles(home = homedir()): Promise<LeakedTmpScan> {
-  const root = join(home, ".superskill");
-  const files: Array<{ path: string; bytes: number }> = [];
-  let entries: string[];
-  try {
-    entries = (await readdir(root, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && TMP_RE.test(entry.name))
-      .map((entry) => entry.name);
-  } catch {
-    return { root, files, totalBytes: 0 };
-  }
-  let totalBytes = 0;
-  for (const name of entries) {
-    const path = join(root, name);
-    try {
-      const info = await stat(path);
-      files.push({ path, bytes: info.size });
-      totalBytes += info.size;
-    } catch {
-      continue;
-    }
-  }
-  return { root, files, totalBytes };
+  return scanTmp(home, scanBudget());
 }
 
-export async function dirSizeBounded(path: string, maxEntries = MAX_ENTRIES): Promise<{ bytes: number; truncated: boolean }> {
+async function dirSizeWithBudget(path: string, budget: ScanBudget): Promise<{ bytes: number; truncated: boolean }> {
   let bytes = 0;
-  let visited = 0;
   const queue: string[] = [path];
-  while (queue.length > 0 && visited < maxEntries) {
+  while (queue.length > 0 && !exhausted(budget)) {
     const current = queue.pop();
     if (current === undefined) break;
-    let entries;
-    try {
-      entries = await readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      visited += 1;
-      if (visited >= maxEntries) return { bytes, truncated: true };
+    for await (const entry of scanEntries(current, budget)) {
       const child = join(current, entry.name);
       if (entry.isDirectory()) {
         queue.push(child);
       } else if (entry.isFile()) {
         try {
-          bytes += (await stat(child)).size;
-        } catch {
+          const info = await lstat(child);
+          if (info.isFile()) bytes += info.size;
+        } catch (err) {
+          logSourceError("environment file stat", err);
           continue;
         }
       }
     }
   }
-  return { bytes, truncated: visited >= maxEntries };
+  return { bytes, truncated: budget.truncated };
+}
+
+export async function dirSizeBounded(path: string, maxEntries = MAX_ENTRIES, maxMs = MAX_SCAN_MS): Promise<{ bytes: number; truncated: boolean }> {
+  return dirSizeWithBudget(path, scanBudget(maxEntries, maxMs));
 }
 
 async function sizeFinding(opts: {
@@ -98,13 +133,18 @@ async function sizeFinding(opts: {
 export interface EnvironmentOptions {
   home?: string;
   checkHarnessStores?: boolean;
+  maxEntries?: number;
+  maxMs?: number;
+  maxRoots?: number;
 }
 
 export async function detectEnvironment(opts: EnvironmentOptions = {}): Promise<Finding[]> {
   const home = opts.home ?? homedir();
   const findings: Finding[] = [];
+  const budget = scanBudget(opts.maxEntries, opts.maxMs);
+  let roots = bounded(opts.maxRoots, MAX_ROOTS);
 
-  const tmp = await scanLeakedTmpFiles(home);
+  const tmp = await scanTmp(home, budget);
   if (tmp.files.length > 0) {
     findings.push(await sizeFinding({
       key: "leaked-tmp",
@@ -116,25 +156,21 @@ export async function detectEnvironment(opts: EnvironmentOptions = {}): Promise<
     }));
   }
 
-  try {
-    const cacheRoot = join(home, ".superskill", "cache");
-    const cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
-    for (const entry of cacheEntries) {
-      if (!entry.isDirectory()) continue;
-      const path = join(cacheRoot, entry.name);
-      const { bytes } = await dirSizeBounded(path, 40_000);
-      if (bytes < CACHE_MIN_BYTES) continue;
-      findings.push(await sizeFinding({
-        key: `cache:${entry.name}`,
-        title: `superskill toolchain cache "${entry.name}" is ${formatBytes(bytes)}`,
-        detail: `Build artifacts for rule validation. Regenerable, but costly to rebuild if deleted mid-task.`,
-        evidenceRef: `${path} (${formatBytes(bytes)})`,
-        proposal: `Review before reclaiming: if no rule-validation run is pending, delete \`${path}\` and it will rebuild on demand.`,
-        severity: bytes >= 2 * 1024 * 1024 * 1024 ? "medium" : "low",
-      }));
-    }
-  } catch {
-    // no cache dir
+  const cacheRoot = join(home, ".superskill", "cache");
+  for await (const entry of scanEntries(cacheRoot, budget)) {
+    if (!entry.isDirectory()) continue;
+    if (roots-- <= 0) { budget.truncated = true; break; }
+    const path = join(cacheRoot, entry.name);
+    const { bytes, truncated } = await dirSizeWithBudget(path, budget);
+    if (bytes < CACHE_MIN_BYTES) continue;
+    findings.push(await sizeFinding({
+      key: `cache:${entry.name}`,
+      title: `superskill toolchain cache "${entry.name}" is ${formatBytes(bytes)}`,
+      detail: `Build artifacts for rule validation. Regenerable, but costly to rebuild if deleted mid-task.${truncated ? " Size is a lower bound; scan capped." : ""}`,
+      evidenceRef: `${path} (${formatBytes(bytes)})`,
+      proposal: `Review before reclaiming: if no rule-validation run is pending, delete \`${path}\` and it will rebuild on demand.`,
+      severity: bytes >= 2 * 1024 * 1024 * 1024 ? "medium" : "low",
+    }));
   }
 
   if (opts.checkHarnessStores !== false) {
@@ -169,18 +205,26 @@ export async function detectEnvironment(opts: EnvironmentOptions = {}): Promise<
       },
     ];
     for (const store of stores) {
-      const { bytes } = await dirSizeBounded(store.path);
+      if (exhausted(budget)) break;
+      if (roots-- <= 0) { budget.truncated = true; break; }
+      const { bytes, truncated } = await dirSizeWithBudget(store.path, budget);
       if (bytes < store.min) continue;
       findings.push(await sizeFinding({
         key: store.key,
         title: `${store.label} is ${formatBytes(bytes)}`,
-        detail: `Harness stores grow without bound; nothing in the harness cleans them up.`,
+        detail: `Review the harness retention policy before reclaiming user data.${truncated ? " Size is a lower bound; scan capped." : ""}`,
         evidenceRef: `${store.path} (${formatBytes(bytes)})`,
         proposal: store.proposal,
         severity: "low",
       }));
     }
   }
+
+  if (budget.truncated) findings.push(await sizeFinding({
+    key: "scan-budget", title: "Environment scan stopped at its safety budget", severity: "low",
+    detail: "Entry, root, or elapsed-time limits were reached. Reported sizes are lower bounds; unvisited paths were not assessed.",
+    evidenceRef: "bounded local environment scan", proposal: "Review a smaller directory separately; do not infer that unvisited stores are clean.",
+  }));
 
   return findings;
 }

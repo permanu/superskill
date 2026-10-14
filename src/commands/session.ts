@@ -1,9 +1,11 @@
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { assessWorktreeLifecycle, type WorktreeLifecycleAssessment } from "../lib/worktree/lifecycle.js";
-import { cleanupCompletedWorktrees, type CleanupResult } from "../lib/worktree/cleanup.js";
+import { cleanupCompletedWorktrees, captureCleanupWorkspaceIdentity, type CleanupResult, type CleanupWorkspaceIdentity } from "../lib/worktree/cleanup.js";
 // SPDX-License-Identifier: Apache-2.0
 import type { CommandContext } from "../core/types.js";
 import type { ClaimResult, Session } from "../lib/session-registry.js";
+import { validateSessionTool, validateSessionFiles } from "../lib/session-registry.js";
+import { validateProjectSlug } from "../config.js";
 import { serializeFrontmatter, createFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
 import { mutateGraph, findNode } from "../lib/graph/store.js";
 import { endSession } from "../lib/graph/learner.js";
@@ -44,30 +46,38 @@ export async function sessionCommand(
   const registry = ctx.sessionRegistry;
   const vaultFs = ctx.vaultFs;
   const contextWorkspace = ctx.workspacePath ?? process.cwd();
+  if (args.project !== undefined) validateProjectSlug(args.project);
+  if (ctx.projectSlug === null && args.project !== undefined) throw new Error("Project access requires a resolved project context");
+  if (ctx.projectSlug && args.project !== undefined && args.project !== ctx.projectSlug) throw new Error("Session belongs to a different project");
+  const project = args.project ?? ctx.projectSlug ?? null;
+  if (args.tool !== undefined) validateSessionTool(args.tool);
+  if (args.filesTouched !== undefined) validateSessionFiles(args.filesTouched);
 
   switch (args.action) {
     case "register": {
       if (!args.tool) throw new Error("Tool name required for register");
       const workspace = args.workspacePath ?? contextWorkspace;
+      const canonicalWorkspace = await realpath(workspace);
       const result = await registry.register(
         args.tool,
-        args.project ?? ctx.projectSlug ?? null,
+        project,
         args.taskSummary ?? null,
         args.filesTouched ?? [],
-        await realpath(workspace),
+        canonicalWorkspace,
         args.allowShared ?? false,
+        await readWorkspaceIdentity(canonicalWorkspace),
       );
       return {
         session_id: result.session_id,
         conflicts: result.conflicts,
         claim: result.claim,
-        worktree: await maintainWorkspace(workspace, "register", ctx, result.session_id),
+        ...(result.claim.granted ? { worktree: await maintainWorkspace(workspace, "register", ctx, result.session_id) } : {}),
       };
     }
 
     case "heartbeat": {
       if (!args.sessionId) throw new Error("Session ID required for heartbeat");
-      const result = await registry.heartbeat(args.sessionId, args.filesTouched);
+      const result = await registry.heartbeat(args.sessionId, args.filesTouched, project);
       if (!result.found) throw new Error(`Session not found: ${args.sessionId}`);
       return { conflicts: result.conflicts };
     }
@@ -75,19 +85,20 @@ export async function sessionCommand(
     case "complete": {
       if (!args.sessionId) throw new Error("Session ID required for complete");
       const existing = await registry.get(args.sessionId);
-      if (existing && existing.project != null && ctx.projectSlug != null && existing.project !== ctx.projectSlug) throw new Error("Session belongs to a different project");
-      const completion = await registry.complete(args.sessionId, args.taskSummary);
+      if (existing && existing.project !== null && existing.project !== project) throw new Error("Session belongs to a different project");
+      const identity = existing?.workspace_path ? await readWorkspaceIdentity(existing.workspace_path) : undefined;
+      const completion = await registry.complete(args.sessionId, args.taskSummary, project, identity);
       if (!completion.found) throw new Error(`Session not found: ${args.sessionId}`);
 
       let sessionNotePath: string | undefined;
-      const noteProject = args.project ?? ctx.projectSlug;
+      const noteProject = project;
       if (noteProject) {
         sessionNotePath = await persistSessionNote(vaultFs, {
           sessionId: args.sessionId,
           project: noteProject,
-          tool: args.tool ?? existing?.tool ?? extractToolFromId(args.sessionId),
+          tool: existing?.tool ?? args.tool ?? extractToolFromId(args.sessionId),
           outcome: args.outcome ?? args.taskSummary ?? "",
-          filesTouched: args.filesTouched ?? [],
+          filesTouched: args.filesTouched ?? existing?.files_touched ?? [],
           tasksCompleted: args.tasksCompleted ?? [],
           completed: args.completed ?? [],
           partiallyCompleted: args.partiallyCompleted ?? [],
@@ -104,12 +115,21 @@ export async function sessionCommand(
     }
 
     case "list_active": {
-      const sessions = await registry.listActive(ctx.projectSlug ?? undefined);
+      const sessions = await registry.listActive(args.project ?? ctx.projectSlug);
       return { active_sessions: sessions };
     }
 
     default:
       throw new Error(`Unknown action: ${args.action}`);
+  }
+}
+
+async function readWorkspaceIdentity(workspace: string): Promise<CleanupWorkspaceIdentity | undefined> {
+  try { return await captureCleanupWorkspaceIdentity(workspace); }
+  catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code !== "ENOENT" && code !== 128 && (error as Error).message !== "Workspace is not a worktree root") console.error("[session] Could not capture worktree identity:", (error as Error).message);
+    return undefined;
   }
 }
 
@@ -119,8 +139,19 @@ async function maintainWorkspace(workspace: string, phase: "register" | "complet
   let cleanup: CleanupResult;
   try {
     const sessions = await ctx.sessionRegistry.listForMaintenance();
-    cleanup = await cleanupCompletedWorktrees(workspace, sessions, { currentSessionId });
-    for (const path of cleanup.removed) await ctx.sessionRegistry.acknowledgeWorkspaceRemoval(path);
+    cleanup = await cleanupCompletedWorktrees(workspace, sessions, {
+      currentSessionId,
+      readSessions: () => ctx.sessionRegistry.listForMaintenance(),
+      withSessionLease: callback => ctx.sessionRegistry.withMaintenanceLease(callback),
+    });
+    for (const path of cleanup.removed) {
+      try { await ctx.sessionRegistry.acknowledgeWorkspaceRemoval(path); }
+      catch (error) {
+        const reason = `Registry removal acknowledgment failed: ${error instanceof Error ? error.message : String(error)}`;
+        ctx.log.error(`[session] ${reason}`);
+        cleanup.errors.push({ path, reason });
+      }
+    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     ctx.log.error(`[session] worktree maintenance failed: ${reason}`);
@@ -152,7 +183,15 @@ async function settleGraphSession(
 ): Promise<void> {
   try {
     if (!args.sessionId) return;
-    await mutateGraph(workspace, (graph) => {
+    let canonicalWorkspace: string;
+    try {
+      canonicalWorkspace = await realpath(workspace);
+      if (!(await stat(canonicalWorkspace)).isDirectory()) return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    await mutateGraph(canonicalWorkspace, (graph) => {
       const session = findNode<SessionNode>(graph, "session", args.sessionId!);
       if (!session || session.coordinationSessionId !== args.sessionId || session.outcome !== null) return graph;
       const insights = [
@@ -239,7 +278,7 @@ async function persistSessionNote(
   }
 
   if (opts.filesTouched.length > 0) {
-    sections.push(`\n## Files Changed\n${opts.filesTouched.map((f) => `- ${f}`).join("\n")}`);
+    sections.push(`\n## Files Changed\n${opts.filesTouched.map((f) => `- ${f.replace(/[\[\]\\`]/g, character => `\\${character}`)}`).join("\n")}`);
   }
 
   const relatedLinks = await collectRelatedLinks(vaultFs, opts.project, opts.filesTouched);
@@ -262,14 +301,19 @@ async function collectRelatedLinks(
 ): Promise<string[]> {
   const links = new Set<string>();
   const contextNote = `projects/${project}/context.md`;
-  if (await relatedTargetExists(vaultFs, contextNote)) links.add(`[[${contextNote}]]`);
+  if (await relatedTargetExists(vaultFs, contextNote)) links.add(serializeWikilink(contextNote));
 
   for (const file of [...new Set(filesTouched)].sort()) {
+    if (file.startsWith("/") || file.startsWith("~") || file.includes("\\") || file.split("/").some(segment => segment === ".." || segment === "." || segment === "")) continue;
     const notePath = `projects/${project}/code/${file}.md`;
-    if (await relatedTargetExists(vaultFs, notePath)) links.add(`[[projects/${project}/code/${file}]]`);
+    if (await relatedTargetExists(vaultFs, notePath)) links.add(serializeWikilink(`projects/${project}/code/${file}`));
   }
 
   return [...links].sort().slice(0, 50);
+}
+
+function serializeWikilink(target: string): string {
+  return `[[${target.replace(/[\[\]|#^%<>\x00-\x1f\x7f]/g, character => encodeURIComponent(character))}]]`;
 }
 
 async function relatedTargetExists(vaultFs: import("../lib/vault-fs.js").VaultFS, path: string): Promise<boolean> {

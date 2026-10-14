@@ -1,39 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   closeSync,
-  copyFileSync,
   existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
-  readFileSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeSync,
 } from "fs";
 import { randomBytes } from "crypto";
 import { dirname } from "path";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 
 const MAX_WRITE_ATTEMPTS = 3;
 
 export function readJsonConfig(filePath: string): Record<string, any> | null {
-  if (!existsSync(filePath)) return {};
   try {
-    const raw = readFileSync(filePath, "utf-8");
-    return JSON.parse(raw);
-  } catch {
+    const raw = readSetupText(filePath);
+    if (raw === null) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) console.error(`[json-config] Could not read ${filePath}: ${(error as Error).message}`);
     return null;
   }
 }
 
 function readRaw(filePath: string): string | null {
-  try {
-    return readFileSync(filePath, "utf-8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
+  return readSetupText(filePath);
 }
 
 function parseForWrite(filePath: string, raw: string): Record<string, any> {
@@ -50,14 +45,6 @@ function serialize(config: Record<string, any>): string {
   return JSON.stringify(config, null, 2) + "\n";
 }
 
-function targetMode(filePath: string): number {
-  try {
-    return statSync(filePath).mode & 0o777;
-  } catch {
-    return 0o600;
-  }
-}
-
 function cleanupTmp(tmpPath: string): void {
   try {
     unlinkSync(tmpPath);
@@ -70,7 +57,7 @@ function cleanupTmp(tmpPath: string): void {
 
 function writeTmp(filePath: string, content: string): string {
   const tmpPath = `${filePath}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  const fd = openSync(tmpPath, "wx", targetMode(filePath));
+  const fd = openSync(tmpPath, "wx", 0o600);
   try {
     writeSync(fd, content);
     fsyncSync(fd);
@@ -84,7 +71,7 @@ function rotateBackup(filePath: string, before: string | null, content: string):
   if (before === null || before === content) return;
   const backupPath = `${filePath}.bak.superskill`;
   if (readRaw(backupPath) === before) return;
-  copyFileSync(filePath, backupPath);
+  writeSetupText(backupPath, before);
 }
 
 function atomicWriteJson(
@@ -93,7 +80,9 @@ function atomicWriteJson(
   retryable: boolean
 ): boolean {
   const dir = dirname(filePath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  assertSafeSetupPath(filePath);
+  assertSafeSetupPath(`${filePath}.bak.superskill`);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
     const before = readRaw(filePath);
@@ -114,6 +103,9 @@ function atomicWriteJson(
         continue;
       }
       rotateBackup(filePath, before, content);
+      if (readRaw(filePath) !== before) {
+        throw new Error(`[json-config] ${filePath} changed during backup; concurrent changes were left intact`);
+      }
       renameSync(tmpPath, filePath);
       return true;
     } catch (error) {
@@ -143,6 +135,9 @@ export function addMcpEntry(
   force = false
 ): { config: Record<string, any>; alreadyExists: boolean } {
   const result = { ...config };
+  if (result[rootKey] !== undefined && (result[rootKey] === null || typeof result[rootKey] !== "object" || Array.isArray(result[rootKey]))) {
+    throw new Error(`[json-config] Refusing to replace non-object ${rootKey}`);
+  }
   if (!result[rootKey]) result[rootKey] = {};
 
   if (result[rootKey][serverName] && !force) {

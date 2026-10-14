@@ -33,16 +33,11 @@ export function scanForSecrets(content: string): SecretMatch[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    for (const { type, pattern } of PATTERNS) {
-      if (pattern.test(line)) {
-        const redactAll = new RegExp(pattern.source, `${pattern.flags}g`);
-        matches.push({
-          type,
-          line: i + 1,
-          snippet: line.replace(redactAll, "[redacted]").trim().slice(0, 80),
-        });
-      }
+    const detected = PATTERNS.filter(({ pattern }) => pattern.test(line));
+    if (detected.length === 0) continue;
+    const snippet = detected.reduce((text, { pattern }) => text.replace(new RegExp(pattern.source, `${pattern.flags}g`), "[redacted]"), line).trim().slice(0, 80);
+    for (const { type } of detected) {
+      matches.push({ type, line: i + 1, snippet });
     }
   }
 

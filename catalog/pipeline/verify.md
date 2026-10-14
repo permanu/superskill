@@ -15,7 +15,7 @@ About to commit, merge, or tell the user it works. Always for security fixes.
 ## Checks (pick what applies)
 - Tests you touched: paste the first failing line or the pass line.
 - Types/lint if the repo has them.
-- UI/viz: `superskill graph viz` — notes exist under `architecture/` and `code/` and render (Mermaid + code blocks).
+- Browser/UI: use the existing application harness and report the exact result or state that it is unavailable. Run `superskill graph viz` only when generated-note output changed or the user explicitly requested it; inspect actual outputs rather than assuming fixed counts.
 - Security fix: secret scan still clean; authz still on the ID path.
 
 If verification is red, you are not done. Loop investigate — do not add a second patch on a guess.

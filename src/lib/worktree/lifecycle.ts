@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { STATE_DIR_NAME } from "./paths.js";
+import { physicalPathInside, STATE_DIR_NAME } from "./paths.js";
 import { isPathInside } from "./safety.js";
 import { POLICY_SCHEMA_VERSION } from "./state.js";
 
@@ -37,7 +37,10 @@ async function git(cwd: string, args: string[]): Promise<string> {
 async function policyInstalled(commonDir: string): Promise<boolean | null> {
   let file;
   try {
-    file = await open(join(commonDir, STATE_DIR_NAME, "policy.json"), constants.O_RDONLY | constants.O_NONBLOCK);
+    const root = await realpath(commonDir);
+    const path = join(root, STATE_DIR_NAME, "policy.json");
+    if (!await physicalPathInside(path, root)) return null;
+    file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
     if (!(await file.stat()).isFile()) return null;
     const buffer = Buffer.alloc(65537);
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
@@ -75,7 +78,11 @@ export async function assessWorktreeLifecycle(
       git(canonicalCwd, ["worktree", "list", "--porcelain", "-z"]),
       git(canonicalCwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
     ]);
-    const paths = listing.split("\0").filter((field) => field.startsWith("worktree ")).map((field) => resolve(field.slice(9)));
+    const paths = await Promise.all(listing.split("\0").filter((field) => field.startsWith("worktree ")).map(async (field) => {
+      const path = resolve(field.slice(9));
+      try { return await realpath(path); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return path; throw error; }
+    }));
     const current = paths.map((path, index) => ({ path, index }))
       .filter(({ path }) => path === canonicalCwd || isPathInside(canonicalCwd, path))
       .sort((a, b) => b.path.length - a.path.length)[0];

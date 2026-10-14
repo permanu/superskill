@@ -298,7 +298,7 @@ describe("worktree host adapters (b)", () => {
               BeforeTool: [{ hooks: [{ type: "command", command: "lint" }] }],
               SessionStart: [
                 { hooks: [{ type: "command", command: "keep" }] },
-                { hooks: [{ type: "command", command: "old superskill-cli worktree bootstrap" }] },
+                { hooks: [{ type: "command", command: "/old/superskill-cli worktree bootstrap" }] },
               ],
             },
           },
@@ -442,7 +442,7 @@ describe("worktree host adapters (b)", () => {
             hooks: {
               SessionStart: [
                 { hooks: [{ type: "command", command: "keep" }] },
-                { hooks: [{ type: "command", command: "old superskill-cli worktree bootstrap" }] },
+                { hooks: [{ type: "command", command: "/old/superskill-cli worktree bootstrap" }] },
               ],
             },
           },

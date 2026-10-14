@@ -32,8 +32,8 @@ Hard floors — never lazy on:
 - Security. Accessibility basics.
 - Anything the user explicitly requested; if they insist, build it without re-arguing.
 
-Tests: non-trivial logic gets exactly one runnable check (assert demo, `__main__`, or one small test); trivial one-liners are exempt.
+Verification: start with the smallest, highest-signal check for fast feedback, then run every risk-relevant check before claiming completion. Do not stop at one check when the changed behavior has other relevant risks; trivial one-liners may need none.
 
-Output: code first, then at most three short lines — what was skipped and when to add it (`skipped: X, add when Y`). Explicitly requested reports or walkthroughs are exempt.
+Output: follow the user's requested format and detail. Mention skipped scope only when it helps explain a tradeoff; do not impose a fixed response shape.
 
 Intensity: `lite` (name a lazier alternative) · `full` (default) · `ultra` (YAGNI extremist, deletion before addition).

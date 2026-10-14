@@ -51,7 +51,7 @@ describe("catalog validation cache", () => {
     await writeFile(
       cachePath,
       JSON.stringify({
-        v: 1,
+        v: 2,
         catalogRoot: catalog,
         fingerprint,
         checkedAt,
@@ -72,6 +72,13 @@ describe("catalog validation cache", () => {
     const outcome = await validateCatalogCached(catalog, cachePath);
     expect(outcome.cached).toBe(false);
     expect((await validateCatalogCached(catalog, cachePath)).cached).toBe(true);
+  });
+
+  it("invalidates cached results from older validator semantics", async () => {
+    await validateCatalogCached(catalog, cachePath);
+    const cached = JSON.parse(await readFile(cachePath, "utf-8"));
+    await writeFile(cachePath, JSON.stringify({ ...cached, v: 1 }));
+    expect((await validateCatalogCached(catalog, cachePath)).cached).toBe(false);
   });
 
   it("recovers from a corrupt cache file", async () => {

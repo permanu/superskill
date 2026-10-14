@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +46,8 @@ describe("telemetry settings", () => {
     expect(await isTelemetryEnabled(paths)).toBe(false);
     expect(await recordTelemetryEvent(sampleEvent(), paths)).toBe(false);
     await expect(stat(paths.events)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(paths.key)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await isTelemetryEnabled(paths, { SUPERSKILL_TELEMETRY: "1" })).toBe(true);
   });
 
   it("persists enable/disable settings", async () => {
@@ -57,12 +59,12 @@ describe("telemetry settings", () => {
     expect(await isTelemetryEnabled(paths)).toBe(false);
   });
 
-  it("lets the environment override the persisted setting", async () => {
+  it("lets the environment disable recording but never override an explicit persisted opt-out", async () => {
     const paths = telemetryPaths(home);
     await writeTelemetrySettings(true, paths);
     expect(await isTelemetryEnabled(paths, { SUPERSKILL_TELEMETRY: "0" })).toBe(false);
     await writeTelemetrySettings(false, paths);
-    expect(await isTelemetryEnabled(paths, { SUPERSKILL_TELEMETRY: "on" })).toBe(true);
+    expect(await isTelemetryEnabled(paths, { SUPERSKILL_TELEMETRY: "on" })).toBe(false);
     expect(await isTelemetryEnabled(paths, { SUPERSKILL_TELEMETRY: "bogus" })).toBe(false);
   });
 });
@@ -78,8 +80,34 @@ describe("recordTelemetryEvent", () => {
     expect(raw).not.toContain("add async retry");
     const parsed = JSON.parse(raw.trim());
     expect(parsed.type).toBe("activation");
-    expect(parsed.task_hash).toMatch(/^sha256:[0-9a-f]{16}$/);
+    expect(parsed.task_hash).toMatch(/^hmac-sha256:[0-9a-f]{32}$/);
     expect(parsed.selected).toEqual(["rust-err-context-chain"]);
+  });
+
+  it("uses private per-install keys and keeps prompt identities stable only within that installation", async () => {
+    const first = telemetryPaths(home);
+    const second = telemetryPaths(join(home, "other-install"));
+    await writeTelemetrySettings(true, first);
+    await writeTelemetrySettings(true, second);
+    await recordTelemetryEvent(sampleEvent(), first);
+    await recordTelemetryEvent(sampleEvent(), first);
+    await recordTelemetryEvent(sampleEvent(), second);
+    const hashes = (await readFile(first.events, "utf-8")).trim().split("\n").map(line => JSON.parse(line).task_hash);
+    const otherHash = JSON.parse((await readFile(second.events, "utf-8")).trim()).task_hash;
+    expect(hashes[0]).toBe(hashes[1]);
+    expect(hashes[0]).not.toBe(otherHash);
+    expect((await stat(first.key)).mode & 0o777).toBe(0o600);
+    expect(hashes[0]).not.toBe(hashTask("add async retry to the HTTP client"));
+  });
+
+  it("never contacts the network", async () => {
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network forbidden"));
+    try {
+      const paths = telemetryPaths(home);
+      await writeTelemetrySettings(true, paths);
+      expect(await recordTelemetryEvent(sampleEvent(), paths)).toBe(true);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
   });
 
   it("rotates the events file once it exceeds the size cap", async () => {
@@ -129,8 +157,9 @@ describe("hashTask", () => {
   it("is deterministic, prefixed, and does not reveal the prompt", () => {
     const hash = hashTask("token=super-secret");
     expect(hash).toBe(hashTask("token=super-secret"));
-    expect(hash).toMatch(/^sha256:[0-9a-f]{16}$/);
+    expect(hash).toMatch(/^hmac-sha256:[0-9a-f]{32}$/);
     expect(hash).not.toContain("super-secret");
     expect(hash).not.toBe(hashTask("other prompt"));
+    expect(hashTask("token=super-secret", Buffer.alloc(32, 1))).not.toBe(hashTask("token=super-secret", Buffer.alloc(32, 2)));
   });
 });

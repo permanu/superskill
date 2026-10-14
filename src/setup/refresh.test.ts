@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { refreshExistingManagedInstallation } from "./refresh.js";
+import { refreshExistingManagedInstallation, refreshStartupState } from "./refresh.js";
+import { detectClients } from "./detect.js";
+import { CLIENT_REGISTRY } from "./clients.js";
+import type { DetectedClient } from "./types.js";
 import * as instructions from "./instructions.js";
 import { sharedSkillFile, SKILL_MARKER, skillContent } from "./skill.js";
 import { INSTRUCTION_TEXT, MARKER_BEGIN_HTML, MARKER_END_HTML, MARKER_START_HTML, PREVIOUS_INSTRUCTION_TEXT } from "./types.js";
+
+vi.mock("./detect.js", () => ({ detectClients: vi.fn().mockReturnValue([]) }));
 
 function write(path: string, text: string): void { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); }
 function marked(text: string, open = MARKER_BEGIN_HTML): string { return `${open}\n${text}\n${MARKER_END_HTML}`; }
@@ -81,6 +86,25 @@ describe("managed installation startup refresh", () => {
       expect(stderr).toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
     } finally { chmodSync(skill, 0o600); }
+  });
+
+  it("does not change a pinned launcher during startup", async () => {
+    const root = join(home, "client");
+    mkdirSync(root, { recursive: true });
+    const config = join(root, "config.json");
+    const original = JSON.stringify({ mcpServers: { superskill: {
+      command: "npx",
+      args: ["-y", "superskill@next", "--custom"],
+      env: { VAULT_PATH: "/user/vault", EXTRA: "keep" },
+    } } });
+    write(config, original);
+    const source = CLIENT_REGISTRY.find(client => client.slug === "claude-code")!;
+    const detected: DetectedClient = { config: source, mcpConfigPath: config };
+    vi.mocked(detectClients).mockReturnValue([detected]);
+
+    await refreshStartupState(home);
+
+    expect(readFileSync(config, "utf8")).toBe(original);
   });
 
 });

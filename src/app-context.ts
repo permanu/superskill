@@ -60,6 +60,8 @@ const UNSCOPED_TOOLS = new Set([
   "doctor",
 ]);
 
+const WORKSPACE_TOOLS = new Set(["knowledge_viz", "graph_traverse", "superskill", "skill_init", "watchdog"]);
+
 export async function createScopedCtx(
   explicitSlug?: string,
   toolName?: string,
@@ -74,11 +76,16 @@ export async function createScopedCtx(
     return createCtx();
   }
   const hasExplicit = explicitSlug !== undefined && explicitSlug !== null && explicitSlug !== "";
+  if (hasExplicit && toolName && WORKSPACE_TOOLS.has(toolName)) {
+    const workspace = await resolveWorkspaceContext(getConfig().vaultPath, process.cwd(), explicitSlug);
+    return { ...createCtx(workspace.projectSlug), workspacePath: workspace.workspacePath };
+  }
   if (!hasExplicit) {
     let detected: string | null = null;
     try {
       detected = await detectProject(process.cwd(), getConfig().vaultPath);
-    } catch {
+    } catch (error) {
+      console.error("[app-context] project detection failed:", error instanceof Error ? error.message : error);
       detected = null;
     }
     try {
@@ -93,7 +100,8 @@ export async function createScopedCtx(
   try {
     const slug = await resolveProject(getConfig().vaultPath, explicitSlug);
     return createCtx(slug);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error && error.message.startsWith("Invalid project slug"))) console.error("[app-context] explicit project resolution failed:", error instanceof Error ? error.message : error);
     return createCtx(null);
   }
 }

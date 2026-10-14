@@ -11,13 +11,16 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { createRegistry, serializeToolResult, capResponseBytes, maxResponseBytes, boundReadContent } from "./core/registry.js";
+import { createRegistry, serializeToolResult, capResponseBytes, maxResponseBytes, boundReadContent, validateArguments, fitGraphOpenResponse } from "./core/registry.js";
 import { refreshStartupState } from "./setup/refresh.js";
 import { handleInfoFlags } from "./core/cli-info.js";
 import { VaultError } from "./lib/vault-fs.js";
 import { createScopedCtx, getSessionRegistry } from "./app-context.js";
 import { listCommand } from "./commands/read.js";
 import { taskCommand } from "./commands/task.js";
+import type { ContextResult } from "./commands/context.js";
+import type { MCPErrorResponse } from "./core/types.js";
+import { WorkspaceNotMappedError } from "./lib/workspace-context.js";
 import { formatResumeContext, type ResumeContext } from "./commands/resume.js";
 import { getTimeAgo } from "./lib/time-utils.js";
 import { createRequire } from "module";
@@ -30,32 +33,54 @@ const registry = createRegistry();
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_WRITES = 30;
+const RATE_LIMIT_MAX_READS = 60;
+const RATE_LIMIT_MAX_EXPENSIVE = 10;
 const writeTimestamps: number[] = [];
-
-const WRITE_TOOLS = new Set([
-  "write", "decide", "task", "learn", "brainstorm", "session",
-  "prune", "deprecate", "init", "knowledge_rebuild", "telemetry",
-  "skill_install", "skill_remove",
-  "link", "extract", "snapshot_repo_state", "env_facts", "cred_refs",
-  "rollback", "capture", "register", "watchdog",
-  "worktree_activate", "worktree_apply", "worktree_gc", "worktree_uninstall",
+const readTimestamps: number[] = [];
+const expensiveTimestamps: number[] = [];
+const PUBLIC_ERROR_CODES = new Set([
+  "INVALID_ARGUMENT", "PERMISSION_DENIED", "FILE_NOT_FOUND", "SECRET_REJECTED", "RATE_LIMITED",
+  "FILE_TOO_LARGE", "FILE_CHANGED", "LOCK_TIMEOUT", "LOCK_LOST",
 ]);
 
 function checkRateLimit(toolName: string): void {
-  if (!WRITE_TOOLS.has(toolName)) return;
+  const registration = registry.get(toolName);
+  const category = registration?.rateLimit ?? (registration?.toolDef.annotations?.readOnlyHint === true ? "read" : "write");
+  const timestamps = category === "write" ? writeTimestamps : category === "expensive" ? expensiveTimestamps : readTimestamps;
+  const limit = category === "write" ? RATE_LIMIT_MAX_WRITES : category === "expensive" ? RATE_LIMIT_MAX_EXPENSIVE : RATE_LIMIT_MAX_READS;
   const now = Date.now();
   const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  while (writeTimestamps.length > 0 && writeTimestamps[0] < windowStart) {
-    writeTimestamps.shift();
+  while (timestamps.length > 0 && timestamps[0] <= windowStart) {
+    timestamps.shift();
   }
-  if (writeTimestamps.length >= RATE_LIMIT_MAX_WRITES) {
-    throw new Error(`Rate limit exceeded: ${RATE_LIMIT_MAX_WRITES} write operations per minute. Slow down and retry.`);
+  if (timestamps.length >= limit) {
+    throw new VaultError("RATE_LIMITED", `Rate limit exceeded: ${limit} ${category} operations per minute. Slow down and retry.`);
   }
-  writeTimestamps.push(now);
+  timestamps.push(now);
+}
+
+function errorResponse(error: unknown, operation: string): MCPErrorResponse {
+  if (error instanceof VaultError && PUBLIC_ERROR_CODES.has(error.code)) {
+    return { error: error.code, message: error.message };
+  }
+  if (error instanceof WorkspaceNotMappedError) {
+    return { error: "PERMISSION_DENIED", message: error.message };
+  }
+  console.error(`[mcp-server] ${operation} failed:`, error);
+  return { error: "INTERNAL_ERROR", message: "An internal error occurred. Check the MCP server logs for details." };
+}
+
+function graphOpenErrorText(error: unknown, maxBytes: number): string {
+  const serialized = JSON.stringify(errorResponse(error, "tool call"));
+  if (Buffer.byteLength(serialized, "utf8") <= maxBytes) return serialized;
+  const message = Buffer.from("Raise SUPERSKILL_MAX_RESPONSE_BYTES", "utf8");
+  let end = Math.min(message.byteLength, maxBytes);
+  while (end > 0 && ((message[end] ?? 0) & 0b1100_0000) === 0b1000_0000) end -= 1;
+  return message.subarray(0, end).toString("utf8");
 }
 
 const SERVER_INSTRUCTIONS =
-  "Project-scoped knowledge for coding agents. Load project_context, search relevant notes, and register a session. Prefer graph_traverse resolve/children for metadata, then open only relevant files or symbols. Use superskill with max_tokens for bounded methodology content and session_id for isolated learning. Complete the same session with verification evidence. Worktree assessment runs at session start/completion and skill activation. Consume its nextActions in the returned workspace. Reroute superskill when task, files, or phase changes. Inspect before applying and pass confirm=true only with user authorization. Never force removal. Built-in lifecycle cleanup may archive SuperSkill metadata and remove only clean, idle, completed-session worktrees proven integrated into main.";
+  "Project-scoped knowledge for coding agents. Load project_context, search relevant notes, and register a session with the `session` tool (action `register`). Prefer graph_traverse resolve/children for metadata, then open only relevant files or symbols. Use superskill with max_tokens for bounded methodology content and session_id for isolated learning. Complete the same session with verification evidence. Worktree assessment runs at session start/completion and skill activation. Consume its nextActions in the returned workspace. Reroute superskill when task, files, or phase changes. Inspect before applying and pass confirm=true only with user authorization. Never force removal. Built-in lifecycle cleanup may relocate clean, idle, completed-session worktrees proven integrated into the repository's default branch into locked recovery archives. It never automatically deletes a checkout; inspect the returned recovery metadata.";
 
 const server = new Server(
   { name: "superskill", version },
@@ -70,25 +95,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const raw = (args ?? {}) as Record<string, unknown>;
+  const raw = args ?? {};
   try {
-    if (raw.workspace_path !== undefined && typeof raw.workspace_path !== "string") throw new Error("workspace_path must be an absolute existing directory");
+    registry.validate(name, raw);
+    checkRateLimit(name);
     const ctx = await createScopedCtx(
       typeof raw.project === "string" ? raw.project : undefined,
       name,
       typeof raw.workspace_path === "string" ? raw.workspace_path : undefined,
     );
-    checkRateLimit(name);
 
     if (name === "read") {
       const { path, depth } = raw;
-      if (!path || typeof path !== "string") throw new Error("Missing required field: path (string)");
+      if (typeof path !== "string") throw new VaultError("INVALID_ARGUMENT", "path must be a string");
       try {
         const content = await registry.execute(name, raw, ctx) as string;
         return { content: [{ type: "text", text: content }] };
       } catch (readErr: unknown) {
         const code = readErr instanceof VaultError ? readErr.code : undefined;
-        const isDir = readErr instanceof Error && "code" in readErr && (readErr as NodeJS.ErrnoException).code === "EISDIR";
+        const isDir = readErr instanceof Error && "code" in readErr && readErr.code === "EISDIR";
         if (code === "FILE_NOT_FOUND" || isDir) {
           const entries = await listCommand({ path, depth: typeof depth === "number" ? depth : 1 }, ctx);
           return { content: [{ type: "text", text: boundReadContent(serializeToolResult(entries), raw.max_bytes) }] };
@@ -106,12 +131,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     const result = await registry.execute(name, raw, ctx);
+    if (name === "graph_traverse" && raw.action === "open") {
+      return { content: [{ type: "text", text: fitGraphOpenResponse(result, maxResponseBytes()) }] };
+    }
     return { content: [{ type: "text", text: capResponseBytes(serializeToolResult(result), maxResponseBytes()) }] };
   } catch (e: unknown) {
-    const code = e instanceof VaultError ? e.code : "INTERNAL_ERROR";
-    const msg = e instanceof Error ? e.message : String(e);
+    const responseLimit = maxResponseBytes();
+    const errorText = name === "graph_traverse" && raw.action === "open"
+      ? graphOpenErrorText(e, responseLimit)
+      : capResponseBytes(JSON.stringify(errorResponse(e, "tool call")), responseLimit);
     return {
-      content: [{ type: "text", text: JSON.stringify({ error: code, message: msg }) }],
+      content: [{ type: "text", text: errorText }],
       isError: true,
     };
   }
@@ -124,7 +154,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     {
       uri: "vault://coordination/active-sessions",
       name: "Active Sessions",
-      description: "Currently active agent sessions across all tools",
+      description: "Active agent sessions across tools for the current mapped project",
       mimeType: "application/json",
     },
     {
@@ -141,37 +171,45 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
   try {
     if (uri === "vault://coordination/active-sessions") {
-      const scoped = await createScopedCtx();
-      const sessions = await getSessionRegistry().listActive(scoped.projectSlug ?? undefined);
+      checkRateLimit("project_context");
+      const scoped = await createScopedCtx(undefined, "session");
+      if (!scoped.projectSlug) throw new VaultError("PERMISSION_DENIED", "Active sessions require a mapped project workspace.");
+      const sessions = await getSessionRegistry().listActive(scoped.projectSlug);
       return {
-        contents: [{ uri, mimeType: "application/json", text: JSON.stringify(sessions, null, 2) }],
+        contents: [{ uri, mimeType: "application/json", text: capResponseBytes(serializeToolResult(sessions), maxResponseBytes()) }],
       };
     }
 
     const projectMatch = uri.match(/^vault:\/\/project\/([^/]+)\/context$/);
     if (projectMatch) {
       const slug = projectMatch[1];
-      const ctx = await createScopedCtx(slug);
-      const result = await registry.execute("project_context", { project: slug, detail_level: "summary" }, ctx) as any;
+      validateArguments(PROMPT_ARGUMENTS_SCHEMA, { project: slug });
+      checkRateLimit("project_context");
+      const ctx = await createScopedCtx(slug, "project_context");
+      const result = await registry.execute("project_context", { project: slug, detail_level: "summary" }, ctx) as ContextResult;
       return {
-        contents: [{ uri, mimeType: "text/markdown", text: result.context_md }],
+        contents: [{ uri, mimeType: "text/markdown", text: capResponseBytes(result.context_md, maxResponseBytes()) }],
       };
     }
 
-    return {
-      contents: [{ uri, mimeType: "text/plain", text: `Unknown resource: ${uri}` }],
-      isError: true,
-    };
+    throw new VaultError("INVALID_ARGUMENT", "Unknown resource URI");
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
     return {
-      contents: [{ uri, mimeType: "text/plain", text: JSON.stringify({ error: "INTERNAL_ERROR", message: msg }) }],
+      contents: [{ uri, mimeType: "application/json", text: capResponseBytes(JSON.stringify(errorResponse(e, "resource read")), maxResponseBytes()) }],
       isError: true,
     };
   }
 });
 
 // ── Prompts ───────────────────────────────────────────
+
+const PROMPT_ARGUMENTS_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    project: { type: "string" as const, pattern: "^(?!.*\\.\\.)[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
+  },
+  additionalProperties: false,
+};
 
 server.setRequestHandler(ListPromptsRequestSchema, async () => ({
   prompts: [
@@ -196,13 +234,16 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    const promptArgs = args ?? {};
+    validateArguments(PROMPT_ARGUMENTS_SCHEMA, promptArgs);
+    const project = typeof promptArgs.project === "string" ? promptArgs.project : undefined;
+    checkRateLimit("project_context");
     if (name === "inject-project-context") {
-      const project = args?.project as string | undefined;
-      const ctx = await createScopedCtx(project);
+      const ctx = await createScopedCtx(project, "project_context");
       const result = await registry.execute("project_context", {
         project,
         detail_level: "summary",
-      }, ctx) as any;
+      }, ctx) as ContextResult;
 
       let blockerSection = "";
       try {
@@ -215,16 +256,16 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
           blockerSection = "\n\n## Active Blockers\n" +
             tasks.tasks.map((t) => `- [${t.priority.toUpperCase()}] ${t.title} (${t.id})`).join("\n");
         }
-      } catch {
+      } catch (error) {
+        if (!(error instanceof VaultError && error.code === "FILE_NOT_FOUND")) {
+          console.error("[mcp-server] prompt blockers failed:", error);
+        }
       }
 
       let threadSection = "";
-      try {
-        if (result.open_threads && result.open_threads.count > 0) {
-          threadSection = `\n\n## Open Threads (${result.open_threads.count})\n` +
-            (result.open_threads.items as string[]).map((item) => `- ${item}`).join("\n");
-        }
-      } catch {
+      if (result.open_threads && result.open_threads.count > 0) {
+        threadSection = `\n\n## Open Threads (${result.open_threads.count})\n` +
+          result.open_threads.items.map((item) => `- ${item}`).join("\n");
       }
 
       let learningSection = "";
@@ -244,7 +285,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user",
             content: {
               type: "text",
-              text: `## Project Context: ${result.project_slug}\n\n${result.context_md}${blockerSection}${threadSection}${learningSection}${sessionSection}\n\n## Worktree Cache\nRun worktree_status to check worktree-cache policy, hook state, and per-worktree safety before installs or builds.`,
+              text: capResponseBytes(`## Project Context: ${result.project_slug}\n\n${result.context_md}${blockerSection}${threadSection}${learningSection}${sessionSection}\n\n## Worktree Cache\nRun worktree_status to check worktree-cache policy, hook state, and per-worktree safety before installs or builds.`, maxResponseBytes()),
             },
           },
         ],
@@ -262,7 +303,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
 ## Session Summary
 
-**Project**: ${args?.project ?? "[auto-detect]"}
+**Project**: ${project ?? "[auto-detect]"}
 **Date**: ${new Date().toISOString().slice(0, 10)}
 **Tool**: [which AI tool was used]
 
@@ -283,26 +324,15 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       };
     }
 
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `Unknown prompt: ${name}`,
-          },
-        },
-      ],
-    };
+    throw new VaultError("INVALID_ARGUMENT", "Unknown prompt");
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
     return {
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `Error loading prompt "${name}": ${msg}`,
+            text: capResponseBytes(JSON.stringify(errorResponse(e, "prompt load")), maxResponseBytes()),
           },
         },
       ],

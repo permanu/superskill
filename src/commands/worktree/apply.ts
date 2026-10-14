@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { lstat, mkdir, readdir, rename } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { buildProviderContext } from "../../lib/worktree/context.js";
-import { repoStateDir } from "../../lib/worktree/paths.js";
-import { duBytes } from "../../lib/worktree/quarantine.js";
+import { isPhysicallyContained, quarantinePaths, restoreQuarantine } from "../../lib/worktree/quarantine.js";
 import { isPathInside } from "../../lib/worktree/safety.js";
 import { seedWorktree, type SeedResult } from "../../lib/worktree/seed.js";
-import { appendJournal, newJournalId, readJournal } from "../../lib/worktree/state.js";
 import type { PruneSpec } from "../../lib/toolchains/index.js";
 import { providerById } from "../../lib/toolchains/index.js";
 
@@ -100,58 +96,15 @@ async function quarantineWorktreePath(
   worktreeRoot: string,
   target: string,
 ): Promise<WorktreeQuarantineMove> {
-  const journalId = newJournalId();
-  const from = resolve(target);
-  let info;
-  try {
-    info = await lstat(from);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return {
-      journalId,
-      from,
-      to: null,
-      bytes: 0,
-      reason: code === "ENOENT" ? "does not exist" : `lstat failed: ${code ?? errorMessage(err)}`,
-    };
-  }
-  if (info.isSymbolicLink()) {
-    return { journalId, from, to: null, bytes: 0, reason: "symlink" };
-  }
-  if (!isPathInside(from, worktreeRoot)) {
-    return { journalId, from, to: null, bytes: 0, reason: "outside worktree" };
-  }
-
-  const stateDir = await repoStateDir(worktreeRoot);
-  const quarantineDir = join(stateDir, "quarantine", journalId);
-  const to = join(quarantineDir, basename(from));
-  const bytes = (await duBytes(from)) ?? 0;
-  await mkdir(quarantineDir, { recursive: true, mode: 0o700 });
-  try {
-    await rename(from, to);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    return {
-      journalId,
-      from,
-      to: null,
-      bytes: 0,
-      reason:
-        code === "EXDEV"
-          ? "cross-device rename not supported (never copy+delete)"
-          : `rename failed: ${code ?? errorMessage(err)}`,
-    };
-  }
-
-  await appendJournal(worktreeRoot, {
-    id: journalId,
-    ts: new Date().toISOString(),
-    action: "quarantine",
-    paths: [from],
-    bytes,
-    detail: "worktree-local",
-  });
-  return { journalId, from, to, bytes, reason: null };
+  const result = await quarantinePaths(worktreeRoot, [target], { worktreeRoot });
+  const moved = result.moved[0];
+  return {
+    journalId: result.journalId,
+    from: target,
+    to: moved?.to ?? null,
+    bytes: moved?.bytes ?? 0,
+    reason: moved ? null : result.skipped[0]?.reason ?? "nothing to move",
+  };
 }
 
 async function applyReclaim(item: AuditModuleItem, worktreeRoot: string): Promise<WorktreeApplyOutcome> {
@@ -164,7 +117,7 @@ async function applyReclaim(item: AuditModuleItem, worktreeRoot: string): Promis
   const dirs = await provider.cacheDirs(built.ctx);
   const spec = dirs.find((dir) => dir.id === dirId);
   if (!spec) throw new Error(`no cache dir "${dirId}" for provider "${providerId}"`);
-  if (!isPathInside(spec.path, worktreeRoot)) {
+  if (!isPathInside(spec.path, worktreeRoot) || !(await isPhysicallyContained(spec.path, worktreeRoot))) {
     return {
       id: item.id,
       kind: item.kind,
@@ -192,88 +145,14 @@ async function applyReclaim(item: AuditModuleItem, worktreeRoot: string): Promis
   };
 }
 
-async function undoWorktreeQuarantine(
+export async function undoWorktreeQuarantine(
   worktreeRoot: string,
   journalId: string,
 ): Promise<WorktreeApplyOutcome> {
   if (!SAFE_JOURNAL_ID.test(journalId)) {
     return { id: `undo:${journalId}`, kind: "prune", status: "skipped", detail: "invalid journal id" };
   }
-  const record = (await readJournal(worktreeRoot)).find(
-    (entry) => entry.id === journalId && entry.action === "quarantine",
-  );
-  if (!record) {
-    return {
-      id: `undo:${journalId}`,
-      kind: "prune",
-      status: "skipped",
-      detail: `no quarantine journal entry for ${journalId}`,
-    };
-  }
-
-  const quarantineDir = join(await repoStateDir(worktreeRoot), "quarantine", journalId);
-  let names: string[];
-  try {
-    names = await readdir(quarantineDir);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return { id: `undo:${journalId}`, kind: "prune", status: "skipped", detail: "quarantine directory missing" };
-    }
-    throw err;
-  }
-
-  const restored: string[] = [];
-  const skipped: Array<{ path: string; reason: string }> = [];
-  for (const name of names.sort()) {
-    const source = join(quarantineDir, name);
-    const original = record.paths.find((path) => basename(path) === name);
-    if (!original) {
-      skipped.push({ path: source, reason: "no recorded original path" });
-      continue;
-    }
-    const target = resolve(original);
-    if (!isPathInside(target, worktreeRoot)) {
-      skipped.push({ path: target, reason: "outside worktree" });
-      continue;
-    }
-    try {
-      await lstat(target);
-      skipped.push({ path: target, reason: "target already exists" });
-      continue;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        skipped.push({ path: target, reason: `cannot stat target: ${code ?? errorMessage(err)}` });
-        continue;
-      }
-    }
-    try {
-      await mkdir(dirname(target), { recursive: true });
-      await rename(source, target);
-      restored.push(target);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      skipped.push({
-        path: target,
-        reason:
-          code === "EXDEV"
-            ? "cross-device rename not supported (never copy+delete)"
-            : `rename failed: ${code ?? errorMessage(err)}`,
-      });
-    }
-  }
-
-  if (restored.length > 0) {
-    await appendJournal(worktreeRoot, {
-      id: newJournalId(),
-      ts: new Date().toISOString(),
-      action: "restore",
-      paths: restored,
-      bytes: record.bytes,
-      detail: `worktree-local undo ${journalId}`,
-    });
-  }
+  const { restored, skipped } = await restoreQuarantine(worktreeRoot, journalId, { worktreeRoot });
 
   return {
     id: `undo:${journalId}`,
@@ -431,7 +310,7 @@ export async function worktreeApplyCommand(
   try {
     const auditMod = (await importModule(AUDIT_MODULE)) as AuditModule;
     if (typeof auditMod.auditRepo !== "function") throw new Error("auditRepo export missing");
-    const audit = await auditMod.auditRepo(worktreeRoot);
+    const audit = await auditMod.auditRepo(worktreeRoot, { worktree: worktreeRoot });
     const repoItems = Array.isArray(audit?.items) ? audit.items : [];
     const worktreeItems = (Array.isArray(audit?.worktrees) ? audit.worktrees : []).flatMap((entry) =>
       Array.isArray(entry.items) ? entry.items : [],

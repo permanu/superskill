@@ -42,6 +42,15 @@ describe("explicit workspace context", () => {
     await expect(resolveWorkspaceContext(root, workspace, "another")).rejects.toThrow(/does not match/);
     await expect(resolveWorkspaceContext(root, workspace, "bad/slug")).rejects.toThrow(/Invalid project slug/);
   });
+
+  it("does not let an explicit sibling project select source from this checkout", async () => {
+    const sibling = join(root, "other");
+    await mkdir(sibling);
+    await writeFile(join(root, "project-map.json"), JSON.stringify({ [workspace]: "repo", [sibling]: "other" }));
+    invalidateProjectMapCache();
+    await expect(resolveWorkspaceContext(root, workspace, "other")).rejects.toThrow(/does not match/);
+    expect(await resolveWorkspaceContext(root, sibling, "other")).toEqual({ workspacePath: sibling, projectSlug: "other" });
+  });
   it("resolves an arbitrary linked checkout through verified Git primary identity", async () => {
     await git("git", ["init", workspace]);
     await mkdir(join(workspace, "src"));

@@ -1,0 +1,1 @@
+The expected `data/index.backup.json` is absent from this fixture. No backup has been verified.

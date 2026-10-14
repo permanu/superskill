@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { execFile } from "node:child_process";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { promisify } from "node:util";
 import { probeDirSize } from "../../worktree/audit.js";
 import { hashId } from "../../worktree/paths.js";
-import { isPathInside } from "../../worktree/safety.js";
+import { auditWorktreeSafety, isPathInside, type WorktreeSafetyVerdict } from "../../worktree/safety.js";
+import { probeDeadline } from "../budget.js";
 import { quoteShell } from "../shell.js";
 import type {
   HygieneItem,
@@ -33,6 +35,7 @@ export type WorktreeExec = (
 
 export interface WorktreesProbeDeps {
   exec?: WorktreeExec;
+  audit?: typeof auditWorktreeSafety;
 }
 
 export interface ParsedWorktree {
@@ -57,6 +60,9 @@ interface LiveProbe {
   unpushed: number | null;
   ageDays: number | null;
   ignoredFiles: number | null;
+  safety: WorktreeSafetyVerdict | null;
+  integrated: boolean;
+  activeSession: boolean | null;
 }
 
 const defaultExec: WorktreeExec = async (cmd, args, opts) => {
@@ -203,12 +209,20 @@ async function probeLiveWorktree(
   exec: WorktreeExec,
   opts: HygieneProbeOptions,
   path: string,
+  main: string,
+  head: string | undefined,
+  audit: typeof auditWorktreeSafety,
 ): Promise<LiveProbe> {
-  const [status, unpushed, log, clean] = await Promise.all([
+  const [status, unpushed, log, clean, safety, integration] = await Promise.all([
     runGit(exec, ["-C", path, "status", "--porcelain"], WORKTREE_TIMEOUT_MS),
     runGit(exec, ["-C", path, "rev-list", "--count", "HEAD", "--not", "--remotes"], WORKTREE_TIMEOUT_MS),
     runGit(exec, ["-C", path, "log", "-1", "--format=%ct"], WORKTREE_TIMEOUT_MS),
     runGit(exec, ["-C", path, "clean", "-nxd"], WORKTREE_TIMEOUT_MS),
+    audit(path).catch((err: unknown) => {
+      console.error(`[hygiene-worktrees] safety audit failed for ${path}: ${errorDetail(err)}`);
+      return null;
+    }),
+    head ? runGit(exec, ["-C", main, "merge-base", "--is-ancestor", head, "HEAD"], WORKTREE_TIMEOUT_MS) : Promise.resolve(null),
   ]);
   logWorktreeGitFailure("status", path, status);
   logWorktreeGitFailure("rev-list", path, unpushed);
@@ -218,6 +232,7 @@ async function probeLiveWorktree(
   const dirtyFiles = status.ok ? countNonEmptyLines(status.stdout) : null;
   const parsedUnpushed = unpushed.ok ? Number.parseInt(unpushed.stdout.trim(), 10) : Number.NaN;
   const parsedSeconds = log.ok ? Number.parseInt(log.stdout.trim(), 10) : Number.NaN;
+  const physicalPath = await realpath(path).catch(() => resolve(path));
   return {
     dirtyFiles,
     unpushed: Number.isFinite(parsedUnpushed) ? parsedUnpushed : null,
@@ -225,6 +240,9 @@ async function probeLiveWorktree(
       ? round1((opts.now - parsedSeconds * 1000) / MS_PER_DAY)
       : null,
     ignoredFiles: clean.ok ? countNonEmptyLines(clean.stdout) : null,
+    safety,
+    integrated: integration?.ok === true,
+    activeSession: opts.activeWorktreePaths === undefined ? null : opts.activeWorktreePaths.some((active) => resolve(active) === physicalPath || resolve(active) === resolve(path)),
   };
 }
 
@@ -239,6 +257,8 @@ function buildLiveItem(
   const branch = wt.branch?.replace(/^refs\/heads\//, "") ?? "";
   const label = branch.length > 0 ? branch : basename(wt.path);
   const minAge = opts.policy.worktreeStaleMinAgeDays;
+  const safety = probe.safety;
+  const safe = safety !== null && safety.safeToReclaimLocalCaches && !safety.dirty && !safety.untracked && safety.unpushedCommits === 0 && safety.stashCount === 0 && safety.ignoredFiles.length === 0 && !safety.ignoredTruncated && safety.inProgressOps.length === 0 && !safety.locked && !safety.hasSubmodules && !safety.reasons.some((reason) => !reason.startsWith("never-touch:") && /unavailable|could not|failed|unknown|unsafe/i.test(reason));
   const due =
     !tempDir &&
     probe.dirtyFiles === 0 &&
@@ -246,7 +266,10 @@ function buildLiveItem(
     probe.ageDays !== null &&
     probe.ageDays >= minAge &&
     !wt.locked &&
-    probe.ignoredFiles === 0;
+    probe.ignoredFiles === 0 &&
+    safe &&
+    probe.integrated &&
+    probe.activeSession === false;
 
   let reason: string;
   if (tempDir) reason = "lives under a temp dir; harness may own it";
@@ -261,7 +284,11 @@ function buildLiveItem(
     reason = `clean, fully pushed, idle ${probe.ageDays}d; ignored-file check unavailable`;
   } else if (probe.ignoredFiles > 0) {
     reason = "contains ignored/untracked files that removal would delete";
-  } else reason = `clean, fully pushed, idle ${probe.ageDays}d`;
+  } else if (!safe) reason = safety?.reasons.find((entry) => !entry.startsWith("never-touch:")) ?? "worktree safety audit unavailable";
+  else if (!probe.integrated) reason = "integration into the primary worktree is unproven";
+  else if (probe.activeSession === true) reason = "worktree has an active agent session";
+  else if (probe.activeSession === null) reason = "active agent session check unavailable; verify ownership manually";
+  else reason = `clean, integrated into primary, no active operations or sessions, idle ${probe.ageDays}d`;
 
   return {
     id: `worktrees:${hashId(wt.path)}`,
@@ -281,6 +308,9 @@ function buildLiveItem(
       unpushed: probe.unpushed ?? "unknown",
       ignoredFiles: probe.ignoredFiles ?? "unavailable",
       tempDir,
+      integrated: probe.integrated,
+      activeSession: probe.activeSession ?? "unknown",
+      safety: safe ? "verified" : "unproven",
     },
   };
 }
@@ -295,7 +325,7 @@ function buildPrunableItem(repo: string, count: number): HygieneItem {
     ageDays: null,
     tier: "consent",
     due: true,
-    reason: `${count} stale registration(s); directories already gone and only git metadata remains`,
+    reason: `${count} registration(s) reported prunable by git; inspect the dry run before pruning metadata`,
     plan: `git -C ${quoteShell(repo)} worktree prune`,
     meta: { repo, count },
   };
@@ -306,6 +336,13 @@ export async function runWorktreesProbe(
   deps: WorktreesProbeDeps = {},
 ): Promise<HygieneProbeResult> {
   const exec = deps.exec ?? defaultExec;
+  const audit = deps.audit ?? auditWorktreeSafety;
+  const deadline = probeDeadline(opts.deadline);
+  const boundedExec: WorktreeExec = (cmd, args, settings) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return Promise.reject(new Error("worktree probe time budget reached"));
+    return exec(cmd, args, { ...settings, timeout: Math.max(1, Math.min(settings.timeout, remaining)) });
+  };
   const items: HygieneItem[] = [];
   const seen = new Set<string>();
   const repos: string[] = [];
@@ -319,17 +356,17 @@ export async function runWorktreesProbe(
 
   let liveCount = 0;
   for (const repo of repos) {
-    if (items.length >= ITEM_CAP) break;
+    if (items.length >= ITEM_CAP || Date.now() >= deadline) break;
     try {
       const inside = await runGit(
-        exec,
+        boundedExec,
         ["-C", repo, "rev-parse", "--is-inside-work-tree"],
         REV_PARSE_TIMEOUT_MS,
       );
       if (!inside.ok || inside.stdout.trim() !== "true") continue;
 
       const prune = await runGit(
-        exec,
+        boundedExec,
         ["-C", repo, "worktree", "prune", "--dry-run", "-v"],
         LIST_TIMEOUT_MS,
       );
@@ -340,16 +377,17 @@ export async function runWorktreesProbe(
       }
 
       if (liveCount >= LIVE_ITEM_CAP || items.length >= ITEM_CAP) continue;
-      const list = await runGit(exec, ["-C", repo, "worktree", "list", "--porcelain"], LIST_TIMEOUT_MS);
+      const list = await runGit(boundedExec, ["-C", repo, "worktree", "list", "--porcelain"], LIST_TIMEOUT_MS);
       if (!list.ok) {
         logCommandFailure(`git worktree list failed in ${repo}`, list);
         continue;
       }
-      for (const wt of parseWorktreeListPorcelain(list.stdout).slice(1)) {
-        if (items.length >= ITEM_CAP || liveCount >= LIVE_ITEM_CAP) break;
+      const listed = parseWorktreeListPorcelain(list.stdout);
+      for (const wt of listed.slice(1)) {
+        if (items.length >= ITEM_CAP || liveCount >= LIVE_ITEM_CAP || Date.now() >= deadline) break;
         if (wt.prunable) continue;
-        const probe = await probeLiveWorktree(exec, opts, wt.path);
-        const bytes = opts.sizes ? await probeDirSize(wt.path) : null;
+        const probe = await probeLiveWorktree(boundedExec, opts, wt.path, listed[0].path, wt.head, audit);
+        const bytes = opts.sizes ? await probeDirSize(wt.path, { deadline }) : null;
         items.push(buildLiveItem(opts, repo, wt, probe, bytes));
         liveCount += 1;
       }

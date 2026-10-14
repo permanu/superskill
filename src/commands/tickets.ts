@@ -2,7 +2,7 @@
 import type { CommandContext } from "../core/types.js";
 import { serializeFrontmatter, createFrontmatter, mergeFrontmatter, parseFrontmatter } from "../lib/frontmatter.js";
 import { resolveProject } from "../config.js";
-import { claimNumberedBatch, getNextNumber, slugify } from "../lib/auto-number.js";
+import { claimNumberedBatch, slugify } from "../lib/auto-number.js";
 import {
   normalizeAcceptance,
   validateAcceptance,
@@ -58,6 +58,12 @@ export async function ticketsCommand(
   path?: string;
   updated_fields?: string[];
 }> {
+  if (args.status !== undefined && !TICKET_STATUSES.includes(args.status)) {
+    throw new Error(`Invalid status "${args.status}". Must be one of: ${TICKET_STATUSES.join(", ")}`);
+  }
+  if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 0 || args.limit > 500)) {
+    throw new Error("limit must be an integer between 0 and 500");
+  }
   const projectSlug = await resolveProject(ctx.vaultPath, args.project);
   const specsDir = `projects/${projectSlug}/specs`;
   const ticketsDir = `projects/${projectSlug}/tickets`;
@@ -65,7 +71,15 @@ export async function ticketsCommand(
   switch (args.action) {
     case "create": {
       if (!args.spec) throw new Error("Spec reference required for tickets create");
-      if (!args.tickets?.length) throw new Error("At least one ticket required for tickets create");
+      if (!Array.isArray(args.tickets) || !args.tickets.length) throw new Error("At least one ticket required for tickets create");
+      for (const [index, input] of args.tickets.entries()) {
+        const label = `ticket ${index + 1}`;
+        if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error(`Invalid ${label}: expected an object`);
+        if (typeof input.title !== "string" || !input.title.trim()) throw new Error(`Invalid ${label}: title must be a non-empty string`);
+        if (input.blockedBy !== undefined && (!Array.isArray(input.blockedBy) || !input.blockedBy.every((id) => typeof id === "string" && id.trim()))) throw new Error(`Invalid ${label}: blockedBy must be an array of non-empty strings`);
+        if (input.requiresReview !== undefined && typeof input.requiresReview !== "boolean") throw new Error(`Invalid ${label}: requiresReview must be a boolean`);
+        if (input.acceptance !== undefined && !Array.isArray(input.acceptance)) throw new Error(`Invalid ${label}: acceptance must be an array`);
+      }
 
       const specPath = await resolveSpecPath(ctx.vaultFs, specsDir, args.spec);
       const loadedSpec = await loadSpec(ctx.vaultFs, specPath);
@@ -77,7 +91,8 @@ export async function ticketsCommand(
         throw new Error(`Spec content hash mismatch (modified after freeze): ${specPath}`);
       }
 
-      const startNumber = await getNextNumber(ctx.vaultFs, ticketsDir);
+      const existing = await listTickets(ctx.vaultFs, ticketsDir);
+      const startNumber = existing.reduce((next, ticket) => Math.max(next, Number(ticket.id.slice("ticket-".length)) + 1), 1);
       const planned = args.tickets.map((input, index) => {
         const number = startNumber + index;
         return {
@@ -89,7 +104,7 @@ export async function ticketsCommand(
         };
       });
       const batchIds = new Set(planned.map((entry) => entry.id));
-      const existingIds = new Set((await listTickets(ctx.vaultFs, ticketsDir)).map((ticket) => ticket.id));
+      const existingIds = new Set(existing.map((ticket) => ticket.id));
 
       // Validate the full batch before claiming any file.
       for (const { input, id, acceptance, blockedBy } of planned) {
@@ -142,7 +157,7 @@ export async function ticketsCommand(
 
     case "list": {
       const tickets = await listTickets(ctx.vaultFs, ticketsDir);
-      return { tickets: args.limit !== undefined ? tickets.slice(0, args.limit) : tickets };
+      return { tickets: tickets.slice(0, args.limit ?? 50) };
     }
 
     case "board": {
@@ -150,7 +165,7 @@ export async function ticketsCommand(
       const board: Record<string, Ticket[]> = {};
       for (const column of TICKET_COLUMNS) {
         const columnTickets = tickets.filter((ticket) => ticket.status === column);
-        board[column] = args.limit !== undefined ? columnTickets.slice(0, args.limit) : columnTickets;
+        board[column] = columnTickets.slice(0, args.limit ?? 50);
       }
       return { board };
     }
@@ -158,14 +173,11 @@ export async function ticketsCommand(
     case "ready": {
       const tickets = await listTickets(ctx.vaultFs, ticketsDir);
       const ready = readyTickets(tickets);
-      return { ready: args.limit !== undefined ? ready.slice(0, args.limit) : ready };
+      return { ready: ready.slice(0, args.limit ?? 50) };
     }
 
     case "update": {
       if (!args.ticketId) throw new Error("Ticket ID required for update");
-      if (args.status && !TICKET_STATUSES.includes(args.status)) {
-        throw new Error(`Invalid status "${args.status}". Must be one of: ${TICKET_STATUSES.join(", ")}`);
-      }
 
       const path = await resolveTicketPath(ctx.vaultFs, ticketsDir, args.ticketId);
       let ticketId = args.ticketId;

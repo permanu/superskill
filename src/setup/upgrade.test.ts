@@ -83,6 +83,99 @@ describe("upgradeCommand", () => {
     expect(config.mcpServers["obsidian-mcp"]).toBeUndefined();
   });
 
+  it.each([
+    ["claude-code", { command: "npx", args: ["-y", "superskill@0.13.0"] }],
+    ["claude-code", { command: "npx", args: ["-y", "superskill@1.2.3-beta.1"] }],
+    ["claude-code", { command: "npx", args: ["-y", "superskill@next"] }],
+    ["claude-code", { command: "npx", args: ["-y", "github:permanu/superskill#feature/ref"] }],
+    ["claude-code", { command: "npx", args: ["-y", "superskill", "--custom", "value"] }],
+    ["claude-code", { command: "superskill", args: ["--custom"] }],
+    ["claude-code", { command: "/usr/local/bin/superskill" }],
+    ["opencode", { command: ["npx", "-y", "superskill@0.13.0"] }],
+    ["opencode", { command: ["npx", "-y", "superskill@1.2.3-beta.1"] }],
+    ["opencode", { command: ["npx", "-y", "superskill@next"] }],
+    ["opencode", { command: ["npx", "-y", "github:permanu/superskill#feature/ref"] }],
+    ["opencode", { command: ["npx", "-y", "superskill", "--custom", "value"] }],
+    ["opencode", { command: ["superskill", "--custom"] }],
+    ["opencode", { command: ["/usr/local/bin/superskill"] }],
+  ] as const)("preserves pinned, customized, and direct launchers byte-for-byte (%s)", async (slug, entry) => {
+    const detected = makeDetected(slug);
+    const rootKey = detected.config.rootKey;
+    const envKey = detected.config.envKey;
+    const configuredEntry = { ...entry, [envKey]: { VAULT_PATH: "/user/vault", EXTRA: "keep" } };
+    const config = {
+      [rootKey]: { superskill: configuredEntry, untouched: { keep: true } },
+      ...(slug === "opencode" ? { instructions: [detected.instructionPath] } : {}),
+    };
+    const original = JSON.stringify(config);
+    writeFileSync(detected.mcpConfigPath, original);
+    use([detected]);
+
+    await upgradeCommand({});
+
+    expect(readFileSync(detected.mcpConfigPath, "utf-8")).toBe(original);
+  });
+
+  it("does not remove a pinned legacy alias just because it names this package", async () => {
+    const detected = makeDetected("claude-code");
+    const original = JSON.stringify({
+      mcpServers: {
+        superskill: { command: "npx", args: ["-y", "--prefer-online", "superskill@latest"] },
+        "obsidian-mcp": { command: "npx", args: ["-y", "superskill@next"] },
+      },
+    });
+    writeFileSync(detected.mcpConfigPath, original);
+    use([detected]);
+
+    await upgradeCommand({});
+
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcpServers["obsidian-mcp"]).toEqual({ command: "npx", args: ["-y", "superskill@next"] });
+  });
+
+  it("upgrades the exact OpenCode array legacy launcher and preserves its environment", async () => {
+    const detected = makeDetected("opencode");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({
+      mcp: {
+        superskill: {
+          command: ["npx", "-y", "superskill"],
+          environment: { VAULT_PATH: "/user/vault", EXTRA: "keep" },
+        },
+      },
+      instructions: [detected.instructionPath],
+    }));
+    use([detected]);
+
+    const report = await upgradeCommand({});
+
+    expect(report.clients[0].detail).toContain("reconciled launcher");
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+  });
+
+  it("normalizes an exact string-form legacy launcher for OpenCode without retaining stale args", async () => {
+    const detected = makeDetected("opencode");
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({
+      mcp: {
+        superskill: {
+          command: "npx",
+          args: ["-y", "superskill"],
+          environment: { VAULT_PATH: "/user/vault", EXTRA: "keep" },
+        },
+      },
+      instructions: [detected.instructionPath],
+    }));
+    use([detected]);
+
+    await upgradeCommand({});
+
+    const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
+    expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
+    expect(config.mcp.superskill).not.toHaveProperty("args");
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+  });
+
   it("preserves custom entries while still refreshing their instruction block", async () => {
     const detected = makeDetected("claude-code");
     const custom = JSON.stringify({ mcpServers: { superskill: { command: "custom-wrapper" } } });

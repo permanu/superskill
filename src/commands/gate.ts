@@ -94,6 +94,8 @@ async function checkTicket(
   for (const error of validateAcceptance(ticket.acceptance)) {
     missing.push(`ticket acceptance: ${error}`);
   }
+  const hasSpecHash = ticket.spec_hash.trim().length > 0;
+  if (!hasSpecHash) missing.push("ticket has no spec_hash");
 
   let specDetails: Record<string, unknown> = {};
   if (!ticket.spec) {
@@ -102,7 +104,7 @@ async function checkTicket(
     try {
       const loaded = await loadSpec(ctx.vaultFs, ticket.spec);
       for (const item of specMissingItems(loaded)) missing.push(item);
-      if (ticket.spec_hash && loaded.hash !== ticket.spec_hash) {
+      if (hasSpecHash && loaded.hash !== ticket.spec_hash) {
         missing.push("spec changed since ticket creation (spec_hash mismatch)");
       }
       specDetails = {
@@ -133,11 +135,31 @@ async function checkTicket(
     }
   }
 
-  if (ticket.requires_review) {
-    const reviewed = records.some(
-      (record) => isReviewRecord(record) && record.exit === 0 && (head === null || record.commit === head),
-    );
-    if (!reviewed) missing.push("requires review: no passing review evidence at HEAD");
+  const latestByCommand = new Map<string, EvidenceRecord>();
+  let latestReview: EvidenceRecord | undefined;
+  for (const record of records) {
+    latestByCommand.set(record.command.trim(), record);
+    if (isReviewRecord(record)) latestReview = record;
+  }
+
+  for (const criterion of ticket.acceptance) {
+    const command = criterion.command?.trim();
+    if (!command) continue;
+    const record = latestByCommand.get(command);
+    if (!record) {
+      missing.push(`acceptance ${criterion.id}: no evidence for command "${command}"`);
+      continue;
+    }
+    if (head && record.commit !== head) {
+      missing.push(`acceptance ${criterion.id}: evidence for "${command}" is stale: at ${shortHash(record.commit)}, HEAD is ${shortHash(head)}`);
+    }
+    if (record.exit !== 0) {
+      missing.push(`acceptance ${criterion.id}: latest evidence for "${command}" exit ${record.exit} (expected 0)`);
+    }
+  }
+
+  if (ticket.requires_review && (!latestReview || latestReview.exit !== 0 || latestReview.commit !== head)) {
+    missing.push("requires review: no passing review evidence at HEAD");
   }
 
   return {

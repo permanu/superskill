@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir, platform } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
@@ -208,12 +209,18 @@ export async function resolveRepoIdentity(worktreeRoot: string): Promise<RepoIde
 
 export async function repoStateDir(worktreeRoot: string): Promise<string> {
   const common = await gitCommonDir(worktreeRoot);
-  if (common) return join(common, STATE_DIR_NAME);
+  if (common) {
+    const root = await realpath(common);
+    const path = join(root, STATE_DIR_NAME);
+    if (!await physicalPathInside(path, root)) throw new Error(`Unsafe repository state directory: ${path}`);
+    return path;
+  }
   const top = (await gitTopLevel(worktreeRoot)) ?? worktreeRoot;
   return join(top, ".git", STATE_DIR_NAME);
 }
 
 export function cacheNamespace(repoId: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(repoId)) throw new Error("Invalid cache namespace identity");
   return join(platformCacheRoot(env), repoId);
 }
 
@@ -222,6 +229,61 @@ export function worktreeKey(worktreePath: string): string {
 }
 
 export async function ensureCacheDir(path: string): Promise<string> {
-  await mkdir(path, { recursive: true, mode: 0o700 });
+  if (!await physicalPathInside(path, parse(resolve(path)).root)) throw new Error(`Unsafe cache directory: ${path}`);
+  await ensureSafeDirectory(path);
   return path;
+}
+
+export async function ensureSafeDirectory(path: string): Promise<void> {
+  try {
+    const info = await lstat(path);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Unsafe directory: ${path}`);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await ensureSafeDirectory(dirname(path));
+  try { await mkdir(path, { mode: 0o700 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Unsafe directory: ${path}`);
+}
+
+export async function physicalPathInside(path: string, root: string): Promise<boolean> {
+  const base = resolve(root);
+  const rel = relative(base, resolve(path));
+  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false;
+  let parent = base;
+  try {
+    const info = await lstat(parent);
+    if (!info.isDirectory() || info.isSymbolicLink()) return false;
+    parent = await realpath(parent);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  const parts = rel.split(sep);
+  for (let i = 0; i < parts.length; i++) {
+    parent = join(parent, parts[i]);
+    try {
+      const info = await lstat(parent);
+      if (info.isSymbolicLink() || (i < parts.length - 1 && !info.isDirectory())) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      throw error;
+    }
+  }
+  return true;
+}
+
+export async function readRegularText(path: string, maxBytes = 1024 * 1024): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > maxBytes) throw new Error(`Not a bounded regular file: ${path}`);
+    const buffer = Buffer.alloc(info.size + 1);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    if (bytesRead !== info.size) throw new Error(`File changed during bounded read: ${path}`);
+    return buffer.subarray(0, bytesRead).toString("utf-8");
+  } finally { await file.close(); }
 }

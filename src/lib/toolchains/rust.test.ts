@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { commandExists, rustProvider } from "./rust.js";
 import type { EnvVar, ProviderContext } from "./types.js";
 
@@ -71,7 +71,7 @@ describe("rustProvider", () => {
   it("enables sccache when the binary is on PATH", async () => {
     const binDir = join(tmp, "bin");
     await mkdir(binDir, { recursive: true });
-    await writeFile(join(binDir, "sccache"), "");
+    await writeFile(join(binDir, "sccache"), "", { mode: 0o755 });
     process.env.PATH = binDir;
 
     const ctx = makeCtx(tmp);
@@ -83,7 +83,7 @@ describe("rustProvider", () => {
     expect(map.get("RUSTC_WRAPPER")?.value).toBe("sccache");
     expect(map.get("SCCACHE_DIR")?.value).toBe(join(ctx.cacheNamespace, "sccache"));
     expect(map.get("SCCACHE_CACHE_SIZE")?.value).toBe("10G");
-    expect(map.get("SCCACHE_BASEDIRS")?.value).toBe(ctx.projectRoot);
+    expect(map.get("SCCACHE_BASEDIRS")?.value).toBe([ctx.projectRoot, ctx.worktreeRoot].join(delimiter));
     expect(map.get("CARGO_INCREMENTAL")?.value).toBe("0");
     expect(map.has("CARGO_TARGET_DIR")).toBe(false);
   });
@@ -91,7 +91,7 @@ describe("rustProvider", () => {
   it("honors the SUPERSKILL_SCCACHE_CACHE_SIZE override", async () => {
     const binDir = join(tmp, "bin");
     await mkdir(binDir, { recursive: true });
-    await writeFile(join(binDir, "sccache"), "");
+    await writeFile(join(binDir, "sccache"), "", { mode: 0o755 });
     process.env.PATH = binDir;
     const previous = process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
     process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = "5G";
@@ -107,7 +107,7 @@ describe("rustProvider", () => {
   it("ignores a blank SUPERSKILL_SCCACHE_CACHE_SIZE", async () => {
     const binDir = join(tmp, "bin");
     await mkdir(binDir, { recursive: true });
-    await writeFile(join(binDir, "sccache"), "");
+    await writeFile(join(binDir, "sccache"), "", { mode: 0o755 });
     process.env.PATH = binDir;
     const previous = process.env.SUPERSKILL_SCCACHE_CACHE_SIZE;
     process.env.SUPERSKILL_SCCACHE_CACHE_SIZE = "   ";
@@ -195,7 +195,7 @@ describe("commandExists", () => {
   it("scans only the injected PATH", async () => {
     const binDir = join(tmp, "bin");
     await mkdir(binDir, { recursive: true });
-    await writeFile(join(binDir, "sccache"), "");
+    await writeFile(join(binDir, "sccache"), "", { mode: 0o755 });
     process.env.PATH = binDir;
 
     expect(commandExists("sccache")).toBe(true);
@@ -211,5 +211,13 @@ describe("commandExists", () => {
   it("returns false when PATH is unset", () => {
     delete process.env.PATH;
     expect(commandExists("sccache")).toBe(false);
+  });
+
+  it("rejects directories and non-executable files", async () => {
+    process.env.PATH = tmp;
+    await mkdir(join(tmp, "sccache"));
+    await writeFile(join(tmp, "plain"), "", { mode: 0o600 });
+    expect(commandExists("sccache")).toBe(false);
+    expect(commandExists("plain")).toBe(false);
   });
 });

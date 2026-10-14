@@ -1,8 +1,8 @@
 # Harness Integration
 
-How superskill supplies lifecycle guidance to supported coding harnesses, and how the
-enforcement surfaces are wired. All integration is optional and non-breaking: a
-missing constitution, CLI, or gate command never blocks a session or a commit.
+How SuperSkill supplies optional lifecycle guidance to supported coding harnesses, and
+how the enforcement surfaces are wired. Integration is optional and non-blocking: a
+missing hook, CLI, or gate command never blocks a session or a commit.
 
 ## Support and verification
 
@@ -76,25 +76,31 @@ not replaced, and there is no instant push into an active host session. Offline
 npm/cache behavior may use an already cached version or fail; latest-version
 uptake requires registry access.
 
-Rerunning setup upgrades only recognized old generated `npx -y superskill`
-launchers. The existing vault path, extra environment keys and unrelated client
-settings are retained. Explicit version pins, custom binaries and extra command
-arguments remain unchanged without an explicit `--force` replacement. Recognized
-marked Codex blocks are updated in place; unmarked existing tables are preserved.
-Run setup once for initial installation or migration of an older launcher. On
-subsequent MCP starts, the server atomically refreshes an already installed
-SuperSkill-managed shared skill and exact known managed Markdown instruction
-blocks. It does not create missing integrations, change launcher settings, or
-refresh custom/ambiguous blocks, Cursor MDC files or OpenCode plain instruction
-files. Those require explicit setup or manual maintenance. Start a new host
-session to load refreshed instructions; an existing session keeps its loaded
-context.
+Rerunning setup upgrades only recognized generated launchers and preserves the
+existing vault path, extra environment keys and unrelated client settings. Explicit
+version pins, custom binaries, custom launchers and extra command arguments remain
+unchanged unless the user explicitly requests replacement. Recognized marked Codex
+blocks are updated in place; unmarked existing tables are preserved.
+
+Run setup once for initial installation or migration. Each later MCP startup uses
+the same managed-state reconciliation path: it refreshes an existing marked shared
+skill and safely owned instruction blocks, then reconciles recognized managed
+launchers and known legacy aliases for detected clients. It does not create missing
+integrations or overwrite custom/pinned launchers, ambiguous blocks, or unrelated
+settings. Cursor MDC and OpenCode instruction files are refreshed only when the
+existing integration is recognized and the SuperSkill-owned content can be updated
+safely. Start a new host session to load refreshed instructions; an existing session
+keeps its already-loaded context.
 
 ## Constitution
 
-`catalog/constitution.md` holds the T0 axioms — 14 items, under 400 tokens, always
-injected. Each item names the mechanism that enforces it (gate check, rules
-validator, security scanner, router, loader, review).
+`catalog/constitution.md` holds optional T0 guidance. Its contents are not
+universally or continuously injected. The optional session-start hook reads and emits
+the file only when a host is configured to run that hook; a host may also explicitly
+open the `constitution` graph node. Guidance applies when it is actually included in
+the host's context, not through automatic background loading.
+Each item names the mechanism that enforces it (gate check, rules validator, security
+scanner, router, loader, review).
 
 The rules validator rejects rules that contradict the constitution's non-negotiables
 (placeholder tokens, missing sources, unverified status). The gate commands consume
@@ -103,7 +109,7 @@ stable IDs are enforced by `tests/constitution.test.ts`.
 
 ## Bootstrap blurb
 
-`superskill setup` writes a short instruction block into each detected client's
+`superskill setup` writes a short instruction block for clients with a configured
 instruction file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, Cursor `.mdc`, OpenCode
 instructions file). The block is delimited by `<!-- superskill:begin -->` /
 `<!-- superskill:end -->` markers and is idempotent; only the marked block is
@@ -128,42 +134,36 @@ result within the same phase instead of calling the router on every tool action.
 
 Consume the returned `worktree` assessment before installs/builds and at completion.
 Run follow-up inspection in the exact returned workspace, using the CLI with that
-working directory when a tool cannot accept a path. Inspection is the default. The built-in completed-session cleanup is limited to
-clean, idle, session-owned worktrees proven merged into main and eligible under
-the lifecycle checks. Active, uncertain or ineligible worktrees remain in place
-with reasons reported. Do not force removal or substitute a shell cleanup. Other
-policy activation, cache apply/GC and manual removals still require authorization.
+working directory when a tool cannot accept a path. Inspection is the default. The
+built-in completed-session cleanup is limited to clean, idle, session-owned worktrees
+proven integrated into the repository's configured default branch and eligible under
+the lifecycle checks. Eligible checkouts move to locked recovery archives; cleanup
+never automatically deletes them. Active, uncertain or ineligible worktrees remain
+in place with reasons reported. Do not force removal or substitute a shell cleanup.
+Other policy activation, cache apply/GC and manual removals still require authorization.
 Complete the same session with evidence and report pending actions.
 
 For delegated delivery, the coordinator integrates related dependent worker changes
 into an ordered local branch/PR stack. Validate each layer and the combined top
 before a batch push; workers do not independently push or create PRs by default.
 Keep unrelated parallel work separate. Publishing and remote merging still require
-authorization and applicable review/CI. After merging into main, complete owning
-sessions and check lifecycle cleanup so eligible completed worktrees do not linger.
-
-Setup automatically refreshes the exact known older SuperSkill Markdown block in
-place. Surrounding bytes, custom blocks, incomplete blocks and duplicate blocks
-are preserved without `--force`. Initial setup installs the shared managed skill
-and client integration. Later MCP startups atomically refresh an existing marked
-shared skill and recognized Markdown blocks without requiring setup again.
-Custom or ambiguous instructions and MDC/plain instruction files are skipped by
-this automatic refresh. Installing a package alone does not restart a running
-MCP server: restart it and start a new host session for uptake. Already loaded
-skill context does not update in place.
+authorization and applicable review/CI. After merging into the repository's default
+branch, complete owning sessions and check lifecycle cleanup so eligible completed
+worktrees do not linger.
 
 These instructions guide agents; an MCP server cannot force a host to invoke a
-tool or observe a task/phase change the host never reports. The optional hook below
-injects the constitution only; it is not a cross-harness background maintenance
-scheduler. Verification evidence and the constitution still apply.
+tool or observe a task/phase change the host never reports. The optional session-start
+hook only supplies its configured context; it is not a cross-harness maintenance
+scheduler. Verification evidence still has to be produced by the relevant checks.
 
 ## Hooks
 
 ### Session start
 
 `hooks/session-start.sh` reads `catalog/constitution.md` and emits it as session
-context. It exits 0 with no output when the file is missing, so it is safe to wire
-into any harness.
+context when explicitly configured. It exits 0 with no output when the file is
+missing. The hook does not configure itself or force a host to retain or act on the
+emitted text.
 
 ```bash
 hooks/session-start.sh                 # markdown on stdout

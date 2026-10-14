@@ -2,7 +2,7 @@
 import { rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { backupOnce, isSuperskillBootstrapCommand, readJsonSafe, writeJsonAtomic } from "./helpers.js";
+import { backupOnce, isSuperskillBootstrapCommand, quoteCommandPath, readHookConfig, readTextSafe, requireSafePath, writeJsonAtomic, writeTextAtomic } from "./helpers.js";
 import type { AdapterActionResult, AdapterContext, HostAdapter } from "./types.js";
 
 const ADAPTER_ID = "grokbuild";
@@ -10,7 +10,7 @@ const FALLBACK_NOTE =
   "GrokBuild hook surface unverified; relying on MCP tools + git post-checkout hook";
 
 function bootstrapCommand(ctx: AdapterContext): string {
-  return `${ctx.superskillCli ?? "superskill-cli"} worktree bootstrap --source session`;
+  return `${quoteCommandPath(ctx.superskillCli ?? "superskill-cli")} worktree bootstrap --source session`;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -106,21 +106,22 @@ async function apply(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActio
     return { adapter: ADAPTER_ID, changed: false, dryRun, files: [], notes: [FALLBACK_NOTE] };
   }
   const filePath = join(dir, "hooks.json");
-  const raw = await readJsonSafe(filePath);
-  const existing = asRecord(raw) ?? {};
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "SessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const existing = loaded.value;
   const next = withBootstrapHook(existing, bootstrapCommand(ctx));
   const changed = !sameJson(existing, next);
   if (changed && !dryRun) {
-    if (raw !== null) await backupOnce(filePath);
-    await writeJsonAtomic(filePath, next);
+    await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
   }
   return result(changed, dryRun, filePath, []);
 }
 
 async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActionResult> {
   const filePath = join(ctx.repoRoot, ".grokbuild", "hooks.json");
-  const raw = await readJsonSafe(filePath);
-  const root = asRecord(raw);
+  const loaded = await readHookConfig(filePath, ctx.repoRoot, "SessionStart");
+  if (loaded.note !== undefined) return result(false, dryRun, filePath, [loaded.note]);
+  const root = loaded.value;
   const hooks = root ? asRecord(root.hooks) : null;
   const existingStart = hooks ? hooks.SessionStart : null;
   if (!root || !hooks || !Array.isArray(existingStart)) {
@@ -130,11 +131,26 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
   if (!removed) return result(false, dryRun, filePath, []);
   const next = { ...root, hooks: { ...hooks, SessionStart: entries } };
   if (!dryRun) {
-    await backupOnce(filePath);
+    const text = await readTextSafe(`${filePath}.bak.superskill`);
+    let backup: Record<string, unknown> | null = null;
+    if (text !== null) {
+      try {
+        backup = asRecord(JSON.parse(text));
+      } catch {
+        console.error(`[worktree-adapter-grokbuild] invalid backup left unchanged: ${filePath}`);
+      }
+    }
+    if (text !== null && backup !== null && isEffectivelyEmpty(backup) && isEffectivelyEmpty(next)) {
+      await writeTextAtomic(filePath, text, 0o600, ctx.repoRoot, loaded.text);
+      return result(true, dryRun, filePath, ["restored matching pre-install backup"]);
+    }
+    await backupOnce(filePath, ctx.repoRoot);
     if (isEffectivelyEmpty(next)) {
+      await requireSafePath(filePath, ctx.repoRoot);
+      if (await readTextSafe(filePath) !== loaded.text) throw new Error(`${filePath} changed during uninstall; left unchanged`);
       await rm(filePath, { force: true });
     } else {
-      await writeJsonAtomic(filePath, next);
+      await writeJsonAtomic(filePath, next, ctx.repoRoot, loaded.text);
     }
   }
   return result(true, dryRun, filePath, []);
@@ -143,11 +159,11 @@ async function remove(ctx: AdapterContext, dryRun: boolean): Promise<AdapterActi
 export const grokbuildAdapter: HostAdapter = {
   id: ADAPTER_ID,
   displayName: "GrokBuild",
-  async detect(): Promise<boolean> {
+  async detect(ctx): Promise<boolean> {
     const envHome = process.env.GROKBUILD_HOME;
     if (typeof envHome === "string" && envHome.trim().length > 0) return true;
     if (await pathExists(join(homedir(), ".grokbuild"))) return true;
-    return pathExists(join(process.cwd(), ".grokbuild"));
+    return pathExists(join(ctx?.repoRoot ?? process.cwd(), ".grokbuild"));
   },
   plan: (ctx) => apply(ctx, true),
   install: (ctx) => apply(ctx, false),

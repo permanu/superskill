@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync } from "fs";
+import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
 import { detectClients } from "./detect.js";
 import type { DetectedClient } from "./types.js";
 import { readJsonConfig, updateJsonConfig, removeMcpEntry } from "./json-config.js";
-import { isManagedLauncher, isLatestLauncher, renderLauncher } from "./launcher.js";
+import { isManagedLauncher, isLatestLauncher, isOurTool, renderLauncher } from "./launcher.js";
 import { buildLauncher, buildTomlBlock } from "./configure.js";
 import { reconcileTomlBlock } from "./toml-config.js";
 import {
@@ -39,8 +40,11 @@ function reconcileJsonLauncher(
   if (entry === undefined) {
     return { kind: "skipped", detail: "no superskill MCP entry (run setup)" };
   }
-  if (!isManagedLauncher(entry)) {
+  if (!isOurTool(entry)) {
     return { kind: "skipped", detail: "custom superskill entry preserved" };
+  }
+  if (!isManagedLauncher(entry)) {
+    return { kind: "skipped", detail: "pinned or customized superskill launcher preserved" };
   }
   const changes: string[] = [];
   const launcher = buildLauncher(config.commandType);
@@ -51,7 +55,9 @@ function reconcileJsonLauncher(
       updateJsonConfig(mcpConfigPath, (current) => {
         const target = current[config.rootKey]?.superskill;
         if (target === undefined || !isManagedLauncher(target)) return null;
-        const nextEntry = { ...target, command: launcher.command, ...(launcher.args ? { args: launcher.args } : {}) };
+        const nextEntry = { ...target, command: launcher.command };
+        if (launcher.args) nextEntry.args = launcher.args;
+        else delete nextEntry.args;
         return { ...current, [config.rootKey]: { ...current[config.rootKey], superskill: nextEntry } };
       });
     }
@@ -77,13 +83,13 @@ function reconcileJsonLauncher(
 function reconcileTomlLauncher(detected: DetectedClient, dryRun: boolean): LauncherResult {
   const { mcpConfigPath } = detected;
   if (!existsSync(mcpConfigPath)) return { kind: "skipped", detail: "no config file" };
-  const content = readFileSync(mcpConfigPath, "utf-8");
+  const content = readSetupText(mcpConfigPath)!;
   const updated = reconcileTomlBlock(content, buildTomlBlock("~"));
   if (updated === null || updated === content) {
     const referenced = /\[mcp_servers\.superskill(?:\.env)?\]/.test(content);
     return referenced ? { kind: "ok", changes: [] } : { kind: "skipped", detail: "no superskill MCP entry (run setup)" };
   }
-  if (!dryRun) writeFileSync(mcpConfigPath, updated, "utf-8");
+  if (!dryRun) writeSetupText(mcpConfigPath, updated, content);
   return { kind: "ok", changes: [`${dryRun ? "would reconcile" : "reconciled"} TOML launcher`] };
 }
 
@@ -134,6 +140,8 @@ function upgradeClient(detected: DetectedClient, dryRun: boolean): ClientReport 
         detail: config.supportNote ?? "Native MCP setup is unsupported",
       };
     }
+    assertSafeSetupPath(detected.mcpConfigPath);
+    if (detected.instructionPath) assertSafeSetupPath(detected.instructionPath);
 
     const launcherResult = config.configFormat === "json"
       ? reconcileJsonLauncher(detected, dryRun)

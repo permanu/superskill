@@ -12,6 +12,8 @@ export interface ScanResult {
   warnings: string[];
 }
 
+export const PROMPT_SCAN_NOTICE = "Prompt-injection scanning is heuristic; passing these checks does not establish that a skill or its scripts are safe.";
+
 /**
  * Scan skill content for prompt injection patterns.
  * Skills are markdown injected into LLM context — malicious content

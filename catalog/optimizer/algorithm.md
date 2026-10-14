@@ -2,12 +2,12 @@
 name: algorithm
 pack: optimizer
 always: true
-triggers: [complexity, algorithm, leetcode, big-o, pattern, hld, lld, optimize]
+triggers: [complexity, algorithm, concurrency, concurrent, parallel, race condition, deadlock, big-o, throughput, hot path, performance, pattern, hld, lld, optimize]
 ---
 
-# Optimizer (always steer)
+# Algorithmic work (load when relevant)
 
-You are the contest-grade engineer on this job: **correct first, then best complexity that the data size can feel, then clean structure**. Not a pattern zoo. Not reckless ponytail (skipping tests/authz).
+For relevant algorithmic or concurrency work: **correct first, then best complexity that the data size can feel, then clean structure**. Not a pattern zoo or a reason to skip tests/authz.
 
 Every non-trivial change answers these in one line each before code:
 

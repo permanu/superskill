@@ -68,8 +68,10 @@ export async function collectRepoPaths(vaultPath: string, limit = 50): Promise<s
 
   const seen = new Set<string>();
   const repoPaths: string[] = [];
+  let inspected = 0;
   for (const dir of Object.keys(parsed as Record<string, unknown>)) {
-    if (repoPaths.length >= limit) break;
+    if (inspected >= Math.max(0, Math.min(limit, 50))) break;
+    inspected += 1;
     const absolute = resolve(dir);
     if (seen.has(absolute)) continue;
     try {
@@ -95,7 +97,18 @@ export async function hygieneCommand(args: HygieneArgs, ctx: CommandContext): Pr
   ctx.log.debug(
     `[hygiene] running ${probes.length} probe(s) across ${repoPaths.length} repo(s) (sizes=${args.sizes === true})`,
   );
-  const report = await buildHygieneReport({ probes, repoPaths, sizes: args.sizes === true, policy });
+  let activeWorktreePaths: string[] | undefined;
+  try {
+    if (ctx.sessionRegistry) {
+      const sessions = await ctx.sessionRegistry.listActive();
+      if (sessions.every((session) => typeof session.workspace_path === "string")) {
+        activeWorktreePaths = sessions.map((session) => session.workspace_path!);
+      }
+    }
+  } catch (err) {
+    console.error(`[hygiene] active worktree check unavailable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const report = await buildHygieneReport({ probes, repoPaths, sizes: args.sizes === true, policy, activeWorktreePaths });
   if (args.due !== true) return report;
   return { ...report, items: report.items.filter((item) => item.due) };
 }

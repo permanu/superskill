@@ -65,12 +65,31 @@ describe("unmarked superskill tables", () => {
     expect(forced).toContain('args = ["-y", "--prefer-online", "superskill@latest"]');
   });
 
+  it.each([
+    ['command = "npx"', 'args = ["-y", "superskill@0.13.0"]'],
+    ['command = "npx"', 'args = ["-y", "superskill@1.2.3-beta.1"]'],
+    ['command = "npx"', 'args = ["-y", "superskill@next"]'],
+    ['command = "npx"', 'args = ["-y", "github:permanu/superskill#feature/ref"]'],
+    ['command = "npx"', 'args = ["-y", "superskill", "--custom"]'],
+    ['command = "superskill"', ''],
+  ])("preserves pinned and customized unmarked tables without force (%s)", (command, args) => {
+    const existing = `[mcp_servers.superskill]\n${command}\n${args}\n\n[mcp_servers.superskill.env]\nVAULT_PATH = "/user/vault"\nEXTRA = "keep"\n`;
+    expect(insertTomlBlock(existing, LATEST_BLOCK)).toBeNull();
+  });
+
   it("normalizes a global binary command with force only", () => {
     const global = `[mcp_servers.superskill]\ncommand = "superskill"\n`;
     expect(insertTomlBlock(global, LATEST_BLOCK)).toBeNull();
     const forced = insertTomlBlock(global, LATEST_BLOCK, true);
     expect(forced).toContain('command = "npx"');
     expect(forced).toContain('args = ["-y", "--prefer-online", "superskill@latest"]');
+  });
+
+  it("does not rewrite an unsafe executable path, even with force", () => {
+    const unsafe = `[mcp_servers.superskill]\ncommand = "/usr/local/bin/superskill"\n`;
+    expect(insertTomlBlock(unsafe, LATEST_BLOCK)).toBeNull();
+    expect(insertTomlBlock(unsafe, LATEST_BLOCK, true)).toBeNull();
+    expect(insertTomlBlock(`# superskill:start\n${unsafe}\n# superskill:end\n`, LATEST_BLOCK, true)).toBeNull();
   });
 });
 
@@ -104,6 +123,15 @@ describe("removeTomlBlock", () => {
     expect(result.removed).toBe(false);
     expect(result.content).toBe(content);
   });
+
+  it("preserves unrelated tables between an owned launcher and its environment table", () => {
+    const user = '[mcp_servers.user]\ncommand = "user-wrapper"\n\n';
+    const content = `[mcp_servers.superskill]\ncommand = "superskill-cli"\n\n${user}[mcp_servers.superskill.env]\nVAULT_PATH = "/v"\n`;
+    const result = removeTomlBlock(content);
+    expect(result.removed).toBe(true);
+    expect(result.content).toContain(user.trimEnd());
+    expect(result.content).not.toContain("superskill");
+  });
 });
 
 describe("managed TOML launcher upgrades", () => {
@@ -111,6 +139,12 @@ describe("managed TOML launcher upgrades", () => {
   it("replaces only the old launcher args and preserves existing vault/environment/outside bytes", () => {
     const existing = `# before\n\n# superskill:start\n${BLOCK}\nEXTRA = "keep"\n# superskill:end\n\n# after\n`;
     expect(insertTomlBlock(existing, latest)).toBe(existing.replace('["-y", "superskill"]', '["-y", "--prefer-online", "superskill@latest"]'));
+  });
+  it("reconciles the launcher without disturbing separated user tables or environment", () => {
+    const userTable = '[mcp_servers.user]\ncommand = "user-wrapper"\n\n';
+    const existing = `[mcp_servers.superskill]\ncommand = "npx"\nargs = ["-y", "superskill"]\n\n${userTable}[mcp_servers.superskill.env]\nVAULT_PATH = "/user/vault"\nEXTRA = "keep"\n`;
+    const updated = existing.replace('["-y", "superskill"]', '["-y", "--prefer-online", "superskill@latest"]');
+    expect(reconcileTomlBlock(existing, latest)).toBe(updated);
   });
   it.each([
     BLOCK.replace('"superskill"', '"superskill@0.9.0"'),

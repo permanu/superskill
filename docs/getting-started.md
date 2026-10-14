@@ -21,10 +21,14 @@ superskill setup               # register MCP + instructions in supported detect
 ```
 
 1. `skill init` detects the stack, indexes the in-repo catalog (not skills.sh), writes `.superskill/graph.json` (project-local, gitignored), registers the repo in the vault map (`project-map.json`) so vault commands auto-detect without `-p`, appends `.superskill/` to `.gitignore`, and adds a short SuperSkill block to an existing `AGENTS.md` / `CLAUDE.md`.
-2. `setup` finds installed clients and writes the MCP entry, instruction file, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) for each host that supports them — plus the harness-agnostic `superskill` skill at `~/.agents/skills/superskill/SKILL.md` so hosts with skill discovery list it. Use `--dry-run` to preview, `--clients claude-code,cursor` to target, `--force` to overwrite.
+2. `setup` finds supported installed clients and writes their MCP entries, instructions, and slash commands (`/review`, `/worktree`, `/watchdog`, `/superskill`) — plus the harness-agnostic `superskill` skill at `~/.agents/skills/superskill/SKILL.md` for hosts with skill discovery. These are user-level files in your home directory: preview with `--dry-run` and apply only with the user's approval. Use `--clients claude-code,cursor` to target; `--force` replaces existing entries only when that replacement is intended.
 3. Describe the task — or use a shortcut: `/review [scope]` (18-axis review; empty scope = whole project), `/worktree [status|audit|gc]`, `/watchdog [dig|fix]`, `/superskill <task>`. The router picks packs by language, phase, and specialists; content is budgeted, and review/audit/diff/defect tasks (and security bugs) also get the vault brief plus a caller protocol.
 
 Activations write `.superskill/graph.json` (local only).
+
+## Native skills
+
+Use the [native skill template](SKILL-TEMPLATE.md) and validate an individual skill directory or `SKILL.md` with `superskill skill validate <path> --profile anthropic` or `--profile portable`. Validation checks structure and bundle constraints; passing it does not establish model behavior quality or universal host compatibility. Internal packs and atomic rules use their own contracts, not native skill frontmatter.
 
 Setup support is defined in [the harness matrix](harness.md#support-and-verification). Native MCP setup excludes Aider; Continue setup targets its IDE extension. Configuration tests and live host checks are separate evidence.
 
@@ -38,7 +42,7 @@ Verify any time with `superskill doctor`: install vs running MCP servers, vault 
 
 `setup` defaults to `npx -y --prefer-online superskill@latest`. Each new MCP process asks npm for fresh metadata and resolves the stable `latest` tag. Publishing a new version under that tag makes it available on the next MCP start; it does not replace an active server or push code into running sessions. Offline/cache behavior may retain a cached version or fail to start; no upgrade is guaranteed without registry access. Explicit pinned versions and direct installed binaries remain manual-update choices. See [npm exec configuration](https://docs.npmjs.com/cli/v11/commands/npm-exec/#prefer-online).
 
-Run setup once to install or migrate the integration. Future MCP starts update server code and atomically refresh the existing SuperSkill-managed shared skill, launchers, owned legacy aliases, and recognized instruction blocks — including Cursor MDC and OpenCode instruction files — upgrading legacy `superskill:start` markers and unmarked legacy files to the current format while preserving user content around them. It does not create missing integrations. Start a new host session to load refreshed instructions.
+Run setup once to install or migrate the integration. Future MCP starts refresh an existing marked shared skill and safely owned instruction blocks, then reconcile recognized managed launchers and known legacy aliases for detected clients. They preserve custom or pinned launchers, ambiguous instruction blocks, and unrelated settings; they do not create missing integrations. Cursor MDC and OpenCode instruction files are refreshed only when the existing integration and SuperSkill-owned content are safely recognized. Start a new host session to load refreshed instructions.
 
 **Claude Code / Claude Desktop** — `~/.claude.json`, or `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
 
@@ -107,7 +111,7 @@ superskill setup        # or re-run setup for the full install path (idempotent)
 
 `setup` and `upgrade` upgrade recognized generated launchers without `--force`, preserving their existing vault path and extra environment settings. Pinned versions, direct binaries and customized arguments are left unchanged. `--force` explicitly replaces an entry; use it only when that replacement is intended.
 
-You normally do not need to run either manually: when a host starts the MCP server, SuperSkill reconciles managed launchers, removes its own legacy `obsidian-mcp`/`obsidian-kb` aliases, and upgrades legacy instruction blocks in place. Run `superskill setup --check` to see drift read-only, or `superskill upgrade --dry-run` to preview the automatic reconciliation.
+You normally do not need to run either manually: when a host starts the MCP server, SuperSkill reconciles recognized managed launchers, removes only its own known legacy `obsidian-mcp`/`obsidian-kb` aliases, and refreshes safely owned instruction blocks. Custom or pinned launchers are preserved. Run `superskill setup --check` to see drift read-only, or `superskill upgrade --dry-run` to preview reconciliation.
 
 ## Uninstall
 

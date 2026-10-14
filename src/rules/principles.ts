@@ -4,7 +4,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import matter from "gray-matter";
+import matter from "../lib/markdown-matter.js";
 import { formatMatchClause } from "./explain.js";
 import {
   countSymbolOccurrences,

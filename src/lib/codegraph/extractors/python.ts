@@ -20,22 +20,21 @@ function walkChildren(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
   for (const child of node.namedChildren) walk(child, builder, ctx);
 }
 
-function lastSegment(dotted: string): string {
-  const parts = dotted.split(".");
-  return parts[parts.length - 1] ?? dotted;
-}
-
 function walk(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
   switch (node.type) {
     case "import_statement": {
       for (const spec of node.namedChildren) {
         if (spec.type === "dotted_name") {
           const text = spec.text;
-          builder.addImport(text, lastSegment(text), node, lastSegment(text));
+          const local = text.split(".")[0] ?? text;
+          builder.addImport(text, local, node, local, true);
         } else if (spec.type === "aliased_import") {
           const name = spec.childForFieldName("name");
           const alias = spec.childForFieldName("alias");
-          if (name) builder.addImport(name.text, lastSegment(name.text), node, alias?.text ?? lastSegment(name.text));
+          if (name) {
+            const local = name.text.split(".")[0] ?? name.text;
+            builder.addImport(name.text, local, node, alias?.text ?? local, true);
+          }
         }
       }
       return;
@@ -48,7 +47,7 @@ function walk(node: SyntaxNode, builder: FileBuilder, ctx: Ctx): void {
         return;
       }
       for (const nameNode of node.namedChildren) {
-        if (nameNode === moduleName || nameNode.type === "import_prefix") continue;
+        if (nameNode.id === moduleName?.id || nameNode.type === "import_prefix") continue;
         if (nameNode.type === "wildcard_import") {
           builder.addImport(specifier, "*", node);
         } else if (nameNode.type === "dotted_name") {

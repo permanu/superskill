@@ -46,4 +46,8 @@ describe("loadCatalog", () => {
     const raw = await readFile(catalogFile("code/typescript"), "utf-8");
     expect(raw).toContain("pack: code");
   });
+
+  it.each(["../package", "code/../../package", "code/../typescript", "code/typescript/extra", "unknown/skill", "code/skill\\name", "code/%2e%2e", "code/skill\u0000"])("rejects invalid catalog id %s", (id) => {
+    expect(() => catalogFile(id)).toThrow(/catalog.*id/i);
+  });
 });

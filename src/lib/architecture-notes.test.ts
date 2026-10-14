@@ -121,4 +121,24 @@ describe("buildArchitectureNotes", { timeout: 15_000 }, () => {
     expect(result.notes[0].body).toContain("No supported source files were found in this project.");
     expect(result.notes[3].body).toContain("No call relationships were extracted from the supported source files.");
   });
+
+  it("escapes control characters and Markdown or Mermaid delimiters in labels", async () => {
+    const scan = await scanRepo(await fixtureRepo());
+    const hostile = {
+      ...scan,
+      graph: {
+        ...scan.graph,
+        nodes: scan.graph.nodes.map((node) => ({ ...node, name: `${node.name}[injected]|#\n\`\`\`<tag>` })),
+      },
+    };
+    const result = buildArchitectureNotes({ slug: "sample\n## [[injected]]", scan: hostile });
+    expect(result.notes[0].body).toContain("sample \\#\\# \\[\\[injected\\]\\]");
+    for (const note of result.notes) {
+      expect(note.body.match(/^```/gm)).toHaveLength(2);
+      const mermaid = note.body.slice(note.body.indexOf("```mermaid"));
+      expect(mermaid).not.toContain("[injected]");
+      expect(mermaid).not.toContain("<tag>");
+      expect(mermaid).not.toContain("|#");
+    }
+  });
 });

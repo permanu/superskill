@@ -8,7 +8,7 @@ import type { PruneSpec } from "../toolchains/types.js";
 import { buildProviderContext } from "./context.js";
 import { markerTargetMissing, readWorktreeMarkers } from "./namespace.js";
 import { platformCacheRoot, resolveRepoIdentity } from "./paths.js";
-import { duBytes, quarantinePaths, type QuarantineResult } from "./quarantine.js";
+import { duBytes, isPhysicallyContained, quarantinePaths, type QuarantineResult } from "./quarantine.js";
 import { listWorktrees } from "./safety.js";
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +16,9 @@ const execFileAsync = promisify(execFile);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRUNE_TIMEOUT_MS = 60_000;
 const PRUNE_MAX_BUFFER = 16 * 1024 * 1024;
+const SCAN_CANDIDATE_CAP = 200;
+const SCAN_BUDGET_MS = 15_000;
+const AGE_ENTRY_CAP = 1024;
 
 export const AUTO_MIN_AGE_DAYS = 30;
 
@@ -83,10 +86,11 @@ export const TOOL_PREFIXES = (
   ] satisfies Array<{ prefix: string; tool: string; tier: GcTier }>
 ).sort((a, b) => b.prefix.length - a.prefix.length);
 
-const NESTED_PARENT_DIRS = new Set(["cargo-build", "link", "links"]);
+const NESTED_PARENT_DIRS = new Set(["cargo-build", "link", "links", "npm", "pnpm", "yarn", "bun"]);
 
 export function inferTool(name: string): ToolInference {
   const lower = name.toLowerCase();
+  if (["npm", "pnpm", "yarn", "bun"].includes(lower)) return { tool: "node", tier: "auto" };
   for (const entry of TOOL_PREFIXES) {
     if (lower.startsWith(entry.prefix)) return { tool: entry.tool, tier: entry.tier };
   }
@@ -115,13 +119,16 @@ async function ageDaysOf(dir: string): Promise<number | null> {
       return null;
     }
   }
-  const stats = await Promise.allSettled(names.map((name) => lstat(join(dir, name))));
   let newest = 0;
   let found = false;
-  for (const settled of stats) {
-    if (settled.status !== "fulfilled") continue;
-    found = true;
-    newest = Math.max(newest, settled.value.mtimeMs);
+  if (names.length > AGE_ENTRY_CAP) return null;
+  for (let index = 0; index < names.length; index += 16) {
+    const stats = await Promise.allSettled(names.slice(index, index + 16).map((name) => lstat(join(dir, name))));
+    for (const settled of stats) {
+      if (settled.status !== "fulfilled") continue;
+      found = true;
+      newest = Math.max(newest, settled.value.mtimeMs);
+    }
   }
   return found ? ageInDays(newest) : null;
 }
@@ -132,8 +139,9 @@ async function buildCandidate(
   inference: ToolInference,
   measure: boolean,
   orphaned = false,
+  deadline = Date.now() + SCAN_BUDGET_MS,
 ): Promise<GcCandidate> {
-  const [bytes, ageDays] = await Promise.all([measure ? duBytes(dir) : Promise.resolve(0), ageDaysOf(dir)]);
+  const [bytes, ageDays] = await Promise.all([measure && Date.now() < deadline ? duBytes(dir, deadline - Date.now()) : Promise.resolve(null), ageDaysOf(dir)]);
   const tier: GcTier = orphaned ? "auto" : inference.tier;
   const candidate: GcCandidate = { path: dir, repoId, tool: inference.tool, bytes, ageDays, tier };
   if (orphaned) candidate.orphaned = true;
@@ -141,9 +149,11 @@ async function buildCandidate(
 }
 
 export async function scanCacheRoot(
-  opts: { cacheRoot?: string; repoId?: string; all?: boolean; measureSizes?: boolean } = {},
+  opts: { cacheRoot?: string; repoId?: string; all?: boolean; measureSizes?: boolean; maxCandidates?: number; deadline?: number } = {},
 ): Promise<GcCandidate[]> {
   const root = resolve(opts.cacheRoot ?? platformCacheRoot());
+  const cap = Math.max(0, Math.min(opts.maxCandidates ?? SCAN_CANDIDATE_CAP, SCAN_CANDIDATE_CAP));
+  const deadline = Math.min(opts.deadline ?? Infinity, Date.now() + SCAN_BUDGET_MS);
   const measure = opts.measureSizes !== false;
   let repoIds: string[];
   if (opts.all !== true && opts.repoId !== undefined) {
@@ -163,8 +173,10 @@ export async function scanCacheRoot(
   }
 
   const candidates: GcCandidate[] = [];
-  for (const repoId of repoIds) {
+  for (const repoId of repoIds.slice(0, 50)) {
+    if (candidates.length >= cap || Date.now() >= deadline) break;
     const repoDir = join(root, repoId);
+    if (!(await isPhysicallyContained(repoDir, root))) continue;
     let entries;
     try {
       entries = await readdir(repoDir, { withFileTypes: true });
@@ -177,10 +189,12 @@ export async function scanCacheRoot(
     }
     const markers = await readWorktreeMarkers(repoDir);
     for (const entry of entries) {
+      if (candidates.length >= cap || Date.now() >= deadline) break;
       if (!entry.isDirectory() || entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
       const dir = join(repoDir, entry.name);
       const inference = inferTool(entry.name);
-      candidates.push(await buildCandidate(dir, repoId, inference, measure));
+      if (!(await isPhysicallyContained(dir, root))) continue;
+      candidates.push(await buildCandidate(dir, repoId, inference, measure, false, deadline));
 
       if (NESTED_PARENT_DIRS.has(entry.name)) {
         let children;
@@ -190,13 +204,14 @@ export async function scanCacheRoot(
           continue;
         }
         for (const child of children) {
+          if (candidates.length >= cap || Date.now() >= deadline) break;
           if (!child.isDirectory() || child.name.startsWith(".")) continue;
           const childInference = inferTool(child.name);
           const effective = childInference.tool === "unknown" ? inference : childInference;
           const markerTarget = markers.get(child.name);
           const orphaned =
             markerTarget !== undefined && (await markerTargetMissing(markerTarget));
-          candidates.push(await buildCandidate(join(dir, child.name), repoId, effective, measure, orphaned));
+          candidates.push(await buildCandidate(join(dir, child.name), repoId, effective, measure, orphaned, deadline));
         }
       }
     }
@@ -210,7 +225,7 @@ function globToRegExp(pattern: string): RegExp {
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*")
     .replace(/\?/g, ".");
-  return new RegExp(escaped);
+  return new RegExp(`^(?:${escaped})$`);
 }
 
 function normalizePatterns(patterns: string[] | undefined): RegExp[] {
@@ -229,7 +244,7 @@ function relativeToRepo(candidate: GcCandidate): string {
 function matchesAny(candidate: GcCandidate, patterns: RegExp[]): boolean {
   if (patterns.length === 0) return false;
   const relative = relativeToRepo(candidate);
-  return patterns.some((pattern) => pattern.test(relative) || pattern.test(candidate.path));
+  return patterns.some((pattern) => pattern.test(relative) || pattern.test(`${candidate.repoId}/${relative}`) || pattern.test(candidate.path) || pattern.test(basename(candidate.path)));
 }
 
 function skipReason(
@@ -403,8 +418,9 @@ export async function resolveWorktreeFilter(
   }
   const wanted = basename(resolved);
   const worktrees = await listWorktrees(repoRoot);
-  const match = worktrees.find((worktree) => basename(resolve(worktree.path)) === wanted);
-  if (match) return { path: resolve(match.path), note: null };
+  const matches = worktrees.filter((worktree) => basename(resolve(worktree.path)) === wanted);
+  if (matches.length === 1) return { path: resolve(matches[0].path), note: null };
+  if (matches.length > 1) return { path: null, note: `ambiguous worktree name: ${trimmed}` };
   return { path: null, note: `worktree not found: ${trimmed}` };
 }
 
@@ -415,22 +431,33 @@ export async function runGc(
   const cacheRoot = resolve(opts.cacheRoot ?? platformCacheRoot());
   const notes: string[] = [];
   let effectiveFilters = filters;
+  if (filters.worktree !== undefined && filters.worktree.trim().length === 0 && filters.all !== true) {
+    return { cacheRoot, candidates: [], selected: [], skipped: [], toolPrunes: [], notes: ["empty worktree scope; nothing selected or moved"] };
+  }
   if (filters.worktree !== undefined && filters.worktree.trim().length > 0) {
     const resolution = await resolveWorktreeFilter(filters.worktree, opts.repoRoot, {
       all: filters.all === true,
     });
     if (resolution.note !== null) notes.push(resolution.note);
+    if (resolution.path === null && filters.all !== true) {
+      notes.push("worktree scope unresolved; nothing selected or moved");
+      return { cacheRoot, candidates: [], selected: [], skipped: [], toolPrunes: [], notes };
+    }
     const scopedRepoId =
       resolution.path === null
         ? undefined
         : (await resolveRepoIdentity(resolution.path)).repoId;
-    effectiveFilters = { ...filters, repoId: scopedRepoId };
+    effectiveFilters = { ...filters, repoId: scopedRepoId ?? filters.repoId };
+  }
+  if (effectiveFilters.all !== true && effectiveFilters.repoId === undefined) {
+    effectiveFilters = { ...effectiveFilters, repoId: (await resolveRepoIdentity(opts.repoRoot)).repoId };
   }
   const candidates = await scanCacheRoot({
     cacheRoot,
     repoId: effectiveFilters.repoId,
     all: effectiveFilters.all === true,
   });
+  notes.push(`scan bounds: at most 50 repositories, ${SCAN_CANDIDATE_CAP} candidates, ${SCAN_BUDGET_MS / 1000}s; narrow filters for large cache roots`);
   const { selected, skipped } = filterCandidates(candidates, effectiveFilters);
   const toolPrunes = await collectToolPrunes(opts.repoRoot, effectiveFilters, notes);
 
@@ -511,13 +538,14 @@ export async function resolveProjectLabels(vaultPath: string): Promise<Map<strin
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return labels;
 
   let inspected = 0;
+  const deadline = Date.now() + SCAN_BUDGET_MS;
   for (const [dir, slug] of Object.entries(parsed as Record<string, unknown>)) {
-    if (inspected >= 50) break;
+    if (inspected >= 50 || Date.now() >= deadline) break;
+    inspected += 1;
     if (typeof slug !== "string" || slug.length === 0) continue;
     try {
       const info = await stat(dir);
       if (!info.isDirectory()) continue;
-      inspected += 1;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "EACCES") {

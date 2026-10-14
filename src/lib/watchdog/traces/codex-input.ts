@@ -46,7 +46,12 @@ export function nestedInputs(source: string): Array<{ name: string; input: unkno
   return found;
 }
 
-function shellFiles(command: string, trace: SessionTrace, cwd?: string): void {
+function retain(trace: SessionTrace, list: string[], value: string, maxEntries: number): void {
+  if (list.length < maxEntries) list.push(value);
+  else trace.truncated = true;
+}
+
+function shellFiles(command: string, trace: SessionTrace, maxEntries: number, cwd?: string): void {
   const retained: string[] = [];
   let delimiter: string | undefined;
   for (const line of command.split("\n")) {
@@ -69,7 +74,7 @@ function shellFiles(command: string, trace: SessionTrace, cwd?: string): void {
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
     if ([";", "|", "&&", "||", "\n"].includes(word)) { start = true; reader = ""; skip = 0; continue; }
-    if (/^\d*>>?$/.test(word)) { const p = path(words[++i] ?? ""); if (p) trace.filesWritten.push(p); continue; }
+    if (/^\d*>>?$/.test(word)) { const p = path(words[++i] ?? ""); if (p) retain(trace, trace.filesWritten, p, maxEntries); continue; }
     if (start) { reader = /^(cat|head|tail|sed|rg|grep)$/.test(word) ? word : ""; skip = /^(sed|rg|grep)$/.test(reader) ? 1 : 0; start = false; continue; }
     if (!reader) continue;
     if (word.startsWith("-")) {
@@ -80,32 +85,32 @@ function shellFiles(command: string, trace: SessionTrace, cwd?: string): void {
     }
     if (skip > 0) { skip--; continue; }
     const p = path(word);
-    if (p) trace.filesRead.push(p);
+    if (p) retain(trace, trace.filesRead, p, maxEntries);
   }
 }
 
-export function recordInput(trace: SessionTrace, name: string, input: unknown): string | undefined {
+export function recordInput(trace: SessionTrace, name: string, input: unknown, maxEntries = 500): string | undefined {
   const shortName = name.split(".").at(-1) ?? name;
   const object = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const command = typeof object.cmd === "string" ? object.cmd : typeof object.command === "string" ? object.command : undefined;
   if (command !== undefined) {
-    trace.commands.push(command.replace(/\s+/g, " ").trim().slice(0, 400));
-    shellFiles(command, trace, typeof object.workdir === "string" ? object.workdir : undefined);
+    retain(trace, trace.commands, command.replace(/\s+/g, " ").trim().slice(0, 400), maxEntries);
+    shellFiles(command, trace, maxEntries, typeof object.workdir === "string" ? object.workdir : undefined);
     return command;
   }
   if (shortName === "apply_patch" && typeof input === "string") {
-    for (const match of input.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) trace.filesWritten.push(match[1]);
+    for (const match of input.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) retain(trace, trace.filesWritten, match[1], maxEntries);
     return input;
   }
   if (typeof input === "string") {
     const nested = nestedInputs(input);
     if (nested.length > 0) {
-      const summaries = nested.map(call => recordInput(trace, call.name, call.input)).filter((value): value is string => value !== undefined);
+      const summaries = nested.map(call => recordInput(trace, call.name, call.input, maxEntries)).filter((value): value is string => value !== undefined);
       return summaries.length > 0 ? summaries.join("; ") : input;
     }
     if (["shell", "bash", "exec"].includes(shortName) && !/[{}();]/.test(input)) {
-      trace.commands.push(input.split("\n")[0].trim().slice(0, 400));
-      shellFiles(input, trace);
+      retain(trace, trace.commands, input.split("\n")[0].trim().slice(0, 400), maxEntries);
+      shellFiles(input, trace, maxEntries);
     }
     return input;
   }

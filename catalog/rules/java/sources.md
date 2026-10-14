@@ -5,6 +5,11 @@ Last verified: 2026-10-05
 
 Traceability: API pages were fetched from the Java SE documentation site; JEP statuses were read from the OpenJDK JEP index on the verification date. The authoring toolchain is javac 23.0.2; current stable releases are newer, so rules use `baseline: latest` and avoid APIs that are not yet stable.
 
+## Contents
+
+- [Primary](#primary)
+- [Further reading](#further-reading)
+
 ## Primary
 
 1. [Java SE API Specification](https://docs.oracle.com/en/java/javase/23/docs/api/index.html) - API signatures and behavioral contracts across all prefixes

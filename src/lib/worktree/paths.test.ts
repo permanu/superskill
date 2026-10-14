@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { hashId, localRemotePath, normalizeRemote, platformCacheRoot, resolveRepoIdentity } from "./paths.js";
+import { cacheNamespace, ensureCacheDir, hashId, localRemotePath, normalizeRemote, physicalPathInside, platformCacheRoot, readRegularText, resolveRepoIdentity } from "./paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -201,5 +201,40 @@ describe("resolveRepoIdentity with local-path remotes", () => {
     const identity = await resolveRepoIdentity(clone);
     expect(identity.repoId).toBe(hashId(gone));
     expect(identity.legacyRepoId).toBeNull();
+  });
+
+  it("checks existing physical ancestors even when the final destination does not exist", async () => {
+    const root = join(base, "root");
+    const outside = join(base, "outside");
+    await mkdir(root);
+    await mkdir(outside);
+    await symlink(outside, join(root, "escape"));
+    expect(await physicalPathInside(join(root, "escape", "missing", "file"), root)).toBe(false);
+    expect(await physicalPathInside(join(root, "missing", "file"), root)).toBe(true);
+    expect(await physicalPathInside(root, root)).toBe(false);
+    expect(await physicalPathInside(outside, root)).toBe(false);
+    expect(await readdir(outside)).toEqual([]);
+    await expect(ensureCacheDir(join(root, "escape", "new"))).rejects.toThrow("Unsafe");
+    await mkdir(join(outside, "existing"));
+    await expect(ensureCacheDir(join(root, "escape", "existing", "new"))).rejects.toThrow("Unsafe");
+    expect(await readdir(join(outside, "existing"))).toEqual([]);
+    const safe = join(await realpath(base), "safe", "nested");
+    expect(await ensureCacheDir(safe)).toBe(safe);
+  });
+
+  it("bounds regular-file reads and refuses symlink files", async () => {
+    const file = join(base, "file");
+    const link = join(base, "link");
+    await writeFile(file, "private");
+    await symlink(file, link);
+    expect(await readRegularText(file, 7)).toBe("private");
+    await expect(readRegularText(file, 6)).rejects.toThrow("bounded");
+    await expect(readRegularText(link)).rejects.toThrow();
+    await expect(readRegularText(base)).rejects.toThrow("regular");
+    expect(await readFile(file, "utf-8")).toBe("private");
+  });
+
+  it("refuses path-like cache namespace identities", () => {
+    for (const id of ["../escape", "nested/escape", "", ".", "..", "/absolute"]) expect(() => cacheNamespace(id)).toThrow("identity");
   });
 });

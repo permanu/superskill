@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CommandContext } from "../../core/types.js";
 import { worktreeBootstrapCommand } from "../../commands/worktree/bootstrap.js";
 import { resolveRepoIdentity, worktreeKey } from "./paths.js";
+import { nodeProvider } from "../toolchains/node.js";
 import { copyTreeCoW, seedWorktree, verifySeededFiles } from "./seed.js";
 import {
   POLICY_SCHEMA_VERSION,
@@ -84,6 +85,8 @@ describe("worktree seed", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     await rm(base, { recursive: true, force: true });
   });
 
@@ -190,6 +193,105 @@ describe("worktree seed", () => {
     expect(result.seeded.map((s) => s.relative)).toEqual(["node_modules"]);
     expect(existsSync(join(worktree, "node_modules.superskill-lock"))).toBe(false);
   });
+
+  it("recovers only provably dead local seed locks and preserves interrupted staging data", async () => {
+    await addNodeModules();
+    const worktree = await addWorktree("wt-dead-lock");
+    const dest = join(worktree, "node_modules");
+    const token = "dead-bootstrap";
+    const stage = join(worktree, `.node_modules.superskill-seed-${token}`);
+    await mkdir(stage);
+    await writeFile(join(stage, "partial-user-data"), "retained");
+    await writeFile(`${dest}.superskill-lock`, JSON.stringify({ pid: 999999999, host: hostname(), token, stage }));
+    const result = await seedWorktree(worktree);
+    expect(result.seeded).toHaveLength(1);
+    expect(result.notes.some((note) => note.includes(stage))).toBe(true);
+    expect(await readFile(join(stage, "partial-user-data"), "utf-8")).toBe("retained");
+    expect(existsSync(`${dest}.superskill-lock`)).toBe(false);
+  });
+
+  it("clears a provably dead seed lock after a crash following publication without touching the destination", async () => {
+    await addNodeModules();
+    const worktree = await addWorktree("wt-published-crash");
+    const dest = join(worktree, "node_modules");
+    await mkdir(dest);
+    await writeFile(join(dest, "user.txt"), "published and edited");
+    const lock = `${dest}.superskill-lock`;
+    await writeFile(lock, JSON.stringify({ pid: 999999999, host: hostname(), token: "crashed" }));
+    const preview = await seedWorktree(worktree, { dryRun: true });
+    expect(preview.seeded).toEqual([]);
+    expect(existsSync(lock)).toBe(true);
+    const result = await seedWorktree(worktree);
+    expect(result.seeded).toEqual([]);
+    expect(existsSync(lock)).toBe(false);
+    expect(await readFile(join(dest, "user.txt"), "utf-8")).toBe("published and edited");
+  });
+
+  it.each(["live", "foreign", "malformed"])("never age-steals %s seed locks", async (kind) => {
+    await addNodeModules();
+    const worktree = await addWorktree(`wt-lock-${kind}`);
+    const lock = join(worktree, "node_modules.superskill-lock");
+    const raw = kind === "malformed" ? "half-written" : JSON.stringify({ pid: kind === "live" ? process.pid : 999999999, host: kind === "foreign" ? "other-host" : hostname(), token: "old" });
+    await writeFile(lock, raw);
+    await utimes(lock, 0, 0);
+    expect((await seedWorktree(worktree)).seeded).toEqual([]);
+    expect(await readFile(lock, "utf-8")).toBe(raw);
+  });
+
+  it("rejects escaping symlink ancestors for both source and destination", async () => {
+    await addNodeModules();
+    const worktree = await addWorktree("wt-ancestor");
+    const outside = join(base, "outside");
+    await mkdir(outside);
+    await symlink(outside, join(worktree, "escape"));
+    const spy = vi.spyOn(nodeProvider, "seed").mockResolvedValue([{ source: join(repo, "node_modules"), dest: join(worktree, "escape", "node_modules"), relative: "escape/node_modules", kind: "dir", method: "auto-reflink" }]);
+    expect((await seedWorktree(worktree)).skipped[0].reason).toContain("outside worktree");
+    expect(await readdir(outside)).toEqual([]);
+    await symlink(repo, join(repo, "escape"));
+    spy.mockResolvedValue([{ source: join(repo, "escape", "node_modules"), dest: join(worktree, "node_modules"), relative: "node_modules", kind: "dir", method: "auto-reflink" }]);
+    expect((await seedWorktree(worktree)).skipped[0].reason).toContain("symlink");
+    expect(existsSync(join(worktree, "node_modules"))).toBe(false);
+  });
+
+  it.each(["destination", "lock", "failure"])("preserves work when %s changes during copying", async (kind) => {
+    await addNodeModules();
+    const worktree = await addWorktree(`wt-race-${kind}`);
+    const realCp = (await execFileAsync("which", ["cp"])).stdout.trim();
+    const bin = join(base, "bin");
+    await mkdir(bin);
+    const replacement = JSON.stringify({ pid: process.pid, host: hostname(), token: "new-owner" });
+    await writeFile(join(bin, "cp"), `#!${process.execPath}
+const { execFileSync } = require("node:child_process");
+const { mkdirSync, writeFileSync, unlinkSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (${JSON.stringify(kind)} === "destination") {
+  mkdirSync(${JSON.stringify(join(worktree, "node_modules"))});
+  writeFileSync(${JSON.stringify(join(worktree, "node_modules", "user.txt"))}, "never overwrite");
+}
+if (${JSON.stringify(kind)} === "lock") {
+  unlinkSync(${JSON.stringify(join(worktree, "node_modules.superskill-lock"))});
+  writeFileSync(${JSON.stringify(join(worktree, "node_modules.superskill-lock"))}, ${JSON.stringify(replacement)});
+}
+if (${JSON.stringify(kind)} === "failure") {
+  mkdirSync(args[args.length - 1]);
+  writeFileSync(args[args.length - 1] + "/partial", "recover me");
+  process.exit(1);
+}
+try { process.stdout.write(execFileSync(${JSON.stringify(realCp)}, args)); }
+catch (error) { process.stderr.write(error.stderr || "failed"); process.exit(error.status || 1); }
+`, { mode: 0o700 });
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    const result = await seedWorktree(worktree);
+    expect(result.seeded).toEqual([]);
+    expect(result.skipped[0].reason).toContain("copy failed");
+    const stage = (await readdir(worktree)).find((entry) => entry.startsWith(".node_modules.superskill-seed-"))!;
+    expect(JSON.parse(await readFile(join(worktree, stage, "seed.json"), "utf-8")).dest).toBe(join(worktree, "node_modules"));
+    expect(result.notes.some((note) => note.includes(stage))).toBe(true);
+    if (kind === "destination") expect(await readFile(join(worktree, "node_modules", "user.txt"), "utf-8")).toBe("never overwrite");
+    if (kind === "lock") expect(await readFile(join(worktree, "node_modules.superskill-lock"), "utf-8")).toBe(replacement);
+    if (kind === "failure") expect(await readFile(join(worktree, stage, "payload", "partial"), "utf-8")).toBe("recover me");
+    expect(await readManifest(worktree, worktree)).toBeNull();
+  }, 15000);
 
   it("skips everything on the main worktree", async () => {
     await addNodeModules();

@@ -132,13 +132,23 @@ export function languageForFile(path: string): LanguageId | null {
 }
 
 let parserPromise: Promise<Parser> | null = null;
-const loadedLanguages = new Map<LanguageId, Parser.Language>();
+const loadedLanguages = new Map<LanguageId, Promise<Parser.Language>>();
+export const PARSE_TIMEOUT_MICROS = 500_000;
 
 export async function getParser(): Promise<Parser> {
   if (!parserPromise) {
-    parserPromise = Parser.init().then(() => new Parser());
+    parserPromise = Parser.init().then(() => {
+      const parser = new Parser();
+      parser.setTimeoutMicros(PARSE_TIMEOUT_MICROS);
+      return parser;
+    }).catch((error: unknown) => {
+      parserPromise = null;
+      throw error;
+    });
   }
-  return parserPromise;
+  const parser = await parserPromise;
+  parser.reset();
+  return parser;
 }
 
 export async function loadLanguage(language: LanguageId): Promise<Parser.Language> {
@@ -148,12 +158,10 @@ export async function loadLanguage(language: LanguageId): Promise<Parser.Languag
   if (!resolved) {
     throw new Error(`codegraph: unsupported grammar "${language}" — ${supportedFor(language).reason}`);
   }
-  await getParser();
-  const loaded = await Parser.Language.load(resolved.path);
+  const loaded = getParser().then(() => Parser.Language.load(resolved.path)).catch((error: unknown) => {
+    loadedLanguages.delete(language);
+    throw error;
+  });
   loadedLanguages.set(language, loaded);
   return loaded;
-}
-
-export function resetGrammars(): void {
-  loadedLanguages.clear();
 }

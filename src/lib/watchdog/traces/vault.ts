@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { parseFrontmatter } from "../../frontmatter.js";
+import { validateProjectSlug } from "../../../config.js";
 import type { VaultFS } from "../../vault-fs.js";
 import type { SessionTrace, TraceSessionRef } from "../types.js";
-import { newTrace } from "./source.js";
+import { logSourceError, newTrace } from "./source.js";
 
 /**
  * Universal fallback trace source: vault session notes written by `session complete`.
@@ -14,25 +15,31 @@ const MAX_NOTES = 40;
 
 export interface VaultTraceListOptions {
   projectSlug?: string | null;
+  allProjects?: boolean;
+  confirm?: boolean;
   since?: number;
   limit?: number;
 }
 
 export async function listVaultTraces(vaultFs: VaultFS, opts: VaultTraceListOptions = {}): Promise<TraceSessionRef[]> {
   const dirs: string[] = [];
-  if (opts.projectSlug) {
-    dirs.push(`projects/${opts.projectSlug}/sessions`);
-  } else {
+  const slug = opts.projectSlug === undefined ? vaultFs.projectSlug : opts.projectSlug;
+  if (opts.allProjects === true && opts.confirm === true && vaultFs.projectSlug === undefined) {
     let projects: string[] = [];
     try {
       projects = await vaultFs.list("projects", 1);
-    } catch {
+    } catch (err) {
+      logSourceError("vault project listing", err);
       return [];
     }
     for (const entry of projects) {
       if (!entry.endsWith("/")) continue;
       dirs.push(`${entry.replace(/\/$/, "")}/sessions`);
     }
+  } else if (slug) {
+    dirs.push(`projects/${validateProjectSlug(slug)}/sessions`);
+  } else {
+    return [];
   }
 
   const refs: TraceSessionRef[] = [];
@@ -40,7 +47,8 @@ export async function listVaultTraces(vaultFs: VaultFS, opts: VaultTraceListOpti
     let files: string[];
     try {
       files = await vaultFs.list(dir, 1);
-    } catch {
+    } catch (err) {
+      logSourceError("vault session listing", err);
       continue;
     }
     const notes = files
@@ -51,7 +59,8 @@ export async function listVaultTraces(vaultFs: VaultFS, opts: VaultTraceListOpti
       let parsed: ReturnType<typeof parseFrontmatter>;
       try {
         parsed = parseFrontmatter(await vaultFs.read(path));
-      } catch {
+      } catch (err) {
+        logSourceError("vault session read", err);
         continue;
       }
       const fm = parsed.data;
@@ -80,7 +89,8 @@ export async function loadVaultTrace(vaultFs: VaultFS, ref: TraceSessionRef): Pr
   let parsed: ReturnType<typeof parseFrontmatter>;
   try {
     parsed = parseFrontmatter(await vaultFs.read(ref.storagePath));
-  } catch {
+  } catch (err) {
+    logSourceError("vault trace read", err);
     return trace;
   }
   const fm = parsed.data;

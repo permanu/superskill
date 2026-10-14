@@ -26,7 +26,7 @@ export interface HostAdapter {
   id: string;
   displayName: string;
   /** True when this host is present on the machine or repo. */
-  detect(): Promise<boolean>;
+  detect(ctx?: AdapterContext): Promise<boolean>;
   /** Dry-run description of what install would change. */
   plan(ctx: AdapterContext): Promise<AdapterActionResult>;
   install(ctx: AdapterContext): Promise<AdapterActionResult>;

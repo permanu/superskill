@@ -6,6 +6,11 @@ Last verified: 2026-10-04
 Compiler support currently shown by the cited tracker pages (traceability only, not pinned):
 `std::expected` - GCC 12, Clang 16, Apple Clang 15.0.0, MSVC 19.33; monadic operations - GCC 13, Clang 17, Apple Clang 15.0.0, MSVC 19.36.
 
+## Contents
+
+- [Primary](#primary)
+- [Further reading](#further-reading)
+
 ## Primary
 
 - [cppreference - std::expected](https://en.cppreference.com/w/cpp/utility/expected) - err; never-empty value-or-error type, observers, monadic operations
