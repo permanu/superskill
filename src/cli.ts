@@ -1343,7 +1343,11 @@ export function createProgram(): Command {
           throw new Error("--profile must be one of: anthropic, portable");
         }
         const safePath = validateWorkspaceRelativePath(path);
-        const result = await validateNativeSkillCommand({ path: safePath, profile: opts.profile as "anthropic" | "portable" }, await createScopedCtx());
+        const ctx = await createScopedCtx();
+        const result = await validateNativeSkillCommand(
+          { path: safePath, profile: opts.profile as "anthropic" | "portable" },
+          { ...ctx, workspacePath: ctx.workspacePath ?? process.cwd() },
+        );
         console.log(JSON.stringify(result, null, 2));
         if (!nativeValidationPassed(result)) process.exitCode = 1;
       } catch (e: unknown) {

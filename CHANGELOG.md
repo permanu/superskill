@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-14
+
+### Fixed
+- Native CLI skill validation works in clean, unmapped checkouts without creating a vault project mapping. Mapped workspace roots and all relative-path, symlink, metadata, and required-reference checks remain intact. Added real built-CLI regressions for valid input and escaping references.
+- Native authoring-gate failures preserve structured stdout diagnostics alongside stderr warnings, so a SQLite experimental warning cannot hide the rejection reason.
+
+### Release notes
+- Includes the skill delivery, native validation, resource paging, project-safety, and recovery improvements from 0.15.0; see the [full changelog](https://github.com/permanu/superskill/blob/v0.15.1/CHANGELOG.md). The first tag's clean-checkout CI failure was corrected without rewriting `v0.15.0`; npm publication remains manual.
+- Release checks pass 3,908 tests in 219 files and 44 offline script tests, with unchanged coverage thresholds. The shipped-skill gate also passes with a fresh, unmapped home and no vault mapping created.
+
 ## [0.15.0] - 2026-10-14
 
 ### Added

@@ -87,6 +87,20 @@ test("fails when native validation exits unsuccessfully", async (t) => {
   );
 });
 
+test("preserves structured failure output when stderr contains a runtime warning", async (t) => {
+  const root = await makeRepo();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await assert.rejects(
+    checkShippedSkills(root, () => ({
+      status: 1,
+      stdout: JSON.stringify({ valid: false, issues: [{ code: "workspace.unavailable" }] }),
+      stderr: "ExperimentalWarning: SQLite is an experimental feature",
+    })),
+    /workspace\.unavailable.*ExperimentalWarning/s,
+  );
+});
+
 test("fails when validator output is invalid or omits the checked skill", async (t) => {
   const root = await makeRepo();
   t.after(() => rm(root, { recursive: true, force: true }));

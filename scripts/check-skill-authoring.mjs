@@ -100,7 +100,7 @@ export async function checkShippedSkills(repoRoot = DEFAULT_REPO_ROOT, validate 
     const result = validate(skillFile, root);
     if (result.error) throw new Error(`Could not start native validator: ${result.error.message}`);
     if (result.status !== 0) {
-      const details = (result.stderr || result.stdout || "").trim().slice(0, 4000);
+      const details = [result.stdout, result.stderr].filter((part) => typeof part === "string" && part.trim()).join("\n").trim().slice(0, 4000);
       throw new Error(`Native validator failed for ${toPosix(relative(root, skillFile))} (exit ${result.status ?? "unknown"}).${details ? `\n${details}` : ""}`);
     }
     parseReport(result.stdout ?? "", skillFile, root);

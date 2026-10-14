@@ -77,7 +77,19 @@ describe("CLI graph-open paging and native validation", () => {
 
     expect(harness.validateNativeSkillCommand).toHaveBeenCalledWith({
       path: "skills/demo/SKILL.md", profile: "portable",
-    }, ctx);
+    }, { ...ctx, workspacePath: process.cwd() });
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("preserves a resolved workspace root for mapped native validation", async () => {
+    const mappedCtx = { ...ctx, workspacePath: "/mapped/workspace" };
+    harness.createScopedCtx.mockResolvedValue(mappedCtx);
+    const { createProgram } = await import("./cli.js");
+    await createProgram().parseAsync(["node", "superskill", "skill", "validate", "skills/demo/SKILL.md"]);
+
+    expect(harness.validateNativeSkillCommand).toHaveBeenCalledWith({
+      path: "skills/demo/SKILL.md", profile: "anthropic",
+    }, mappedCtx);
     expect(process.exitCode).toBe(0);
   });
 
