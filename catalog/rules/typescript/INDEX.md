@@ -1,7 +1,7 @@
 # TypeScript Rules Index
 
 Baseline: latest
-Rules: 259 (verified: 259)
+Rules: 263 (verified: 263)
 
 _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf` (12), 4 `api` (16) and `sec` (13), 5 `mod` (12) and `lint` (12), 6 `anti` (12) and `style` (12), 7 `data` (12) and `proj` (7), 8 `conc` (12), `const` (7), and `conv` (9), 9 `io` (9), `num` (9), and `pat` (8), 10 `doc` (6), `ffi` (6), `mem` (7), `net` (7), `obs` (6), and `ui` (8). All 259 planned rules are authored; per-rule verification status is in each file._
 
@@ -93,12 +93,14 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 - [conv-regexp-test](conv-regexp-test.md) - Test for a match with RegExp.test
 - [conv-string-explicit](conv-string-explicit.md) - Convert to string with String, not empty-string concatenation
 
-## data - Data modeling and serialization (12)
+## data - Data modeling and serialization (14)
 
+- [data-balanced-postings](data-balanced-postings.md) - Balance ledger postings separately for each currency
 - [data-date-iso](data-date-iso.md) - Serialize timestamps as ISO 8601 UTC strings
 - [data-date-parse-check](data-date-parse-check.md) - Reject date strings that do not parse
 - [data-error-serialization](data-error-serialization.md) - Serialize errors with explicit fields
 - [data-explicit-wire-shape](data-explicit-wire-shape.md) - Serialize an explicit wire shape, not the domain object
+- [data-idempotency-payload](data-idempotency-payload.md) - Reject idempotency key reuse with a different request
 - [data-json-canonical](data-json-canonical.md) - Canonicalize JSON before hashing or signing it
 - [data-json-non-finite](data-json-non-finite.md) - Reject non-finite numbers before serializing
 - [data-json-special-values](data-json-special-values.md) - Convert Map, Set, and BigInt before JSON.stringify
@@ -112,8 +114,8 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 
 - [doc-comment-internal](doc-comment-internal.md) - Keep internal notes as line comments
 - [doc-example](doc-example.md) - Show usage in an example block
-- [doc-fileoverview](doc-fileoverview.md) - Open a module with a file overview
-- [doc-jsdoc-public](doc-jsdoc-public.md) - Document exported symbols with JSDoc
+- [doc-fileoverview](doc-fileoverview.md) - Add a file overview only for non-obvious module constraints
+- [doc-jsdoc-public](doc-jsdoc-public.md) - Document non-obvious public API contracts
 - [doc-jsdoc-tags](doc-jsdoc-tags.md) - Record parameter meaning with JSDoc tags
 - [doc-see-link](doc-see-link.md) - Connect related symbols with JSDoc links
 
@@ -221,7 +223,7 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 ## obs - Observability and logging (6)
 
 - [obs-interaction-id](obs-interaction-id.md) - Tag related log entries with an interaction identifier
-- [obs-log-error-object](obs-log-error-object.md) - Log the Error object, not its message
+- [obs-log-error-object](obs-log-error-object.md) - Log allowlisted error diagnostics, not raw Error objects
 - [obs-measure-duration](obs-measure-duration.md) - Record operation durations with performance marks
 - [obs-no-console-in-lib](obs-no-console-in-lib.md) - Do not write to the console from library code
 - [obs-no-pii](obs-no-pii.md) - Keep secrets and personal data out of logs
@@ -263,7 +265,7 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 - [proj-no-property-access-from-index-signature](proj-no-property-access-from-index-signature.md) - Access index-signature properties with brackets
 - [proj-no-unreachable-code](proj-no-unreachable-code.md) - Reject unreachable code
 
-## sec - Security (13)
+## sec - Security (14)
 
 - [sec-error-response-generic](sec-error-response-generic.md) - Return a generic error body to clients
 - [sec-fetch-credentials](sec-fetch-credentials.md) - Send credentials only same-origin with fetch
@@ -274,6 +276,7 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 - [sec-no-user-regex](sec-no-user-regex.md) - Escape user input before building a regular expression
 - [sec-postmessage-origin](sec-postmessage-origin.md) - Check event.origin before trusting a message
 - [sec-postmessage-target](sec-postmessage-target.md) - Pass an exact target origin to postMessage
+- [sec-project-scope](sec-project-scope.md) - Scope every vault lookup to the trusted project
 - [sec-secrets-from-env](sec-secrets-from-env.md) - Load secrets from the environment or a secret store, never source literals
 - [sec-secure-random](sec-secure-random.md) - Generate tokens with crypto.getRandomValues, not Math.random
 - [sec-timing-safe-compare](sec-timing-safe-compare.md) - Compare secrets with a constant-time function, not equality
@@ -294,7 +297,7 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 - [style-object-spread](style-object-spread.md) - Copy objects with spread, not Object.assign
 - [style-template-strings](style-template-strings.md) - Interpolate with template literals, not string concatenation
 
-## test - Testing (12)
+## test - Testing (13)
 
 - [test-assert-helper-throws](test-assert-helper-throws.md) - Make custom assertion helpers throw on failure
 - [test-assert-rejects](test-assert-rejects.md) - Assert rejections with a rejection assertion, not a try/catch flag
@@ -305,6 +308,7 @@ _Batches: 1 `err` (15), 2 `type` (16) and `async` (14), 3 `test` (12) and `perf`
 - [test-no-focus](test-no-focus.md) - Do not commit focused tests that skip the rest of the suite
 - [test-plan-assertions](test-plan-assertions.md) - Declare the expected assertion count so a silent test fails
 - [test-public-api](test-public-api.md) - Assert through the public API instead of private state
+- [test-sensitive-output](test-sensitive-output.md) - Fail leakage tests without printing the captured payload
 - [test-skip-reason](test-skip-reason.md) - Skip a test with a reason so the suite records why
 - [test-typed-fixtures](test-typed-fixtures.md) - Build complete typed fixtures instead of casting partial objects
 - [test-wait-for](test-wait-for.md) - Wait for the condition instead of sleeping a fixed time

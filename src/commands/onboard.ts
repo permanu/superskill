@@ -24,17 +24,14 @@ export async function onboard(options?: {
 }): Promise<OnboardResult> {
   const errors: string[] = [];
 
-  // 1. Determine vault path
   const vaultPath = options?.vaultPath ?? join(homedir(), "Vaults", "ai");
   if (!existsSync(vaultPath)) {
     mkdirSync(vaultPath, { recursive: true });
   }
 
-  // 2. Detect installed AI tools
   const detected = detectClients();
   const detectedNames = detected.map(d => d.config.name);
 
-  // 3. Configure each detected tool
   const configuredClients: string[] = [];
   for (const client of detected) {
     try {

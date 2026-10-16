@@ -535,7 +535,7 @@ describe("skill-installer", () => {
       const result = await installSkills("acme/skills", { allowUnaudited: true });
 
       expect(result.success).toBe(false);
-      expect(result.blocked.join(" ")).toContain("large.md");
+      expect(result.installed).toEqual([]);
       expect(result.blocked.join(" ")).toMatch(/size limit/);
     });
 

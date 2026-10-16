@@ -1,17 +1,17 @@
 # Atomic Rules — Authoring Contract
 
-**Version:** 1.0 (frozen 2026-10-04; verification clarifications 2026-10-14)
+**Version:** 1.1 (shared-control extension 2026-10-16)
 **Applies to:** `catalog/rules/**` and every authoring/verification agent.
 
 ## 0. What a rule is
 
-One rule = one falsifiable coding decision, expressed as an atomic, sourced, compilable artifact. Rules are never loaded in bulk; a deterministic router selects them per task. A rule that has not been adversarially verified does not ship as `verified`.
+One rule = one falsifiable decision, expressed as an atomic, sourced artifact. Language adapters have compilable examples; shared controls have language-neutral, concrete Bad/Good scenarios. Rules are never loaded in bulk; a deterministic router selects them per task. A rule that has not been adversarially verified does not ship as `verified`.
 
 Non-negotiables:
 
 1. One idea per file. Two ideas = two files.
 2. Every rule cites at least one primary source URL.
-3. Every Bad/Good snippet is self-contained and compiles (validator harness).
+3. Language Bad/Good snippets are self-contained and compile. Shared Bad/Good scenarios use `text`, state observable outcomes, and undergo independent adversarial review; they are not compiler evidence.
 4. No placeholders, no TODOs, no hedging in the summary.
 5. `status: draft` until an independent verifier flips it.
 
@@ -27,6 +27,8 @@ catalog/rules/<lang>/
 
 Language codes: `rust typescript python go swift java c cpp`.
 
+`catalog/rules/shared/` holds language-independent invariants once. Use `lang: shared`, `shared-<prefix>-<name>` IDs, `enforce: review`, and fenced `text` scenarios. No `tool` or `compile_exempt` claims. Each language can reference these IDs through `related`; keep only its implementation-specific mechanics and examples in the adapter. Referenced verified shared controls are loaded one hop, deduplicated and within the same budget when an adapter matches. Direct shared matches still require task/file triggers; neither project domain nor language selection bulk-loads this directory.
+
 ## 2. File names and IDs
 
 - File: `<prefix>-<name>.md`; `name` is kebab-case, unique within `lang + prefix`.
@@ -38,7 +40,7 @@ Language codes: `rust typescript python go swift java c cpp`.
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | id | string | yes | `<lang>-<prefix>-<name>`; must match path |
-| lang | enum | yes | rust/typescript/python/go/swift/java/c/cpp |
+| lang | enum | yes | rust/typescript/python/go/swift/java/c/cpp/shared |
 | prefix | string | yes | from taxonomy (section 6) |
 | title | string | yes | one sentence describing the decision (not the mechanism) |
 | severity | must/should/prefer | yes | must = correctness/safety/data loss; should = idiomatic default; prefer = taste |
@@ -77,7 +79,7 @@ Fenced code block with a complete, compilable recommended snippet (target ≤ 25
 - [<id>](<file>.md) - one clause on the relation
 ```
 
-- Exactly one `## Bad` and one `## Good`; each contains exactly one fenced code block whose language tag matches the rule's language.
+- Exactly one `## Bad` and one `## Good`; each contains exactly one non-empty fenced block. Language adapters use their language tag; shared controls use `text` with observable inputs/outcomes.
 - Snippets are complete at declaration level: no `...` elisions. Imports/includes only where needed. Snippets may be declaration-level (functions, types, methods); the harness wraps them as needed (Go `package main`, Java class/`main`, C/C++ `main` around statements). They must never rely on surrounding application context.
 - `## See Also` is present whenever anything related exists; omit only when genuinely nothing relates.
 
@@ -86,7 +88,7 @@ Fenced code block with a complete, compilable recommended snippet (target ≤ 25
 - At least one primary source per rule: official docs, official style guides/API guidelines, RFCs/JEPs/PEPs, standards drafts.
 - Blog posts and community articles are allowed only as secondary support; if a primary source does not back it, the rule stays `draft`.
 - URLs must resolve (fetched during authoring). Never invent URLs.
-- Cross-language claims do not exist: every language states its own version of a rule.
+- State a language-independent control once in `shared`; source and verify implementation-specific claims in language adapters. A shared scenario does not establish that every language implementation is correct.
 
 ## 6. Prefix taxonomy
 
@@ -98,7 +100,7 @@ Language extensions are allowed but must be declared in that language's `categor
 ## 7. Status lifecycle
 
 - `draft` — authored and passing the deterministic validator.
-- `verified` — an independent verifier (fresh context, adversarial prompt) has confirmed: (a) the Why matches the cited source; (b) both snippets compile and are idiomatic for the baseline; (c) the rule is not a duplicate; (d) the summary matches the body.
+- `verified` — an independent verifier (fresh context, adversarial prompt) has confirmed: (a) the Why matches the cited source; (b) both language snippets compile and are idiomatic, or shared text scenarios express a falsifiable invariant with concrete counterexamples; (c) the rule is not a duplicate; (d) the summary matches the body. Shared rules do not run through a language compiler and must not be reported as compiled.
 - Only `verified` rules are injected into model context by default; drafts are pull-only.
 
 ## 8. Baseline policy

@@ -2,7 +2,7 @@
 id: java-obs-log-throwable
 lang: java
 prefix: obs
-title: "Pass exceptions to the log call; never embed them in the message"
+title: "Log a bounded failure code instead of the Throwable"
 severity: should
 enforce: review
 baseline: latest
@@ -11,18 +11,20 @@ triggers:
   keywords: [exception, logging, throwable, stacktrace]
   files: ["**/*.java"]
   symbols: [Logger.log]
-related: [java-obs-logger-not-stdout, java-err-wrap-cause]
+related: [shared-obs-allowlisted-diagnostics, java-obs-logger-not-stdout, java-err-wrap-cause]
 sources:
+  - title: "OWASP Logging Cheat Sheet"
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
   - title: "Logger API"
     url: https://docs.oracle.com/en/java/javase/23/docs/api/java.logging/java/util/logging/Logger.html
   - title: "Java Logging Overview"
     url: https://docs.oracle.com/en/java/javase/23/core/java-logging-overview.html
 ---
-> Log the Throwable as an argument so handlers can render the stack trace and its cause chain.
+> Log an approved failure code and static event instead of passing arbitrary Throwables into logging handlers.
 
 ## Why
 
-The Logger API offers log(Level, String, Throwable) to log a message "with associated Throwable information", and handlers use that object to print the stack trace and the cause chain. String concatenation keeps only the message text: the frames, the suppressed exceptions, and the structured exception field are gone, and the Overview's own example passes the exception object — logger.log(Level.WARNING, "trouble sneezing", ex).
+The Throwable overload preserves exception messages, causes and suppressed exceptions, all of which can contain sensitive request data. Use a reviewed bounded code and a static event at the logging boundary; preserve causes internally without exporting them by default. Verify the configured formatter and sink do not add rejected exception fields back into the record.
 
 ## Bad
 
@@ -42,6 +44,7 @@ class Sync {
     }
 
     private void call(String endpoint) {
+        java.net.URI.create(endpoint);
     }
 }
 ```
@@ -59,16 +62,19 @@ class Sync {
         try {
             call(endpoint);
         } catch (RuntimeException e) {
-            LOG.log(Level.WARNING, "push failed", e);
+            String code = e instanceof IllegalArgumentException ? "INVALID_INPUT" : "PUSH_FAILED";
+            LOG.log(Level.WARNING, "push.failed code={0}", code);
         }
     }
 
     private void call(String endpoint) {
+        java.net.URI.create(endpoint);
     }
 }
 ```
 
 ## See Also
 
-- [java-obs-logger-not-stdout](obs-logger-not-stdout.md) - the logging call receiving the Throwable
-- [java-err-wrap-cause](err-wrap-cause.md) - preserving the chain the handler prints
+- [shared-obs-allowlisted-diagnostics](../shared/obs-allowlisted-diagnostics.md) - the diagnostic field policy applied by this adapter
+- [java-obs-logger-not-stdout](obs-logger-not-stdout.md) - routing approved events through logging handlers
+- [java-err-wrap-cause](err-wrap-cause.md) - preserving causes internally without exporting them

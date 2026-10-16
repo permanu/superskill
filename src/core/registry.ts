@@ -119,6 +119,15 @@ const WORKSPACE_PATH_SCHEMA: InputSchema = {
 
 export class CommandRegistry {
   private registrations = new Map<string, CommandRegistration>();
+  private readonly allowedTools: ReadonlySet<string> | undefined;
+
+  constructor(allowedTools?: readonly string[]) {
+    this.allowedTools = allowedTools === undefined ? undefined : new Set(allowedTools);
+  }
+
+  assertAllowed(name: string): void {
+    if (this.allowedTools && !this.allowedTools.has(name)) throw new VaultError("PERMISSION_DENIED", "Tool denied by host policy");
+  }
 
   register<TArgs, TResult>(name: string, registration: CommandRegistration<TArgs, TResult>): void {
     this.registrations.set(name, registration as CommandRegistration);
@@ -133,12 +142,14 @@ export class CommandRegistry {
   }
 
   validate(name: string, rawArgs: unknown): void {
+    this.assertAllowed(name);
     const reg = this.registrations.get(name);
     if (!reg) throw new VaultError("INVALID_ARGUMENT", `Unknown command: ${name}`);
     validateArguments(reg.toolDef.inputSchema, rawArgs);
   }
 
   async execute(name: string, rawArgs: unknown, ctx: CommandContext): Promise<unknown> {
+    this.assertAllowed(name);
     const reg = this.registrations.get(name);
     if (!reg) throw new VaultError("INVALID_ARGUMENT", `Unknown command: ${name}`);
     validateArguments(reg.toolDef.inputSchema, rawArgs);
@@ -150,6 +161,7 @@ export class CommandRegistry {
   getToolDefinitions(): MCPToolDefinition[] {
     const defs: MCPToolDefinition[] = [];
     for (const reg of this.registrations.values()) {
+      if (this.allowedTools && !this.allowedTools.has(reg.toolDef.name)) continue;
       defs.push(reg.toolDef);
     }
     return defs;
@@ -296,8 +308,8 @@ export function boundReadContent(content: string, maxBytes: unknown): string {
   return capResponseBytes(content, resolveReadMaxBytes(maxBytes));
 }
 
-export function createRegistry(): CommandRegistry {
-  const r = new CommandRegistry();
+export function createRegistry(allowedTools?: readonly string[]): CommandRegistry {
+  const r = new CommandRegistry(allowedTools);
 
   r.register("read", {
     handler: (async (args: { path: string; maxBytes: number }, ctx: CommandContext) => {

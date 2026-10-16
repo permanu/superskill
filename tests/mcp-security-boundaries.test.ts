@@ -72,6 +72,24 @@ describe("built MCP security boundaries", () => {
     return client;
   }
 
+  it("enforces host tool policy across calls and indirect resources", async () => {
+    const client = await connect(alpha, { SUPERSKILL_MCP_ALLOWED_TOOLS: JSON.stringify(["read", "project_context"]) });
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(["project_context", "read"]);
+    const allowed = await client.callTool({ name: "read", arguments: { path: "context.md" } });
+    expect(allowed.isError).not.toBe(true);
+    for (const request of [
+      { name: "write", arguments: { path: "denied.md", content: "must not persist" } },
+      { name: "skill_install", arguments: { source: "owner/repo" } },
+    ]) {
+      const denied = await client.callTool(request);
+      expect(denied.isError).toBe(true);
+      expect(JSON.stringify(denied)).toContain("PERMISSION_DENIED");
+    }
+    const sessions = await client.readResource({ uri: "vault://coordination/active-sessions" });
+    expect(JSON.stringify(sessions)).toContain("PERMISSION_DENIED");
+    await expect(readFile(join(vault, "projects/alpha/denied.md"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("denies unmapped vault and backlink access without disclosing sibling projects", async () => {
     const client = await connect(unmapped);
     for (const request of [

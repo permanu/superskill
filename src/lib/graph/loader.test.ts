@@ -278,7 +278,8 @@ describe("formatSystemBrief", () => {
     const neighborhood = loadNeighborhood(graph, ["code/typescript"]);
     const brief = formatSystemBrief(graph, neighborhood, "review", "review the auth diff");
     expect(brief).toContain("stack=[ts, react]");
-    expect(brief).toContain("test session");
+    expect(brief.includes("test session")).toBe(false);
+    expect(brief).toContain("[private task ");
     expect(brief).toContain("project_context");
     expect(brief).toContain("Review/security protocol");
   });

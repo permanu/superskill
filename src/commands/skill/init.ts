@@ -341,7 +341,7 @@ export async function initProject(
         type: "skill",
         id: item.id,
         source: "catalog",
-        audits: { gen: "pass", socket: "pass", snyk: "pass" },
+        audits: { gen: "unknown", socket: "unknown", snyk: "unknown" },
         installs: 0,
         stars: 0,
         w: 0.8,

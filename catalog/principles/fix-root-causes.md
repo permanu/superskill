@@ -6,16 +6,19 @@ triggers:
   keywords: [bug, root cause, regression, symptom, reproduce]
 enforce: review
 related: [principle-encode-lessons-in-structure, principle-evidence-hierarchy, principle-attack-the-premise]
+sources:
+  - title: Google SRE Book — Effective Troubleshooting
+    url: https://sre.google/sre-book/effective-troubleshooting/
 status: verified
 ---
-> Reproduce the failure, fix the layer that owns the broken invariant, and delete the workarounds.
+> Establish the causal evidence, fix the layer that owns the broken invariant, and retire workarounds whose purpose is gone.
 
 ## Patterns
 
-- Reproduce the failure with the smallest input and keep that reproduction; a fix without it is a guess.
+- Seek a small, safe reproduction and keep it. For intermittent or unsafe-to-repeat failures, preserve telemetry and state the remaining uncertainty; urgent mitigation need not wait for root-cause proof.
 - Trace to the first point where the value or decision diverges from its contract; the crash site is usually downstream of it.
 - Name the failed invariant and the layer that owns it, then fix that layer instead of every consumer that trips over it.
-- Delete the symptom workarounds — defensive copies, retries, extra checks — once the producer is correct.
+- Remove symptom workarounds only after verifying they serve no independent compatibility, reliability, or security requirement.
 - Search for sibling occurrences of the same defect pattern and fix or file each one.
 - When the true root is out of scope, say so, fix locally, and leave a tracked follow-up rather than mislabeling the symptom as the cause.
 - Keep the reproduction as a regression test at the lowest layer that can catch this class of failure.

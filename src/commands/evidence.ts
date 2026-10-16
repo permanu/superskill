@@ -11,6 +11,8 @@ import {
   type EvidenceRecord,
 } from "../lib/gates/evidence.js";
 import { parseTicket, resolveTicketPath } from "../lib/gates/tickets.js";
+import { scanForSecrets, formatSecretWarnings } from "../lib/secret-scanner.js";
+import { VaultError } from "../lib/vault-fs.js";
 
 export type EvidenceAction = "add" | "list";
 
@@ -51,6 +53,8 @@ export async function evidenceCommand(
       if (args.ts !== undefined && (typeof args.ts !== "string" || !args.ts.trim() || !Number.isFinite(Date.parse(args.ts)))) throw new Error("Evidence timestamp must be a valid date string");
       if (args.commit !== undefined && (typeof args.commit !== "string" || !args.commit.trim())) throw new Error("Evidence commit must be a non-empty string");
       if (args.output !== undefined && typeof args.output !== "string") throw new Error("Evidence output must be a string");
+      const secrets = scanForSecrets(`${args.command}\n${args.output ?? ""}`);
+      if (secrets.length > 0) throw new VaultError("SECRET_REJECTED", formatSecretWarnings(secrets));
 
       const ticketPath = await resolveTicketPath(ctx.vaultFs, ticketsDir, args.ticket);
       const ticket = parseTicket(await ctx.vaultFs.read(ticketPath), ticketPath);

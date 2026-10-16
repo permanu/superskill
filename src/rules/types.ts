@@ -12,6 +12,8 @@ export const RULE_LANGUAGES = [
 ] as const;
 
 export type RuleLanguage = (typeof RULE_LANGUAGES)[number];
+export const RULE_SCOPES = [...RULE_LANGUAGES, "shared"] as const;
+export type RuleScope = (typeof RULE_SCOPES)[number];
 
 export const RULE_SEVERITIES = ["must", "should", "prefer"] as const;
 
@@ -38,7 +40,7 @@ export interface RuleTriggers {
 
 export interface RuleFrontmatter {
   id: string;
-  lang: RuleLanguage;
+  lang: RuleScope;
   prefix: string;
   title: string;
   severity: RuleSeverity;
@@ -82,4 +84,8 @@ export interface ValidationReport {
 
 export function isRuleLanguage(value: unknown): value is RuleLanguage {
   return typeof value === "string" && (RULE_LANGUAGES as readonly string[]).includes(value);
+}
+
+export function isRuleScope(value: unknown): value is RuleScope {
+  return typeof value === "string" && (RULE_SCOPES as readonly string[]).includes(value);
 }

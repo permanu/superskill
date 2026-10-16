@@ -6,17 +6,20 @@ triggers:
   keywords: [outcome, done, acceptance, scope, goal]
 enforce: review
 related: [principle-evidence-hierarchy, principle-laziness-protocol, principle-never-block-on-the-human]
+sources:
+  - title: The 2020 Scrum Guide — Product Goal and Definition of Done
+    url: https://scrumguides.org/scrum-guide.html
 status: verified
 ---
 > Define done as an observable outcome and cut every activity that does not move toward it.
 
 ## Patterns
 
-- Write the acceptance outcome first: the observable state, command result, or artifact that means done.
+- State the acceptance outcome first, including required quality constraints: the observable state, command result, or artifact that means done.
 - Map every planned activity to that outcome; drop or defer the activities with no map.
 - Define done in observable terms — a response, a passing test, a report section — not activity terms.
 - Re-check scope against the outcome whenever work grows; new work either serves it or becomes a separate task.
-- Prefer the change with the fewest steps to the observable result; polish comes after the result exists.
+- Prefer a simple route that meets the outcome and quality obligations; usability, accessibility, and polish may be part of acceptance rather than optional follow-up.
 - Stop at done; further refinement is a new decision, not part of this task.
 - Report the outcome and its evidence; activity summaries are not completion.
 

@@ -15,11 +15,11 @@ sources:
   - title: OWASP Cheat Sheet Series - Logging
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 ---
-> Emit log records as objects with named fields instead of interpolating values into a sentence.
+> Emit allowlisted structured fields; structure alone does not make a payload safe to log.
 
 ## Why
 
-A formatted string cannot be filtered or aggregated by field, and the value boundaries blur. Structured records keep each attribute addressable by the logging system, which is the event-data shape the OWASP logging guidance describes.
+A formatted string cannot be filtered or aggregated by field. Structured records keep each attribute addressable, but arbitrary paths, URLs, identifiers and payload fields can leak secrets or personal data. Use static event names, route templates and allowlisted method/outcome values; omit raw inputs and errors by default.
 
 ## Bad
 
@@ -32,12 +32,13 @@ export function logRequest(method: string, path: string): void {
 ## Good
 
 ```typescript
-export function logRequest(method: string, path: string): void {
-  console.log(JSON.stringify({ event: "request", method, path }));
+export function logRequest(method: string): void {
+  const safeMethod = method === "GET" || method === "POST" ? method : "OTHER";
+  console.log(JSON.stringify({ event: "request", method: safeMethod, route: "/accounts/:id" }));
 }
 ```
 
 ## See Also
 
 - [typescript-obs-interaction-id](obs-interaction-id.md) - the field that correlates records
-- [typescript-obs-log-error-object](obs-log-error-object.md) - logging the error itself as a field
+- [typescript-obs-log-error-object](obs-log-error-object.md) - allowlisted error diagnostics

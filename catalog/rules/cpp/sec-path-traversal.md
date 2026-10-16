@@ -11,7 +11,7 @@ triggers:
   keywords: [path, traversal, canonical, filesystem]
   files: ["**/*.cpp", "**/*.hpp"]
   symbols: [std::filesystem::canonical]
-related: [cpp-sec-no-command-injection, cpp-io-no-toctou]
+related: [shared-sec-filesystem-containment, cpp-sec-no-command-injection, cpp-io-no-toctou]
 sources:
   - title: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
     url: https://cwe.mitre.org/data/definitions/22.html

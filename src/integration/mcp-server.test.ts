@@ -93,6 +93,11 @@ describe("MCP request boundaries", () => {
     expect(harness.registry!.get("evidence")!.handler).not.toHaveBeenCalled();
   });
 
+  it("marks unsuccessful skill delivery as a tool error", async () => {
+    vi.mocked(harness.registry!.get("superskill")!.handler).mockResolvedValue({ success: false, status: "blocked", skills_loaded: [] });
+    expect((await call("superskill", { task: "load a skill" })).isError).toBe(true);
+  });
+
   it("does not spend write budget on invalid requests", async () => {
     for (let index = 0; index < 35; index++) {
       expect(JSON.parse(text(await call("write", { path: "x.md" })))).toMatchObject({ error: "INVALID_ARGUMENT" });
@@ -138,12 +143,12 @@ describe("MCP request boundaries", () => {
         generate_context: { project_path: "/repo" }, impact: { target: "x.ts" }, claims: { claims: [] },
       };
       for (let index = 0; index < 10; index++) expect((await call(name, args[name])).isError).not.toBe(true);
-      expect(JSON.parse(text(await call(name, args[name])))).toMatchObject({ error: "RATE_LIMITED", message: expect.stringContaining("10 expensive") });
+      expect(JSON.parse(text(await call(name, args[name])))).toMatchObject({ error: "RATE_LIMITED", message: expect.stringContaining("Retry") });
       expect((await call("stats")).isError).not.toBe(true);
     },
   );
 
-  it("hides unexpected internal error details and logs them to stderr", async () => {
+  it("hides unexpected internal error details from responses and diagnostics", async () => {
     const failure = new Error("EACCES reading /Users/private/secret-vault/config.json");
     vi.mocked(harness.registry!.get("write")!.handler).mockRejectedValue(failure);
     const result = await call("write", { path: "x.md", content: "ok" });
@@ -151,14 +156,42 @@ describe("MCP request boundaries", () => {
     expect(JSON.parse(text(result))).toMatchObject({ error: "INTERNAL_ERROR" });
     expect(text(result)).not.toContain("/Users/private");
     expect(text(result)).not.toContain("EACCES");
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("[mcp-server]"), failure);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls).includes("/Users/private")).toBe(false);
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it("does not serialize credentials, PII, subprocess output or hostile error getters", async () => {
+    const sentinel = "synthetic-sensitive-canary";
+    const getter = vi.fn(() => { throw new Error(sentinel); });
+    const failures = [
+      Object.assign(new Error(sentinel, { cause: new Error(sentinel) }), { stdout: sentinel, stderr: sentinel, code: "EACCES" }),
+      { toString: getter, toJSON: getter, get message() { return getter(); } },
+    ];
+    for (const failure of failures) {
+      vi.mocked(harness.registry!.get("write")!.handler).mockRejectedValue(failure);
+      const result = await call("write", { path: "x.md", content: "ok" });
+      expect(text(result).includes(sentinel)).toBe(false);
+    }
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls).includes(sentinel)).toBe(false);
+    expect(getter).not.toHaveBeenCalled();
   });
 
   it("preserves actionable vault validation errors", async () => {
     vi.mocked(harness.registry!.get("write")!.handler).mockRejectedValue(new VaultError("PERMISSION_DENIED", "Path traversal not allowed"));
     expect(JSON.parse(text(await call("write", { path: "x.md", content: "ok" })))).toEqual({
-      error: "PERMISSION_DENIED", message: "Path traversal not allowed",
+      error: "PERMISSION_DENIED", message: "Access denied. Check project scope and path permissions.",
     });
+  });
+
+  it("does not echo sensitive paths or values through public error messages", async () => {
+    const sentinel = "synthetic-sensitive-canary";
+    for (const code of ["INVALID_ARGUMENT", "PERMISSION_DENIED", "FILE_NOT_FOUND", "SECRET_REJECTED"]) {
+      vi.mocked(harness.registry!.get("write")!.handler).mockRejectedValue(new VaultError(code, sentinel));
+      const result = await call("write", { path: "x.md", content: "ok" });
+      expect(JSON.parse(text(result)).error).toBe(code);
+      expect(text(result).includes(sentinel)).toBe(false);
+    }
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls).includes(sentinel)).toBe(false);
   });
 
   it("classifies invalid write modes as argument errors", async () => {
@@ -318,7 +351,8 @@ describe("MCP request boundaries", () => {
     } });
     expect(JSON.stringify(result)).not.toContain("/Users/private");
     expect(JSON.stringify(result)).toContain("INTERNAL_ERROR");
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("[mcp-server]"), failure);
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls).includes("/Users/private")).toBe(false);
+    expect(console.error).toHaveBeenCalled();
   });
 
   it.each(["inject-project-context", "summarize-session"])("validates project fields in the %s prompt", async name => {

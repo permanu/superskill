@@ -19,11 +19,11 @@ sources:
   - title: C++ Core Guidelines
     url: https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines
 ---
-> Handle, translate, or rethrow at every catch; an empty handler converts a failure into silent corruption.
+> Recover, translate, or rethrow caught failures; report unrecoverable failures at the terminating boundary instead of silently continuing.
 
 ## Why
 
-An exception carries the only record that an operation failed. Swallowing it lets execution continue with the postcondition broken, turning a local, diagnosable error into a remote wrong result. A terminating handler is acceptable only at a boundary that cannot propagate, and even there it must report the failure; otherwise the handler must rethrow or translate.
+Silently discarding an exception can hide that an operation failed to establish its postcondition. Recover only when the handler can restore a valid outcome; otherwise propagate or translate the failure. At the application boundary, report an unrecoverable failure with an approved event and return a failure status rather than continuing as though the operation succeeded.
 
 ## Bad
 
@@ -33,7 +33,9 @@ An exception carries the only record that an operation failed. Swallowing it let
 
 void log_line(const std::string& line) {
     try {
-        std::ofstream out("audit.log", std::ios::app);
+        std::ofstream out;
+        out.exceptions(std::ios::failbit | std::ios::badbit);
+        out.open("", std::ios::app);
         out << line << '\n';
     } catch (...) {
         // Bad: the log line is lost and no one knows.
@@ -44,22 +46,24 @@ void log_line(const std::string& line) {
 ## Good
 
 ```cpp
-#include <cerrno>
-#include <exception>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <system_error>
-
-void report_failure(const char* reason);
 
 void log_line(const std::string& line) {
+    std::ofstream out;
+    out.exceptions(std::ios::failbit | std::ios::badbit);
+    out.open("", std::ios::app);
+    out << line << '\n';
+    out.close();
+}
+
+int main() {
     try {
-        std::ofstream out("audit.log", std::ios::app);
-        out << line << '\n';
-        if (!out)
-            throw std::system_error(errno, std::generic_category(), "audit.log");
-    } catch (const std::exception& e) {
-        report_failure(e.what()); // report at the boundary that can
+        log_line("event");
+    } catch (...) {
+        std::cerr << "audit.write_failed\n";
+        return 1;
     }
 }
 ```

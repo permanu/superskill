@@ -23,7 +23,7 @@ sources:
 
 ## Why
 
-The exception object has a dynamic type, but a by-value handler constructs a new object of the static handler type, discarding the derived part and any message or data it carries. A `const&` handler binds to the original object, preserves overrides of `what()` and virtual dispatch, and avoids a copy that can itself throw. Catch by value only for small scalar-like error types.
+The exception object has a dynamic type, but a by-value base handler constructs a new object of the static handler type, discarding derived members and overrides. A `const&` handler binds to the original object, preserves virtual dispatch, and avoids a copy that can itself throw. Catch by value only for small scalar-like error types.
 
 ## Bad
 
@@ -40,7 +40,7 @@ int main() {
     try {
         throw ParseError{};
     } catch (std::runtime_error e) { // slicing copy
-        std::cout << e.what() << '\n';
+        std::cout << (dynamic_cast<const ParseError*>(&e) ? "PARSE_ERROR" : "OTHER_ERROR") << '\n';
     }
 }
 ```
@@ -59,8 +59,8 @@ public:
 int main() {
     try {
         throw ParseError{};
-    } catch (const std::exception& e) { // binds to the original object
-        std::cout << e.what() << '\n';
+    } catch (const std::runtime_error& e) {
+        std::cout << (dynamic_cast<const ParseError*>(&e) ? "PARSE_ERROR" : "OTHER_ERROR") << '\n';
     }
 }
 ```

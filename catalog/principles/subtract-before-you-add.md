@@ -6,15 +6,20 @@ triggers:
   keywords: [delete, simplify, dependency, abstraction, dead code]
 enforce: review
 related: [principle-laziness-protocol, principle-migrate-callers-then-delete, principle-minimize-reader-load]
+sources:
+  - title: Martin Fowler — Yagni
+    url: https://martinfowler.com/bliki/Yagni.html
+  - title: Google Engineering Practices — What to look for in a code review
+    url: https://google.github.io/eng-practices/review/reviewer/looking-for.html
 status: verified
 ---
-> Satisfy the requirement by deleting, reusing, or configuring before writing anything new.
+> Check whether deletion, reuse, or configuration meets the requirement before adding new machinery.
 
 ## Patterns
 
 - First pass: meet the requirement by deleting code, changing data or configuration, or reusing what already exists.
-- Read the diff in both directions; a change that adds more than it removes needs a stated reason.
-- Do not abstract for a single caller; inline the logic until a second real caller appears.
+- Review the maintenance cost of both additions and removals; net line count is not a quality metric.
+- Avoid abstractions for imagined callers; a single-caller abstraction can still clarify policy, isolate a boundary, or enforce an invariant.
 - Prefer the standard library or an existing in-repo utility over a new dependency; name what a new dependency replaces and what it costs.
 - Delete code, flags, and comments that this change orphans — a caller removed, a path made unreachable — instead of leaving them behind.
 - Place additions at the smallest fitting seam and follow the conventions already there.

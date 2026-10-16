@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-16
+
+### Added
+- Shared atomic-rule scope: eight language-independent security, logging, testing, audit and financial-integrity controls, referenced by adapters across all eight supported languages. Retrieval follows verified shared references one hop, deduplicates them and respects the same token budget. The catalog contains 2,257 atomic rules.
+- Lazy project-domain routing from jailed `context.md` frontmatter (`routing.domains`). Banking guidance loads for explicit banking work or an applicable banking project; ordinary ecommerce, accounting and unrelated documentation work do not automatically load banking methodology.
+- Task-routed comment-discipline, production-logging and banking packs, plus a compact universal safety/comment policy reserved even at the minimum activation budget.
+- Host-owned MCP tool allowlists (`SUPERSKILL_MCP_ALLOWED_TOOLS`) and skill bundle pins (`SUPERSKILL_SKILL_PINS`, `SUPERSKILL_REQUIRE_SKILL_PINS`). Tool policy is enforced before dispatch and at indirect resource/prompt boundaries.
+- A restricted retrieval/routing Docker profile and launcher in the repository checkout: digest-pinned base, read-only data mounts, no network egress, non-root execution, dropped capabilities, no-new-privileges and bounded resources. CI and release workflows run real kernel/MCP isolation smoke tests.
+- An external metadata-only audit supervisor for the restricted launcher. Exclusive writer locks, validated existing history, file/directory sync, bounded protocol framing and fail-closed forwarding protect evidence without collecting request or response payloads.
+
+### Changed
+- Skill activation reports `delivered`, `partial`, `missing`, `blocked`, `fallback` or `error`, with per-skill delivery and trust metadata. Missing specialists are disclosed rather than silently downloaded; zero delivered skills for a selected/requested set no longer report success.
+- Automatic graph task history uses process-keyed opaque labels by default, including minimization of legacy intents in the active graph on activation. `SUPERSKILL_RETAIN_TASK_TEXT=1` explicitly enables screened text retention; authored memories and external backups are not silently deleted.
+- Source-backed principles replace unsupported absolutes with applicable, reviewable guidance. Sixteen held principles were independently sourced and restored; all 25 principles have source metadata. Language-specific logging and documentation rules were revised and independently verified, including removal of blanket comment requirements where no project contract requires them.
+- Removed decorative/step-by-step production comments and redundant installer narratives while preserving meaningful contracts, safety rationale, tooling directives and licenses.
+
+### Security
+- Activation and direct skill/support-file inspection share trust checks. Non-catalog bundles undergo bounded whole-directory scans, file inventory/hash comparison and optional host-pin enforcement; modified, missing, additional or unsafe files are refused. Local manifests and bundled catalog entries are not presented as external attestations or script-execution authorization.
+- Prompt-injection screening normalizes tested Unicode/spacing variants and detects the reproduced authority-escalation wording. Scanning remains heuristic; the restricted runtime enforces permissions outside the model.
+- MCP exception responses and hardened diagnostics use fixed messages and allowlisted event/code fields. Secret findings no longer include source snippets; quoted credentials, credential URLs and Basic authentication detection were strengthened. Evidence input is scanned before truncation.
+- The restricted launcher refuses unsafe mount arguments, remote Docker endpoints, unapproved image pulls, unsafe audit locations and corrupted/partial audit history. Audit failure stops forwarding; arbitrary child diagnostics are withheld. Vault mutations and remote installation are deliberately unavailable in this profile.
+
+### Upgrade notes
+- Consumers should inspect activation `status`, delivery records and `isError` rather than treating a successful transport call as complete specialist coverage. Public error wording is intentionally less revealing.
+- Restart updated MCP processes to load the new behavior. The version change refreshes the indexed catalog; deliberately pinned installations remain pinned.
+- The restricted deployment assets are used from a repository checkout; see `docs/restricted-runtime.md`. Host/model permissions, storage retention and institutional compliance remain deployment responsibilities. This release does not claim a transactional banking writer or zero unknown vulnerabilities.
+- npm publication remains manual. The known upstream `sprintf-js` advisory in the unused YAML CLI dependency chain remains documented; no incompatible dependency downgrade or advisory suppression was applied.
+
+### Verification
+- The integrated suite passed 4,037 tests across 228 files with unchanged coverage thresholds. The script suite, rule schemas, native-skill authoring, package boundaries, grammar integrity and version parity are release gates.
+- Independent reviewers compiled the 24 revised Bad/Good snippets without skips and exercised targeted behavior; principle verification is source/applicability review, not a claim of measured model efficacy. The catalog-wide schema check retains 18 pre-existing compile-exemption warnings.
+- Live restricted-runtime tests prove eight kernel checks and real MCP denial, private routing-state, payload-free audit and audit-failure behavior using synthetic fixtures.
+
 ## [0.15.1] - 2026-10-14
 
 ### Fixed

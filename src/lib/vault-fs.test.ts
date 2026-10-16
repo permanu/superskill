@@ -124,7 +124,7 @@ describe("VaultFS", () => {
       const modules = join(vaultRoot, "worker-modules");
       await mkdir(modules);
       await writeFile(join(modules, "package.json"), '{"type":"module"}');
-      for (const name of ["vault-fs", "secret-scanner"]) {
+      for (const name of ["vault-fs", "secret-scanner", "safe-diagnostics"]) {
         const source = await readFile(new URL(`./${name}.ts`, import.meta.url), "utf-8");
         await writeFile(join(modules, `${name}.js`), transpileModule(source, { compilerOptions: { module: ModuleKind.ES2022, target: ScriptTarget.ES2022 } }).outputText);
       }

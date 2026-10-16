@@ -247,6 +247,6 @@ export interface NeighborhoodResult {
 }
 
 export interface ContentResult {
-  skills: Array<{ id: string; content: string; stale?: boolean }>;
+  skills: Array<{ id: string; content: string; stale?: boolean; trust?: import("../skill-trust.js").SkillTrust }>;
   warnings: string[];
 }

@@ -10,7 +10,7 @@ status: verified
 triggers:
   keywords: ["sensitive", "data", "log", "secrets", "pii", "redact", "skip", "them"]
   files: ["**/*.rs"]
-related: ["rust-obs-instrument-spans", "rust-obs-structured-fields", "rust-err-thiserror-lib"]
+related: ["shared-obs-allowlisted-diagnostics", "rust-obs-instrument-spans", "rust-obs-structured-fields", "rust-err-thiserror-lib"]
 sources:
   - title: "rust-skills: obs-no-sensitive-data"
     url: https://github.com/leonardomso/rust-skills/blob/master/rules/obs-no-sensitive-data.md

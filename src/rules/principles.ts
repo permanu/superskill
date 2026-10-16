@@ -209,13 +209,13 @@ function parseTriggers(raw: unknown, relPath: string, warnings: PrincipleWarning
   };
 }
 
-function countSources(raw: unknown): number {
+export function countPrincipleSources(raw: unknown): number {
   if (!Array.isArray(raw)) return 0;
   let count = 0;
   for (const item of raw) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
     const source = item as Record<string, unknown>;
-    if (asNonEmptyString(source.title) !== undefined || asNonEmptyString(source.url) !== undefined) {
+    if (asNonEmptyString(source.title) !== undefined && typeof source.url === "string" && /^https?:\/\/[^\s/]+(?:\/[^\s]*)?$/.test(source.url)) {
       count += 1;
     }
   }
@@ -277,15 +277,18 @@ async function parsePrincipleFile(
     warnings.push({ path: relPath, message: `invalid enforce '${enforceRaw}'; defaulting to 'review'` });
   }
 
+  const sourcesCount = countPrincipleSources(data.sources);
+  const effectiveStatus = status === "verified" && sourcesCount === 0 ? "draft" : status;
+  if (effectiveStatus !== status) warnings.push({ path: relPath, message: "verified principle has no valid primary-source metadata; treated as draft" });
   return {
     id,
     title,
     applyWhen,
     enforce,
-    status,
+    status: effectiveStatus,
     triggers: parseTriggers(data.triggers, relPath, warnings),
     related: [...new Set(asStringArray(data.related))],
-    sourcesCount: countSources(data.sources),
+    sourcesCount,
     body,
     path: relPath,
   };

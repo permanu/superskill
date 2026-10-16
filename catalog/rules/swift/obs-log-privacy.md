@@ -11,7 +11,7 @@ triggers:
   keywords: [logging, privacy, redaction, sensitive data]
   files: ["**/*.swift"]
   symbols: [Logger, privacy, public, private]
-related: [swift-obs-log-levels, swift-sec-keychain-secrets]
+related: [shared-obs-allowlisted-diagnostics, swift-obs-log-levels, swift-sec-keychain-secrets]
 sources:
   - title: Logger
     url: https://developer.apple.com/documentation/os/logger

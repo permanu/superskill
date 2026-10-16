@@ -6,6 +6,7 @@ triggers:
   keywords: [serialize]
 enforce: review
 status: verified
+sources: [{ title: Fixture specification, url: "https://example.test/spec" }]
 ---
 > Pin the wire format in one place and validate against it.
 

@@ -11,7 +11,7 @@ triggers:
   keywords: [logging, secrets, PII, LogValuer, redaction]
   files: ["**/*.go"]
   symbols: [slog.LogValuer]
-related: [go-obs-log-value-deferred, go-obs-slog-structured]
+related: [shared-obs-allowlisted-diagnostics, go-obs-log-value-deferred, go-obs-slog-structured]
 sources:
   - title: Package log/slog - LogValuer
     url: https://pkg.go.dev/log/slog

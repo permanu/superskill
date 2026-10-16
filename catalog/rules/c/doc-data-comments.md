@@ -2,7 +2,7 @@
 id: c-doc-data-comments
 lang: c
 prefix: doc
-title: Declare one object per line and comment what each one holds
+title: Document data invariants that names and types cannot express
 severity: should
 enforce: review
 baseline: latest
@@ -13,21 +13,26 @@ triggers:
   symbols: []
 related: [c-doc-what-not-how, c-doc-contract]
 sources:
+  - title: Google Engineering Practices - Comments
+    url: https://google.github.io/eng-practices/review/reviewer/looking-for.html
   - title: Linux kernel coding style - Commenting
     url: https://www.kernel.org/doc/html/latest/process/coding-style.html
 ---
-> Give each member and file-scope object its own declaration line with a comment describing its content.
+> Use descriptive field names and document non-obvious data invariants instead of repeating each declaration in prose.
 
 ## Why
 
-Types say `int`, but not whether it is bytes or elements, milliseconds or seconds, signed for a reason or by accident. One declaration per line leaves room for that comment and makes the diff clean when a member changes. Kernel style asks for exactly this: comment data, one declaration per line.
+Names can carry units and roles, while allocation, lifetime and layout invariants can require a real comment. Linux kernel style explicitly emphasizes data documentation; apply required project conventions without turning that advice into redundant prose for every field in every C project. Keep each declaration readable and reserve commentary for information a caller would otherwise have to guess.
 
 ## Bad
 
 ```c
 #include <stddef.h>
 
-struct limits { int min; int max; size_t bytes; };
+struct text_buffer {
+    char *data;
+    size_t capacity_bytes;
+};
 ```
 
 ## Good
@@ -35,10 +40,10 @@ struct limits { int min; int max; size_t bytes; };
 ```c
 #include <stddef.h>
 
-struct limits {
-    int min;      /* smallest accepted value */
-    int max;      /* largest accepted value */
-    size_t bytes; /* size of the backing buffer in bytes */
+struct text_buffer {
+    char *data;
+    /* Allocated bytes at data; at least one, with one reserved for the trailing NUL. */
+    size_t capacity_bytes;
 };
 ```
 

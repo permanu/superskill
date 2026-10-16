@@ -7,6 +7,7 @@ triggers:
   files: ["**/*.sql"]
 enforce: review
 status: verified
+sources: [{ title: Fixture specification, url: "https://example.test/spec" }]
 ---
 > Ship a rollback path with every schema change.
 

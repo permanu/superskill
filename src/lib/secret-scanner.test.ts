@@ -5,6 +5,22 @@ import { scanForSecrets, formatSecretWarnings } from "./secret-scanner.js";
 const UUID = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("scanForSecrets", () => {
+  it.each([
+    JSON.stringify({ password: "synthetic-short" }),
+    JSON.stringify({ access_token: "synthetic-token" }),
+    JSON.stringify({ clientSecret: "synthetic-value" }),
+    "postgres://user:synthetic-password@localhost/db",
+    "Authorization: Basic c3ludGhldGljOnRlc3Q=",
+  ])("detects structured credentials without returning source text", (content) => {
+    const matches = scanForSecrets(content);
+    expect(matches.length > 0).toBe(true);
+    expect(matches.every(match => match.snippet === "[redacted]")).toBe(true);
+  });
+
+  it("does not expose neighboring unrecognized sensitive data in a finding", () => {
+    const matches = scanForSecrets(`customer=synthetic-person sk-${"a".repeat(24)}`);
+    expect(matches.every(match => match.snippet === "[redacted]")).toBe(true);
+  });
   it("redacts every recognized secret from every snippet on a multi-secret line", () => {
     const openai = `sk-${"x".repeat(35)}`;
     const aws = `AKIA${"A".repeat(16)}`;
@@ -77,6 +93,7 @@ describe("scanForSecrets", () => {
       "passwordless login is enabled",
       "The token cache stores entries between runs.",
       "status: complete",
+      "Basic authentication requires careful credential handling.",
       "tokenizer = custom",
       "secret: this is prose, not a value",
     ].join("\n");

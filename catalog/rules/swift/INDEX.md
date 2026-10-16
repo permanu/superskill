@@ -120,7 +120,7 @@ This index covers batches 1-11 of the planned pack (`err`, `conc`, `type`, `arc`
 ## doc - Documentation (12)
 
 - [doc-callouts](doc-callouts.md) - mark warnings and notes with recognized callout bullets
-- [doc-every-declaration](doc-every-declaration.md) - write a documentation comment for every declaration
+- [doc-every-declaration](doc-every-declaration.md) - document non-obvious API contracts and required reference surfaces
 - [doc-local-comment](doc-local-comment.md) - use regular comments inside function bodies
 - [doc-markup](doc-markup.md) - format longer documentation with recognized markup elements
 - [doc-orphaned](doc-orphaned.md) - keep doc comments attached to their declaration

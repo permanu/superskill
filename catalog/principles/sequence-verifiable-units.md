@@ -6,6 +6,9 @@ triggers:
   keywords: [sequence, steps, commit, incremental, verify]
 enforce: both
 related: [principle-evidence-hierarchy, principle-migrate-callers-then-delete, principle-guard-the-context-window]
+sources:
+  - title: Google Engineering Practices — Small CLs
+    url: https://google.github.io/eng-practices/review/developer/small-cls.html
 status: verified
 ---
 > Land work in ordered units that each end in a runnable, verified state.
@@ -14,11 +17,11 @@ status: verified
 
 - Define each unit's check before starting it: the command, test, or observation that proves the unit works.
 - Order units so every boundary is coherent — the build passes, tests pass, and no caller is left broken.
-- Slice vertically: one requirement end to end beats one layer per step that cannot run until the last step.
-- Keep each unit reviewable alone; if its description needs "and", split it.
-- Run the unit's check before starting the next unit; a red result stops the sequence and becomes the next unit of work.
+- Prefer independently usable slices; horizontal or preparatory changes also work when each landing preserves system coherence.
+- Keep each unit focused on one coherent change, including its related tests; split by reviewability, not conjunctions or line-count quotas.
+- Run the unit's check before landing or relying on it; investigate failures while allowing genuinely independent work to continue.
 - Separate mechanical changes from behavioral ones so the behavioral diff stays small enough to verify.
-- When a unit cannot be made safe alone, name the sequence it belongs to and land the units in that order.
+- When a unit cannot be made safe alone, combine dependent edits or introduce a compatible preparatory step; ordering alone does not make a broken intermediate state safe.
 
 ## Tests
 

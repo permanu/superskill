@@ -6,5 +6,6 @@ triggers:
   keywords: [mismatch]
 enforce: review
 status: verified
+sources: [{ title: Fixture specification, url: "https://example.test/spec" }]
 ---
 > The id does not match the filename.

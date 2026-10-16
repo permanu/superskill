@@ -21,11 +21,13 @@ export const PROMPT_SCAN_NOTICE = "Prompt-injection scanning is heuristic; passi
  */
 export function scanForPromptInjection(content: string): ScanResult {
   const warnings: string[] = [];
+  content = content.normalize("NFKC").replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, "").replace(/[^\S\n]+/g, " ");
   const lower = content.toLowerCase();
 
   // Hard blocks — these should never appear in a skill file
   const blockedPatterns: Array<{ pattern: RegExp; reason: string }> = [
-    { pattern: /ignore (all |any )?(previous|prior|above) (instructions|prompts|context)/i, reason: "Prompt override attempt" },
+    { pattern: /ignore\s+(all\s+|any\s+)?(previous|prior|above)\s+(instructions|prompts|context)/i, reason: "Prompt override attempt" },
+    { pattern: /(?:treat|regard)\s+(?:this|the)\s+(?:document|skill|text)[\s\S]{0,80}(?:highest[- ]priority|override|supersed)/i, reason: "Instruction authority escalation" },
     { pattern: /forget (all |everything )?(you|your|previous)/i, reason: "Memory wipe attempt" },
     { pattern: /do not (tell|inform|reveal|mention|show) (the user|anyone)/i, reason: "Secrecy instruction — skills should be transparent" },
     { pattern: /exfiltrate|steal|extract.*secret|send.*to.*http/i, reason: "Data exfiltration pattern" },

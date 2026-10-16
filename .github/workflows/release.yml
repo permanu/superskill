@@ -34,10 +34,13 @@ jobs:
           test_files=(scripts/*.test.mjs scripts/skill-evals/*.test.mjs)
           node --test --test-concurrency=2 "${test_files[@]}"
       - run: npm run build
+      - run: node dist/rules/cli.js validate --no-compile
       - run: node scripts/check-skill-authoring.mjs
       - run: npm run verify:grammars
       - run: node scripts/verify-package.mjs
       - run: npm run test:coverage
+      - run: docker build -f deploy/Dockerfile -t superskill-restricted:local .
+      - run: node scripts/restricted-runtime.smoke.mjs
 
   github-release:
     needs: ci

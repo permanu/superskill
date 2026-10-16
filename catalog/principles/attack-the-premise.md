@@ -6,6 +6,9 @@ triggers:
   keywords: [premise, assumption, requirement, goal, scope]
 enforce: review
 related: [principle-exhaust-the-design-space, principle-never-block-on-the-human, principle-outcome-oriented-execution]
+sources:
+  - title: Google SRE Book — Effective Troubleshooting
+    url: https://sre.google/sre-book/effective-troubleshooting/
 status: verified
 ---
 > Identify the load-bearing assumption and try to kill it with evidence before building on it.
@@ -16,9 +19,9 @@ status: verified
 - Write the load-bearing premises down, each with the observation that would falsify it.
 - Make the cheapest falsifying observation first — logs, a query, upstream docs, a two-line spike — before the full build.
 - Distinguish constraints from habits: ask who pays if "must", "cannot", and "always" turn out false.
-- Include the null option: if changing nothing has no cost, the task is optional.
+- Include the null option and its costs, including missed benefits and explicit commitments; do not cancel an agreed task unilaterally.
 - On a false premise, report the finding with evidence and the alternative instead of building the wrong thing.
-- On a true premise, record it so the next reader does not relitigate it.
+- Record a supported premise with its evidence and limits; revisit it when the conditions change.
 
 ## Tests
 

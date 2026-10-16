@@ -3,7 +3,6 @@ import type { CommandContext } from "../core/types.js";
 import { resolveProject } from "../config.js";
 import { createFrontmatter, serializeFrontmatter, parseFrontmatter, mergeFrontmatter } from "../lib/frontmatter.js";
 
-// ── Repo State ──────────────────────────────────────────
 
 export interface RepoStateResult {
   path: string;
@@ -44,7 +43,6 @@ export async function snapshotRepoState(
   };
 }
 
-// ── Environment Facts ───────────────────────────────────
 
 export interface EnvFact {
   key: string;
@@ -128,7 +126,6 @@ export async function envFactsCommand(
   return { path: filePath, facts };
 }
 
-// ── Credential References ───────────────────────────────
 
 export interface CredRef {
   name: string;
@@ -212,7 +209,6 @@ export async function credRefsCommand(
   return { path: filePath, references: refs };
 }
 
-// ── Rollback Points ─────────────────────────────────────
 
 export interface RollbackPoint {
   commit_hash: string;

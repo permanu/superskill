@@ -2,7 +2,7 @@
 id: typescript-doc-fileoverview
 lang: typescript
 prefix: doc
-title: Open a module with a file overview
+title: Add a file overview only for non-obvious module constraints
 severity: prefer
 enforce: review
 baseline: latest
@@ -15,15 +15,16 @@ sources:
   - title: Google TypeScript Style Guide - @fileoverview JSDoc
     url: https://google.github.io/styleguide/tsguide.html
 ---
-> Start a module with a `@fileoverview` comment that states what the file is for.
+> Use `@fileoverview` only when a non-obvious module constraint cannot be conveyed by names and structure.
 
 ## Why
 
-A reader landing in an unfamiliar file sees symbols before context; the per-symbol docs do not say how the pieces relate or when the module is the right one to use. One overview line orients the file before the first declaration.
+Routine summaries duplicate filenames and symbols. Reserve an overview for a real architectural constraint or external dependency; do not add one to every module. Required API and tooling documentation keeps its syntax. Prefer no comment when the code already explains itself.
 
 ## Bad
 
 ```typescript
+/** @fileoverview Backoff timing helpers shared by the retry loop. */
 export function retryDelay(attempt: number): number {
   return attempt * 100;
 }
@@ -32,7 +33,6 @@ export function retryDelay(attempt: number): number {
 ## Good
 
 ```typescript
-/** @fileoverview Backoff timing helpers shared by the retry loop. */
 export function retryDelay(attempt: number): number {
   return attempt * 100;
 }

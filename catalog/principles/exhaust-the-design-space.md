@@ -6,6 +6,11 @@ triggers:
   keywords: [design, options, alternatives, tradeoff, decision]
 enforce: review
 related: [principle-attack-the-premise, principle-laziness-protocol, principle-redesign-from-first-principles]
+sources:
+  - title: Michael Nygard — Documenting Architecture Decisions
+    url: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
+  - title: Google SRE Book — Effective Troubleshooting
+    url: https://sre.google/sre-book/effective-troubleshooting/
 status: verified
 ---
 > Generate several genuinely different designs, compare them on named constraints, and record the losers.
@@ -13,9 +18,9 @@ status: verified
 ## Patterns
 
 - State the constraints first — load, latency, team, deadline, compatibility; options are only comparable against them.
-- Generate at least three options that differ in mechanism, including doing nothing and the simplest possible thing.
+- Compare plausible alternatives that differ in mechanism, including doing nothing and the simplest viable change where relevant; scale the search to the decision's cost rather than an option quota.
 - Sketch each option at interface level and name where it concentrates complexity.
-- Compare on named axes with units: cost, failure modes, migration path, and what each makes hard later.
+- Compare on named axes: cost, failure modes, migration path, and what each makes hard later; use units for measurable quantities.
 - Eliminate options with a stated reason, not a preference.
 - Record the decision and the rejected options together so they are not relitigated.
 - When two options survive, name the evidence that separates them and run the cheapest test.

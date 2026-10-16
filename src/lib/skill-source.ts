@@ -2,6 +2,7 @@ import { opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { catalogFile, catalogRoot } from "./catalog.js";
+import { logDiagnostic } from "./safe-diagnostics.js";
 
 const MAX_ID_LENGTH = 400;
 const MAX_NATIVE_DIRECTORIES = 1000;
@@ -31,12 +32,8 @@ function isMissing(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function logUnexpected(path: string, error: unknown): void {
-  if (!isMissing(error)) console.error(`[skill-source] failed to resolve ${path}: ${errorMessage(error)}`);
+function logUnexpected(error: unknown): void {
+  if (!isMissing(error)) logDiagnostic("skill.source-read-failed", error);
 }
 
 function within(root: string, path: string): boolean {
@@ -66,7 +63,7 @@ async function realpathOrNull(path: string): Promise<string | null> {
     return await realpath(path);
   } catch (error) {
     if (isMissing(error)) return null;
-    logUnexpected(path, error);
+    logUnexpected(error);
     throw error;
   }
 }
@@ -76,7 +73,7 @@ async function isDirectory(path: string): Promise<boolean> {
     return (await stat(path)).isDirectory();
   } catch (error) {
     if (isMissing(error)) return false;
-    logUnexpected(path, error);
+    logUnexpected(error);
     throw error;
   }
 }
@@ -86,7 +83,7 @@ async function isRegularFile(path: string): Promise<boolean> {
     return (await stat(path)).isFile();
   } catch (error) {
     if (isMissing(error)) return false;
-    logUnexpected(path, error);
+    logUnexpected(error);
     throw error;
   }
 }
@@ -108,7 +105,7 @@ async function findNativeSkillFile(
     entries = await opendir(root);
   } catch (error) {
     if (isMissing(error)) return null;
-    logUnexpected(root, error);
+    logUnexpected(error);
     throw error;
   }
 
@@ -121,7 +118,7 @@ async function findNativeSkillFile(
       if (nested !== null) return nested;
     }
   } catch (error) {
-    if (!isMissing(error)) logUnexpected(root, error);
+    if (!isMissing(error)) logUnexpected(error);
     throw error;
   }
   return null;
@@ -137,7 +134,7 @@ async function containedFile(
   if (file === null) return null;
   const allowedRoot = allowedRoots.find((root) => within(root, file));
   if (!allowedRoot) {
-    console.error(`[skill-source] rejected source outside allowed roots: ${path}`);
+    logDiagnostic("skill.source-rejected", undefined);
     return null;
   }
   if (!(await isRegularFile(file))) return null;
@@ -158,7 +155,7 @@ async function resolveNative(
     const resolvedRoot = await realpathOrNull(root);
     if (!resolvedRoot) continue;
     if (resolvedRoot !== root) {
-      console.error(`[skill-source] rejected symlinked source root: ${root}`);
+      logDiagnostic("skill.source-rejected", undefined);
       continue;
     }
     if (!(await isDirectory(root))) continue;
@@ -199,7 +196,7 @@ async function resolveCache(
   const source = await containedFile(id, "cache", path, roots);
   if (!source) return null;
   if (!roots.some((root) => source.file === join(root, owner, repo, name, "SKILL.md"))) {
-    console.error(`[skill-source] rejected cache source with mismatched identity: ${path}`);
+    logDiagnostic("skill.source-rejected", undefined);
     return null;
   }
   return source;

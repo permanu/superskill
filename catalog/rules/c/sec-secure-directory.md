@@ -11,7 +11,7 @@ triggers:
   keywords: [secure directory, permissions, TOCTOU, symlink]
   files: ["**/*.c", "**/*.h"]
   symbols: [stat, S_IWOTH, S_IWGRP]
-related: [c-sec-descriptor-identity, c-io-exclusive-create]
+related: [shared-sec-filesystem-containment, c-sec-descriptor-identity, c-io-exclusive-create]
 sources:
   - title: SEI CERT C - FIO15-C, ensure that file operations are performed in a secure directory
     url: https://cmu-sei.github.io/secure-coding-standards/sei-cert-c-coding-standard/recommendations/input-output-fio/fio15-c/

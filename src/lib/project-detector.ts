@@ -112,16 +112,7 @@ export async function getGitRoot(cwd: string): Promise<string | null> {
   }
 }
 
-/**
- * Detect the project slug from a working directory.
- *
- * Strategy:
- * 1. Strip worktree suffixes from cwd
- * 2. Try exact match in project-map.json
- * 3. Try matching cwd as a subdirectory of a mapped path
- * 4. Try git root as a mapped path
- * 5. Return null if no match
- */
+/** INFO: Explicit checkout mappings take precedence over inferred worktree aliases. */
 export async function detectProject(cwd: string, vaultPath: string): Promise<string | null> {
   const map = await loadProjectMap(vaultPath);
   const normalizedCwd = resolve(cwd);
@@ -132,10 +123,8 @@ export async function detectProject(cwd: string, vaultPath: string): Promise<str
   }
   const cleanCwd = stripWorktreeSuffix(normalizedCwd);
 
-  // Exact match
   if (map[cleanCwd]) return map[cleanCwd];
 
-  // Subdirectory match
   for (const [path, slug] of entries) {
     const rel = relative(path, cleanCwd);
     if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
@@ -143,7 +132,6 @@ export async function detectProject(cwd: string, vaultPath: string): Promise<str
     }
   }
 
-  // Git root match
   const gitRoot = await getGitRoot(cwd);
   if (gitRoot) {
     const cleanGitRoot = stripWorktreeSuffix(gitRoot);

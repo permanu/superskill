@@ -11,7 +11,7 @@ triggers:
   keywords: [path, traversal, normalize, validation]
   files: ["**/*.java"]
   symbols: [Path.normalize, Path.startsWith]
-related: [java-sec-zip-slip, java-io-path-resolve]
+related: [shared-sec-filesystem-containment, java-sec-zip-slip, java-io-path-resolve]
 sources:
   - title: "Path API"
     url: https://docs.oracle.com/en/java/javase/23/docs/api/java.base/java/nio/file/Path.html

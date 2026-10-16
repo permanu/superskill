@@ -11,7 +11,7 @@ triggers:
   keywords: [path traversal, resolve, containment, upload]
   files: ["**/*.py"]
   symbols: [Path.resolve, Path.is_relative_to]
-related: [python-sec-tempfile-secure]
+related: [shared-sec-filesystem-containment, python-sec-tempfile-secure]
 sources:
   - title: pathlib - Expanding and resolving paths
     url: https://docs.python.org/3/library/pathlib.html

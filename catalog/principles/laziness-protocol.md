@@ -1,11 +1,14 @@
 ---
 id: principle-laziness-protocol
-title: Defer work deliberately, never verification
+title: Defer speculative work without dropping current obligations
 apply_when: Apply when a decision, abstraction, or feature can be postponed without blocking current acceptance.
 triggers:
   keywords: [defer, premature, speculative, trigger, decision]
 enforce: review
 related: [principle-subtract-before-you-add, principle-exhaust-the-design-space, principle-never-block-on-the-human]
+sources:
+  - title: Martin Fowler — Yagni
+    url: https://martinfowler.com/bliki/Yagni.html
 status: verified
 ---
 > Do the least work that meets today's requirement; defer the rest with a named trigger.
@@ -13,11 +16,11 @@ status: verified
 ## Patterns
 
 - Ask which current acceptance criterion this work serves; a hypothetical future is not one.
-- Defer irreversible decisions to the last responsible moment; choose the cheap reversible option now and keep the decision visible.
+- Defer expensive commitments only while the cost of waiting is acceptable; account for lead time and keep the decision visible.
 - Build the concrete case first; build the general mechanism only when a real requirement demands it, not to cover imagined cases.
-- Stub the uncertain part behind the interface you already need so the decision can change without touching callers.
+- Isolate uncertainty behind an interface only when it serves the current design; do not ship a stub as completed required behavior.
 - Give every deferral a trigger — event, date, or condition — and record it; "later" is not a trigger.
-- Never defer verification, error handling, or security; laziness applies to scope, not to proof.
+- Preserve verification, error handling, and security obligations for the current scope; label any incomplete checks rather than claiming completion.
 - Record deferrals where the next reader will hit them, not in a distant backlog.
 
 ## Tests

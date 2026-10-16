@@ -104,7 +104,7 @@ Rules: 326 (verified: 326)
 - [doc-group](doc-group.md) - @defgroup and group markers for related declarations
 - [doc-no-restate](doc-no-restate.md) - no comments that repeat the code
 - [doc-params](doc-params.md) - @param and @return for every parameter and result
-- [doc-public-api](doc-public-api.md) - a doc block on every public declaration
+- [doc-public-api](doc-public-api.md) - document public contracts that declarations cannot convey
 - [doc-structural](doc-structural.md) - doc block in front of the declaration, not behind a structural command
 - [doc-throws](doc-throws.md) - document the exceptions a function may propagate
 - [doc-why](doc-why.md) - comments state intent, not mechanics
@@ -229,14 +229,14 @@ Rules: 326 (verified: 326)
 - [obs-atomic-lines](obs-atomic-lines.md) - serialize whole log lines under one mutex
 - [obs-clog-vs-cerr](obs-clog-vs-cerr.md) - clog for routine logs, cerr for immediate errors
 - [obs-error-code-message](obs-error-code-message.md) - report error_code::message(), not just the value
-- [obs-exception-what](obs-exception-what.md) - include e.what() in failure reports
+- [obs-exception-what](obs-exception-what.md) - classify exceptions without exporting arbitrary diagnostic text
 - [obs-format](obs-format.md) - std::format for compile-time-checked messages
-- [obs-nested-cause](obs-nested-cause.md) - walk the nested exception chain when reporting
+- [obs-nested-cause](obs-nested-cause.md) - bound and classify nested exception chains without logging messages
 - [obs-no-secrets](obs-no-secrets.md) - never log secrets or sensitive data
 - [obs-report-once](obs-report-once.md) - report a failure once, at the layer that handles it
 - [obs-source-location](obs-source-location.md) - capture the call site with std::source_location
 - [obs-system-clock](obs-system-clock.md) - system_clock for timestamps, steady_clock for durations
-- [obs-terminate-handler](obs-terminate-handler.md) - terminate handler reports the in-flight exception
+- [obs-terminate-handler](obs-terminate-handler.md) - keep termination diagnostics fixed and avoid dumping exception state
 - [obs-thread-id](obs-thread-id.md) - include the thread id in concurrent log lines
 
 ## pat - Architecture patterns (6)
@@ -311,7 +311,7 @@ Rules: 326 (verified: 326)
 
 - [sec-bounds-checked](sec-bounds-checked.md) - bounds-checked access for untrusted indices
 - [sec-crypto-random](sec-crypto-random.md) - cryptographic randomness for tokens and keys
-- [sec-error-message-leakage](sec-error-message-leakage.md) - generic user errors, detailed logs
+- [sec-error-message-leakage](sec-error-message-leakage.md) - map exceptions to generic responses at request boundaries
 - [sec-fd-cloexec](sec-fd-cloexec.md) - close-on-exec for sensitive descriptors
 - [sec-integer-overflow](sec-integer-overflow.md) - guard size arithmetic against wraparound
 - [sec-no-command-injection](sec-no-command-injection.md) - no untrusted input into a shell

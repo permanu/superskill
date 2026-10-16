@@ -4,7 +4,7 @@
 import { Command } from "commander";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RULE_LANGUAGES, type ValidationIssue, type ValidationReport } from "./types.js";
+import { RULE_SCOPES, type ValidationIssue, type ValidationReport } from "./types.js";
 import { validateAll, validatePack } from "./validate.js";
 
 export function applyValidationExitGates(
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   program
     .command("validate")
     .description("Validate rule files against docs/authoring/CONTRACT.md")
-    .option("--lang <lang>", `validate a single language pack (${RULE_LANGUAGES.join(", ")})`)
+    .option("--lang <lang>", `validate a language or shared pack (${RULE_SCOPES.join(", ")})`)
     .option("--json", "print the validation report as JSON")
     .option("--no-compile", "skip compiling Bad/Good snippets")
     .option("--strict", "exit non-zero when a snippet compile was skipped (missing toolchain)")
@@ -68,8 +68,8 @@ async function main(): Promise<void> {
       let report: ValidationReport;
       let label: string;
       if (options.lang) {
-        if (!(RULE_LANGUAGES as readonly string[]).includes(options.lang)) {
-          console.error(`Unknown language "${options.lang}". Valid languages: ${RULE_LANGUAGES.join(", ")}`);
+        if (!(RULE_SCOPES as readonly string[]).includes(options.lang)) {
+          console.error(`Unknown language "${options.lang}". Valid rule scopes: ${RULE_SCOPES.join(", ")}`);
           process.exitCode = 1;
           return;
         }

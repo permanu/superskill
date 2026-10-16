@@ -2,10 +2,9 @@
 id: swift-doc-every-declaration
 lang: swift
 prefix: doc
-title: Document every declaration
+title: Document non-obvious API contracts and required reference surfaces
 severity: should
-enforce: both
-tool: swiftlint:missing_docs
+enforce: review
 baseline: latest
 status: verified
 triggers:
@@ -13,41 +12,35 @@ triggers:
   files: ["**/*.swift"]
 related: [swift-doc-summary-fragment, swift-doc-orphaned]
 sources:
+  - title: Google Engineering Practices - Comments and Documentation
+    url: https://google.github.io/eng-practices/review/reviewer/looking-for.html
   - title: Swift API Design Guidelines
     url: https://www.swift.org/documentation/api-design-guidelines/
   - title: SwiftLint - missing_docs
     url: https://realm.github.io/SwiftLint/missing_docs.html
 ---
-> Write a documentation comment for every declaration.
+> Respect required API documentation coverage; otherwise document non-obvious contracts rather than narrating every declaration.
 
 ## Why
 
-The API Design Guidelines require a documentation comment for every declaration, because the insights gained while writing it surface design problems early. A declaration whose purpose cannot be stated in a summary is a declaration that needs redesign, not a missing comment. SwiftLint's opt-in `missing_docs` rule flags undocumented `open` and `public` declarations; the remaining declarations rely on review.
+Swift's API guidelines explicitly recommend a documentation comment for every declaration, citing its value in API design; the opt-in SwiftLint rule can enforce a project's chosen reference coverage. This rule adapts that broad recommendation to projects with a minimal-comment policy: prefer clear names, then document ownership, lifetime and other contracts the signature cannot express. Preserve required project documentation coverage without treating an optional linter as universally enabled. The examples assume no blanket documentation requirement.
 
 ## Bad
 
 ```swift
-public struct Temperature {
-    public var celsius: Double
-
-    public func fahrenheit() -> Double {
-        celsius * 9 / 5 + 32
-    }
+public final class Counter {
+    public var value = 0
+    public func makeLiveReader() -> () -> Int { { self.value } }
 }
 ```
 
 ## Good
 
 ```swift
-/// A temperature value stored in degrees Celsius.
-public struct Temperature {
-    /// The temperature in degrees Celsius.
-    public var celsius: Double
-
-    /// Returns the temperature converted to degrees Fahrenheit.
-    public func fahrenheit() -> Double {
-        celsius * 9 / 5 + 32
-    }
+public final class Counter {
+    public var value = 0
+    /// Returns a live reader that strongly retains this counter for its lifetime.
+    public func makeLiveReader() -> () -> Int { { self.value } }
 }
 ```
 

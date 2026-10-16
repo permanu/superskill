@@ -3,6 +3,7 @@
 import type { Graph, SkillNode, ProjectSkillEdge, ProjectPhase, SkillPack, ProjectNode } from "./schema.js";
 import { findNodes, findNode } from "./store.js";
 import { inferPhase } from "../../rules/router.js";
+import { bankingApplies } from "../project-routing.js";
 
 const LANG_ALIAS: Record<string, string> = {
   ts: "typescript",
@@ -17,6 +18,7 @@ const LANG_ALIAS: Record<string, string> = {
 export interface RoutingContext {
   files?: readonly string[];
   phase?: ProjectPhase;
+  domains?: readonly string[];
 }
 
 const FILE_LANGUAGES: Record<string, string> = {
@@ -219,7 +221,7 @@ export function packsToLoad(task: string, phase: ProjectPhase, files: readonly s
     packs.add("review");
   }
   const lower = task.toLowerCase();
-  if (/(pentest|owasp|soc2|iso\b|compliance|audit|cve|xss|csrf|idor)/.test(lower)) packs.add("security");
+  if (/(pentest|owasp|soc2|iso\b|compliance|audit|cve|xss|csrf|idor|\bbanks?\b|banking|fintech|financial|payments|ledger|logging|leakage|redaction|secrets|diagnostics|snapshots|artifacts|telemetry)/.test(lower)) packs.add("security");
   if (isSecurityIncident(task)) {
     packs.add("security");
     packs.add("review");
@@ -269,6 +271,7 @@ export function alwaysOnSkillIds(graph: Graph, task: string, context: RoutingCon
   const keywords = extractKeywords(task);
   return findNodes<SkillNode>(graph, "skill")
     .filter((s) => s.always === true)
+    .filter((s) => s.id !== "security/banking" || bankingApplies(task, context))
     .filter((s) => !s.pack || alwaysPacks.has(s.pack))
     .filter((s) => alwaysSkillApplies(s, task, context.files ?? []))
     .filter((s) => langOk(s, stack, keywords))
@@ -309,6 +312,7 @@ export function matchTask(task: string, graph: Graph, context: RoutingContext = 
   for (const [id, hits] of matchCount) {
     const skill = skillById.get(id);
     if (!skill) continue;
+    if (skill.id === "security/banking" && !bankingApplies(task, context)) continue;
     if (!langOk(skill, stack, keywords)) continue;
     if (skill.id === "pipeline/qa" && !isGraphNoteQaTask(task, context.files)) continue;
     if (skill.id === "ui/foundations" && !task.toLowerCase().includes(skill.id) && !isUiFoundationTask(task, context.files ?? [])) continue;

@@ -192,7 +192,8 @@ describe("activateSkills rule integration", () => {
     expect(first.skills_loaded).toEqual([]);
     expect(first.matched_skill_ids).toEqual([]);
     expect(first.total_tokens).toBe(first.usedTokens);
-    expect(first.warnings).toEqual([]);
+    expect(first.status).toBe("fallback");
+    expect(first.warnings).toContainEqual(expect.stringContaining("MISSING: code/typescript"));
     expect(first.orchestration?.entry).toBe("superskill");
   });
 
@@ -364,7 +365,8 @@ describe("activateSkills rule integration", () => {
     expect(orchestrationAt).toBeGreaterThan(briefAt);
     expect(ruleAt).toBeGreaterThan(orchestrationAt);
     expect(skillAt).toBeGreaterThan(ruleAt);
-    expect(result.skills_loaded).toEqual([{ id: skillId, source: "graph" }]);
+    expect(result.skills_loaded).toHaveLength(1);
+    expect(result.skills_loaded[0]).toMatchObject({ id: skillId, source: "graph", trust: { execution: "not-authorized" } });
     expect(result.matched_skill_ids).toEqual([skillId]);
   });
 
@@ -433,7 +435,7 @@ describe("activateSkills rule integration", () => {
     await mkdir(principlesRoot, { recursive: true });
     await writeFile(
       join(principlesRoot, "heavy-parse.md"),
-      `---\nid: principle-heavy-parse\ntitle: Heavy parse principle\napply_when: Apply when parsing heavy input.\ntriggers:\n  keywords: [heavyparse]\nenforce: review\nstatus: verified\n---\n\n${"x".repeat(12_000)}`,
+      `---\nid: principle-heavy-parse\ntitle: Heavy parse principle\napply_when: Apply when parsing heavy input.\ntriggers:\n  keywords: [heavyparse]\nenforce: review\nstatus: verified\nsources: [{title: Fixture, url: "https://example.test/spec"}]\n---\n\n${"x".repeat(12_000)}`,
       "utf-8",
     );
     const { principles } = await loadPrinciples(principlesRoot);

@@ -5,6 +5,7 @@ import { join, resolve, relative, dirname, basename, isAbsolute, sep } from "pat
 import { randomUUID } from "crypto";
 import { homedir, hostname } from "os";
 import { scanForSecrets, formatSecretWarnings } from "./secret-scanner.js";
+import { logDiagnostic } from "./safe-diagnostics.js";
 
 const VAULT_AUDIT_MAX_BYTES = 5 * 1024 * 1024;
 const VAULT_READ_MAX_BYTES = 10 * 1024 * 1024;
@@ -50,11 +51,11 @@ async function appendVaultWriteAudit(entry: VaultWriteAuditEntry): Promise<void>
       const info = await stat(file);
       if (info.size >= VAULT_AUDIT_MAX_BYTES) await rename(file, `${file}.1`);
     } catch (e: any) {
-      if (e.code !== "ENOENT") console.error("[vault-fs] audit rotation failed:", e);
+      if (e.code !== "ENOENT") logDiagnostic("vault.audit-rotation-failed", e);
     }
     await appendFile(file, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
   } catch (e) {
-    console.error("[vault-fs] audit write failed:", (e as Error).message);
+    logDiagnostic("vault.audit-write-failed", e);
   }
 }
 
@@ -253,7 +254,7 @@ export class VaultFS {
       try {
         if (tempInfo) await this.unlinkSameInode(temp, tempInfo);
       } catch (e) {
-        console.error("[vault-fs] Could not remove temporary file:", e);
+        logDiagnostic("vault.temp-cleanup-failed", e);
       }
       await lock.release();
     }
@@ -334,7 +335,7 @@ export class VaultFS {
       try {
         if (tempInfo) await this.unlinkSameInode(temp, tempInfo);
       } catch (e) {
-        console.error("[vault-fs] Could not remove temporary file:", e);
+        logDiagnostic("vault.temp-cleanup-failed", e);
       }
       await lock.release();
     }
@@ -420,7 +421,7 @@ export class VaultFS {
         return false;
       } catch (e: any) {
         if (e.code === "ESRCH") return true;
-        if (e.code !== "EPERM") console.error("[vault-fs] lock owner probe failed:", e);
+        if (e.code !== "EPERM") logDiagnostic("vault.lock-probe-failed", e);
         return false;
       }
     }
@@ -492,7 +493,7 @@ export class VaultFS {
             const now = new Date();
             await handle.utimes(now, now);
           }
-        }).catch((e) => { console.error("[vault-fs] lock heartbeat failed:", e); });
+        }).catch((e) => { logDiagnostic("vault.heartbeat-failed", e); });
       }, MUTATION_LOCK_LEASE_MS / 3);
       timer.unref();
       return {
@@ -603,7 +604,7 @@ export class VaultFS {
       try {
         bytes = (await stat(abs)).size;
       } catch (e: any) {
-        if (e.code !== "ENOENT") console.error("[vault-fs] delete audit size unavailable:", e);
+        if (e.code !== "ENOENT") logDiagnostic("vault.delete-size-failed", e);
       }
       await unlink(abs);
       await appendVaultWriteAudit(this.auditEntry("delete", relativePath, bytes, "clean"));
@@ -634,7 +635,7 @@ export class VaultFS {
       try {
         bytes = (await stat(absTo)).size;
       } catch (e: any) {
-        if (e.code !== "ENOENT") console.error("[vault-fs] move audit size unavailable:", e);
+        if (e.code !== "ENOENT") logDiagnostic("vault.move-size-failed", e);
       }
       await appendVaultWriteAudit({ ...this.auditEntry("move", newRelativePath, bytes, "clean"), from: relativePath });
     } catch (e: any) {

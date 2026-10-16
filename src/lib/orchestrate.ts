@@ -3,6 +3,7 @@
 // packs are the specialists. Sequence is not a waterfall.
 
 import { isGraphNoteQaTask, routingStack, type RoutingContext } from "./graph/router.js";
+import { bankingApplies } from "./project-routing.js";
 
 export interface Specialist {
   agent: string;
@@ -28,6 +29,7 @@ type Rule = {
 };
 
 const RULES: Rule[] = [
+  { agent: "logging", pack: "security/logging", reason: "diagnostic and test leakage", re: /\b(logging|logs|leakage|redaction|secrets|diagnostics|snapshots|artifacts|telemetry)\b/i },
   { agent: "investigate", pack: "pipeline/investigate", reason: "failure/incident language", re: /\b(bug|fail|error|crash|flake|incident|regress)\b/i },
   { agent: "ui", pack: "ui/review", reason: "application browser/e2e QA", re: /\b(e2e|browser|click(?:through|ing|ed)?|playwright|cypress|webdriver|visual)\b/i },
   { agent: "optimizer", pack: "optimizer/algorithm", reason: "algorithmic/concurrency work", re: /\b(algorithm\w*|complexity|big[- ]?o|concurren\w*|parallel\w*|race condition|deadlock|performance|optimi[sz]\w*|throughput|hot path|hld|lld)\b/i },
@@ -61,6 +63,7 @@ export function planDelegation(task: string, stack: string[] = [], context: Rout
 
   if (context.phase === "review") add({ agent: "review", pack: "review/architect", reason: "review phase" });
   if (context.phase === "ship") add({ agent: "platform", pack: "devops/cloud", reason: "ship phase" });
+  if (bankingApplies(task, context)) add({ agent: "banking", pack: "security/banking", reason: "banking task or explicit project routing domain" });
 
   const graphNoteQa = isGraphNoteQaTask(task, context.files);
   if (graphNoteQa) add({ agent: "qa", pack: "pipeline/qa", reason: "generated graph-note QA" });

@@ -6,6 +6,11 @@ triggers:
   keywords: [redesign, refactor, legacy, requirements, interface]
 enforce: review
 related: [principle-exhaust-the-design-space, principle-subtract-before-you-add, principle-model-the-domain]
+sources:
+  - title: Martin Fowler — Strangler Fig
+    url: https://martinfowler.com/bliki/StranglerFigApplication.html
+  - title: Michael Nygard — Documenting Architecture Decisions
+    url: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
 status: verified
 ---
 > Restate what the component owes its callers, derive the ideal shape, then migrate toward it.
@@ -14,8 +19,8 @@ status: verified
 
 - Write the component's obligations — inputs, outputs, invariants, failure modes, load — without reference to the current implementation.
 - Sketch the interface you would build today if nothing existed, and name the complexity each current element adds.
-- Classify every existing element as requirement, accident, or history; keep only what earns its place.
-- Redesign the boundary first; internals can follow behind a stable interface.
+- Investigate why existing elements exist before classifying them as requirements or historical accidents; undocumented compatibility can still be an obligation.
+- Identify a stable seam for incremental replacement; change a public boundary only when the requirements justify migrating its callers.
 - Derive the migration as ordered safe steps — strangler or parallel change — from the current shape to the target.
 - Record the target design and why the current one fails so the migration survives its author.
 - Do not rewrite for novelty; the goal is fit to the obligations, not newness.

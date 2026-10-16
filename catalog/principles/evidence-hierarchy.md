@@ -6,19 +6,24 @@ triggers:
   keywords: [evidence, proof, test, verification, claim, status]
 enforce: both
 related: [principle-test-behavior-not-implementation, principle-fix-root-causes, principle-explain-the-number]
+sources:
+  - title: Google SRE Book — Effective Troubleshooting
+    url: https://sre.google/sre-book/effective-troubleshooting/
+  - title: Google Engineering Practices — What to look for in a code review
+    url: https://google.github.io/eng-practices/review/reviewer/looking-for.html
 status: verified
 ---
 > Match every claim to the strongest evidence available and report it with its source.
 
 ## Patterns
 
-- State the claim, then the evidence: "fixed" is a command output, not a reading of the diff.
-- Prefer evidence that exercises the claim end to end: a run beats a test, a test beats a type check, a type check beats a lint pass, and all of them beat inspection.
+- State the claim, then its evidence; a passing command supports only the behavior or property it checks.
+- Match the method to the claim: runtime tests for exercised behavior, type checks for encoded constraints, and inspection for design reasoning. No fixed ranking makes an unrelated end-to-end run stronger than a targeted check.
 - Quote the command, the revision, and the observed line — the first failure or the pass summary.
 - Take evidence from this revision and this environment; a result from another branch proves another branch.
-- Use the pipeline's own command; a custom invocation proves less about what CI will see.
-- Label weak evidence as weak; inspection never masquerades as a run.
-- For negative claims, show the search: the pattern and scope that found no other callers.
+- Use the pipeline's own command when claiming CI parity; label focused checks with their narrower scope.
+- State evidence limits; inspection never masquerades as a run, and one successful run does not prove absence of races.
+- For search-based negative claims, show the pattern and scope; no matches do not rule out dynamic or external callers.
 - Keep the raw artifact addressable so a reviewer can check the claim without re-running it.
 
 ## Tests

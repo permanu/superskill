@@ -38,7 +38,6 @@ function hasEnvPrefix(prefix: string): boolean {
 }
 
 export function detectTool(): DetectedTool {
-  // ── Claude Code ──────────────────────────────────────
   if (
     getEnv('CLAUDE_CODE') ||
     getEnv('CLAUDE_CODE_VAULT_PATH') ||
@@ -60,49 +59,41 @@ export function detectTool(): DetectedTool {
     };
   }
 
-  // ── OpenCode ─────────────────────────────────────────
   if (hasEnvPrefix('OPENCODE_')) {
     const model = getEnv('OPENCODE_MODEL') ?? undefined;
     return { tool: 'opencode', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Cursor ───────────────────────────────────────────
   if (hasEnvPrefix('CURSOR_')) {
     const model = getEnv('CURSOR_MODEL') ?? undefined;
     return { tool: 'cursor', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Codex ────────────────────────────────────────────
   if (hasEnvPrefix('CODEX_')) {
     const model = getEnv('CODEX_MODEL') ?? getEnv('OPENAI_MODEL') ?? undefined;
     return { tool: 'codex', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Gemini CLI ───────────────────────────────────────
   if (hasEnvPrefix('GEMINI_')) {
     const model = getEnv('GEMINI_MODEL') ?? undefined;
     return { tool: 'gemini-cli', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Windsurf ──────────────────────────────────────────
   if (hasEnvPrefix('WINDSURF_') || hasEnvPrefix('CODEIUM_')) {
     const model = getEnv('WINDSURF_MODEL') ?? undefined;
     return { tool: 'windsurf', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Aider ─────────────────────────────────────────────
   if (hasEnvPrefix('AIDER_')) {
     const model = getEnv('AIDER_MODEL') ?? undefined;
     return { tool: 'aider', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Continue ──────────────────────────────────────────
   if (hasEnvPrefix('CONTINUE_')) {
     const model = getEnv('CONTINUE_MODEL') ?? undefined;
     return { tool: 'continue', model, contextWindow: lookupContextWindow(model) };
   }
 
-  // ── Unknown / fallback ───────────────────────────────
   return { tool: 'unknown', contextWindow: CONTEXT_WINDOWS['default'] };
 }
 

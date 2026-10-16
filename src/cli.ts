@@ -101,7 +101,6 @@ export function createProgram(): Command {
     "\nAI clients launch `superskill` with no arguments as the MCP server; run `superskill <command>` for the CLI.\n`superskill-cli` remains a permanent alias."
   );
 
-  // ── read ──────────────────────────────────────────────
   program
     .command("read <path>")
     .description("Read a vault note or directory")
@@ -127,7 +126,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── list ──────────────────────────────────────────────
   program
     .command("list <path>")
     .description("List vault directory")
@@ -146,7 +144,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── write ─────────────────────────────────────────────
   program
     .command("write <path>")
     .description("Write/create a vault note")
@@ -181,7 +178,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── append ────────────────────────────────────────────
   program
     .command("append <path>")
     .description("Append to an existing vault note")
@@ -197,7 +193,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── search ────────────────────────────────────────────
   program
     .command("search <query>")
     .description("Search the vault")
@@ -221,7 +216,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── context ───────────────────────────────────────────
   program
     .command("context")
     .description("Get project context (auto-detects from cwd)")
@@ -247,7 +241,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── init ──────────────────────────────────────────────
   program
     .command("init <project-path>")
     .description("Draft a vault context.md from a repo scan (does not set up skill routing — use `skill init`)")
@@ -269,7 +262,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── onboard ───────────────────────────────────────────
   program
     .command("onboard")
     .description("Set up SuperSkill for all detected AI tools")
@@ -296,7 +288,6 @@ export function createProgram(): Command {
       console.log("    superskill skill status            Show graph state\n");
     });
 
-  // ── decide ────────────────────────────────────────────
   program
     .command("decide")
     .description("Log an architecture decision record")
@@ -324,7 +315,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── task ──────────────────────────────────────────────
   const taskCmd = program
     .command("task")
     .description("Manage project tasks (kanban board)");
@@ -473,7 +463,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── learn ─────────────────────────────────────────────
   const learnCmd = program
     .command("learn")
     .description("Capture and query learnings");
@@ -546,7 +535,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── brainstorm ────────────────────────────────────────
   program
     .command("brainstorm <topic>")
     .description("Start or continue a brainstorm")
@@ -567,7 +555,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── session ───────────────────────────────────────────
   const sessionCmd = program
     .command("session")
     .description("Manage agent sessions (swarming coordination)");
@@ -675,7 +662,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── graph ─────────────────────────────────────────────
   const graphCmd = program
     .command("graph")
     .description("Knowledge graph traversal");
@@ -920,7 +906,6 @@ export function createProgram(): Command {
     return parsed as Array<Record<string, unknown>>;
   }
 
-  // ── link ─────────────────────────────────────────────
   program
     .command("link <source> <target>")
     .description("Create a forward [[wikilink]] between vault notes")
@@ -937,7 +922,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── extract ──────────────────────────────────────────
   program
     .command("extract <source>")
     .description("Extract items from a source note into individual vault files")
@@ -956,7 +940,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── capture ──────────────────────────────────────────
   program
     .command("capture")
     .description("Batch-capture insights into individual vault items")
@@ -981,7 +964,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── template ─────────────────────────────────────────
   program
     .command("template [type]")
     .description("List vault item templates or render one (adr, prd, learning, spec, ...)")
@@ -1011,7 +993,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── snapshot ─────────────────────────────────────────
   program
     .command("snapshot")
     .description("Snapshot repository state (branch, dirty files, last commit) into the vault")
@@ -1036,7 +1017,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── env-facts ────────────────────────────────────────
   const envFactsCmd = program
     .command("env-facts")
     .description("Store and query stable environment facts (not secrets)");
@@ -1080,7 +1060,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── cred-refs ────────────────────────────────────────
   const credRefsCmd = program
     .command("cred-refs")
     .description("Store pointers to where credentials are documented (not the credentials themselves)");
@@ -1124,7 +1103,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── rollback ─────────────────────────────────────────
   const rollbackCmd = program
     .command("rollback")
     .description("Manage rollback checkpoints (commit hash + purpose)");
@@ -1189,7 +1167,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── prune ─────────────────────────────────────────────
   program
     .command("prune")
     .description("Archive or delete stale vault content")
@@ -1236,7 +1213,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── stats ─────────────────────────────────────────────
   program
     .command("stats")
     .description("Show vault content statistics for a project")
@@ -1258,7 +1234,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── deprecate ─────────────────────────────────────────
   program
     .command("deprecate <path>")
     .description("Mark a vault item as deprecated")
@@ -1274,7 +1249,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── resume ────────────────────────────────────────────
   program
     .command("resume")
     .description("Get resume context for continuing work — shows recent sessions, interrupted work, next steps")
@@ -1297,7 +1271,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── skill ────────────────────────────────────────────
   const skillCmd = program
     .command("skill")
     .description("Initialize and activate skills via knowledge graph");
@@ -1535,7 +1508,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── spec ─────────────────────────────────────────────
   const specCmd = program
     .command("spec")
     .description("Deterministic plan specs (skeleton + gates)");
@@ -1656,7 +1628,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── tickets ──────────────────────────────────────────
   function parseTicketInputs(json: string): TicketInput[] {
     let parsed: unknown;
     try {
@@ -1808,7 +1779,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── evidence ─────────────────────────────────────────
   const evidenceCmd = program
     .command("evidence")
     .description("Record and read ticket evidence");
@@ -1862,7 +1832,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── gate ─────────────────────────────────────────────
   program
     .command("gate")
     .description("Deterministic evidence gates")
@@ -1896,7 +1865,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── impact ───────────────────────────────────────────
   program
     .command("impact <target>")
     .description("Deterministic code-graph impact: definitions, importers, callers, shortest path")
@@ -1913,7 +1881,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── claims ───────────────────────────────────────────
   program
     .command("claims")
     .description("Verify structured claims against a deterministic code-graph scan")
@@ -1937,7 +1904,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── telemetry ────────────────────────────────────────
   const telemetryCmd = program
     .command("telemetry")
     .description("Local, opt-in telemetry for rule-selection effectiveness");
@@ -1997,7 +1963,6 @@ export function createProgram(): Command {
       await runTelemetry("clear", undefined, opts.confirm);
     });
 
-  // ── register ─────────────────────────────────────────
   program
     .command("register [path]")
     .description("Map a repo to a vault project so commands auto-detect without -p (vault project-map.json)")
@@ -2017,7 +1982,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── doctor ───────────────────────────────────────────
   program
     .command("doctor")
     .description(
@@ -2045,7 +2009,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── worktree ─────────────────────────────────────────
   const worktreeCmd = program
     .command("worktree")
     .description(
@@ -2396,7 +2359,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── hygiene ──────────────────────────────────────────
   program
     .command("hygiene")
     .description(
@@ -2436,7 +2398,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── watchdog ─────────────────────────────────────────
   const watchdogCmd = program
     .command("watchdog")
     .description("Session review + environment optimization — dig for findings, fix what you approve");
@@ -2568,7 +2529,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── upgrade ──────────────────────────────────────────
   program
     .command("upgrade")
     .description("Refresh managed SuperSkill configuration for already-configured AI clients (launcher, instructions, skill)")
@@ -2606,7 +2566,6 @@ export function createProgram(): Command {
       }
     });
 
-  // ── setup / teardown ─────────────────────────────────
   registerSetupCommands(program);
 
   return program;

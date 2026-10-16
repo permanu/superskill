@@ -2,7 +2,7 @@
 id: java-data-next-exception
 lang: java
 prefix: data
-title: "Walk the SQLException chain for the full failure"
+title: "Bound SQLException traversal and expose only approved categories"
 severity: prefer
 enforce: review
 baseline: latest
@@ -11,16 +11,20 @@ triggers:
   keywords: [jdbc, sqlexception, chained, diagnostics]
   files: ["**/*.java"]
   symbols: [SQLException.getNextException]
-related: [java-err-wrap-cause]
+related: [shared-obs-allowlisted-diagnostics, java-err-wrap-cause]
 sources:
+  - title: PostgreSQL - Error Codes
+    url: https://www.postgresql.org/docs/current/errcodes-appendix.html
+  - title: "OWASP Logging Cheat Sheet"
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
   - title: "SQLException API"
     url: https://docs.oracle.com/en/java/javase/23/docs/api/java.sql/java/sql/SQLException.html
 ---
-> Report every chained SQLException, not just the first.
+> Bound SQLException chain traversal and classify approved SQL states without exporting driver messages.
 
 ## Why
 
-SQLException.getNextException "retrieves the exception chained to this SQLException object by setNextException(SQLException ex)", and iterator() "returns an iterator over the chained SQLExceptions". Drivers attach follow-up failures — constraint violations, connection losses — to the first exception, so reporting only the head of the chain drops exactly the details an operator needs to diagnose the failure.
+Drivers attach related SQL failures through `getNextException`, but their messages can include SQL values, credentials or customer data. Traverse within a fixed bound and classify only known state values; map every other value to a static category. A bound also stops cyclic or excessive chains, and the original exceptions remain internal for an authorized investigation.
 
 ## Bad
 
@@ -41,11 +45,15 @@ import java.sql.SQLException;
 
 class Errors {
     String describe(SQLException error) {
-        StringBuilder message = new StringBuilder();
-        for (SQLException current = error; current != null; current = current.getNextException()) {
-            message.append(current.getMessage()).append("; ");
+        StringBuilder categories = new StringBuilder();
+        SQLException current = error;
+        for (int count = 0; current != null && count < 16; count++) {
+            String category = "23505".equals(current.getSQLState()) ? "DUPLICATE_KEY" : "DATABASE_FAILURE";
+            categories.append(category).append(';');
+            current = current.getNextException();
         }
-        return message.toString();
+        if (current != null) categories.append("CHAIN_LIMIT");
+        return categories.toString();
     }
 }
 ```

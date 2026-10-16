@@ -1,6 +1,6 @@
 # SuperSkill Constitution (T0)
 
-Not auto-loaded by MCP: a host may use the optional session-start hook or explicit graph-constitution request. Catalog presence is not loading; normal token budgets apply. Parentheses name enforcers.
+Not auto-loaded by MCP: optional session-start hook or explicit graph-constitution request. Token budgets apply. Parentheses name enforcers.
 
 - P-01 evidence-before-done: never claim done without `gate check` evidence. (gate check)
 - P-02 parse-at-boundaries: validate external input at the edge; trust internals. (review)
@@ -15,4 +15,4 @@ Not auto-loaded by MCP: a host may use the optional session-start hook or explic
 - P-11 read-before-write: read the file and its conventions before editing. (review)
 - P-12 one-idea-per-file: split two ideas into two artifacts. (validator)
 - P-13 fail-closed: block on failed audits or missing evidence. (security scanner, gate check)
-- P-14 no-placeholders: ship no TODO, FIXME, or elision. (validator)
+- P-14 no-placeholders: no unfinished requirements; tracked debt is allowed, security/correctness blockers are not. (review)

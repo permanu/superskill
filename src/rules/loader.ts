@@ -28,6 +28,7 @@ export interface ParsedRule {
   sourcesCount: number;
   body: string;
   path: string;
+  related?: string[];
 }
 
 export interface RuleWarning {
@@ -192,6 +193,7 @@ async function parseRuleFile(
     sourcesCount: countSources(data.sources),
     body,
     path: relPath,
+    related: asStringArray(data.related),
   };
 }
 

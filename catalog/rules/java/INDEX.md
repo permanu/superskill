@@ -118,7 +118,7 @@ Rules: 303 (verified: 303)
 - [data-cancel](data-cancel.md) - Cancel statements that outlive their deadline.
 - [data-fetch-size](data-fetch-size.md) - Set the fetch size for large result sets.
 - [data-generated-keys](data-generated-keys.md) - Read generated keys from the insert, not a follow-up query.
-- [data-next-exception](data-next-exception.md) - Walk the SQLException chain for the full failure.
+- [data-next-exception](data-next-exception.md) - Bound SQLException traversal and expose only approved categories.
 - [data-transaction](data-transaction.md) - Wrap multi-statement writes in an explicit transaction.
 - [data-was-null](data-was-null.md) - Distinguish SQL NULL from zero with wasNull.
 
@@ -255,7 +255,7 @@ Rules: 303 (verified: 303)
 - [obs-jul-configuration](obs-jul-configuration.md) - Leave level and handler choices to configuration.
 - [obs-log-lazy-supplier](obs-log-lazy-supplier.md) - Build log messages inside a Supplier.
 - [obs-log-levels](obs-log-levels.md) - Match the level to the operational response.
-- [obs-log-throwable](obs-log-throwable.md) - Pass exceptions to the log call.
+- [obs-log-throwable](obs-log-throwable.md) - Log a bounded failure code instead of the Throwable.
 - [obs-logger-names](obs-logger-names.md) - Name loggers after the class or package.
 - [obs-logger-not-stdout](obs-logger-not-stdout.md) - Log through a Logger, not System.out.
 - [obs-name-threads](obs-name-threads.md) - Name the threads you start.

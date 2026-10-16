@@ -11,7 +11,7 @@ import type { Graph, ProjectNode, SkillNode } from "./schema.js";
 import { catalogRoot, loadCatalog } from "../catalog.js";
 import { parseFrontmatter } from "../frontmatter.js";
 import { rulesCatalogRoot } from "../../rules/loader.js";
-import { buildPrincipleIndex, selectPrinciples } from "../../rules/principles.js";
+import { buildPrincipleIndex, selectPrinciples, countPrincipleSources } from "../../rules/principles.js";
 import type { ParsedPrinciple } from "../../rules/principles.js";
 import { isProseWord, keywordKeys, normalizeTerms, simpleStem, termsMatch } from "../../rules/index-builder.js";
 import { scanRepo, DEFAULT_SKIP_DIRS } from "../codegraph/scan.js";
@@ -23,6 +23,8 @@ import { validateProjectSlug } from "../../config.js";
 import { parseSkillId, resolveSkillSource } from "../skill-source.js";
 import type { ResolvedSkillSource } from "../skill-source.js";
 import { VaultError, VaultFS } from "../vault-fs.js";
+import { bankingApplies } from "../project-routing.js";
+import { inspectSkillTrust, type SkillTrust } from "../skill-trust.js";
 
 export const TRAVERSE_INDEX_VERSION = 3;
 export const DEFAULT_OPEN_BYTES = 4096;
@@ -171,6 +173,7 @@ export interface TraverseResolveResult {
 }
 
 export interface TraverseContent {
+  trust?: SkillTrust;
   id: string;
   kind: "vault" | "skill" | "rule" | "code" | "principle" | "constitution" | "skill_resource";
   path?: string;
@@ -821,15 +824,16 @@ function principleCatalog(ctx: TraverseContext): Map<string, PrincipleSource> {
     const safeEnforce = ["tool", "review", "both"].includes(enforce) ? enforce : "review";
     const triggers = parseTriggers(data.triggers);
     const related = [...new Set([...asStringArray(data.related), ...seeAlsoIds(body)])].sort();
+    const sourcesCount = countPrincipleSources(data.sources);
     const parsedPrinciple: ParsedPrinciple = {
       id,
       title,
       applyWhen,
       enforce: safeEnforce as ParsedPrinciple["enforce"],
-      status: data.status as ParsedPrinciple["status"],
+      status: data.status === "verified" && sourcesCount > 0 ? "verified" : "draft",
       triggers,
       related,
-      sourcesCount: countSources(data.sources),
+      sourcesCount,
       body,
       path: relPath.slice("principles/".length),
     };
@@ -1844,12 +1848,14 @@ export class Traverser {
     }
   }
 
-  resolve(task: string, options: { limit?: number; files?: string[] } = {}): TraverseResolveResult {
+  resolve(task: string, options: { limit?: number; files?: string[]; domains?: readonly string[] } = {}): TraverseResolveResult {
     const text = String(task ?? "");
     const files = options.files ?? [];
     const limit = boundedInteger(options.limit, DEFAULT_RESOLVE_LIMIT, 1, 1000, "limit");
     const phase = inferPhase(text);
     const packs = [...packsToLoad(text, phase)].sort();
+    const banking = bankingApplies(text, { files, domains: options.domains });
+    if (banking && !packs.includes("security")) packs.push("security");
     const keys = taskTokenKeys(text);
     const scope = taskLanguageScope(text, this.graph, files);
     const items: TraverseResolveItem[] = [];
@@ -1888,7 +1894,7 @@ export class Traverser {
     let matchedSkillIds: string[];
     let alwaysSkillIds: string[];
     if (graphSkills.length > 0) {
-      matchedSkillIds = matchTask(text, this.graph, { files });
+      matchedSkillIds = matchTask(text, this.graph, { files, domains: options.domains });
       alwaysSkillIds = alwaysOnSkillIds(this.graph, text, { files });
     } else {
       matchedSkillIds = localSkillMatches(this.skillNodes, keys, scope, new Set(packs));
@@ -1896,9 +1902,11 @@ export class Traverser {
         .filter((node) => (node.meta as unknown as SkillMeta).always)
         .map((node) => node.id.slice("skill:".length));
     }
+    matchedSkillIds = matchedSkillIds.filter(id => id !== "security/banking" || banking);
+    if (banking && !matchedSkillIds.includes("security/banking")) matchedSkillIds.push("security/banking");
     for (const id of matchedSkillIds) {
       const node = this.byId.get(`skill:${id}`);
-      if (node) push(node, this.skillReason(node, keys, "task match"));
+      if (node) push(node, id === "security/banking" && options.domains?.includes("banking") ? "project domain: banking" : this.skillReason(node, keys, "task match"));
     }
     for (const id of alwaysSkillIds) {
       const node = this.byId.get(`skill:${id}`);
@@ -1911,7 +1919,7 @@ export class Traverser {
         const rule = this.byId.get(ruleId);
         if (!rule) continue;
         const meta = rule.meta as unknown as RuleMeta;
-        if (scope.size > 0 && !scope.has(normalizeLang(meta.lang) ?? meta.lang.toLowerCase())) continue;
+        if (meta.lang !== "shared" && scope.size > 0 && !scope.has(normalizeLang(meta.lang) ?? meta.lang.toLowerCase())) continue;
         const entry = ruleScores.get(ruleId);
         if (entry) entry.hits.push(key);
         else ruleScores.set(ruleId, { rule, hits: [key] });
@@ -1926,6 +1934,10 @@ export class Traverser {
       return a.rule.id < b.rule.id ? -1 : a.rule.id > b.rule.id ? 1 : 0;
     });
     for (const entry of rankedRules) {
+      for (const id of (entry.rule.meta as unknown as RuleMeta).related) {
+        const shared = this.byId.get(`rule:${id}`);
+        if (shared?.meta?.lang === "shared" && shared.meta.status === "verified") push(shared, `shared control referenced by ${entry.rule.id}`);
+      }
       push(entry.rule, `keyword ${[...new Set(entry.hits)].join(", ")}`);
     }
 
@@ -2020,6 +2032,15 @@ export class Traverser {
     }
 
     const bytes = Buffer.byteLength(content, "utf8");
+    let trust: SkillTrust | undefined;
+    if (node.kind === "skill" || node.kind === "skill_resource") {
+      const owner = node.kind === "skill" ? node.id.slice("skill:".length) : String(node.meta?.owner);
+      const source = this.ctx.skillSources?.get(owner)?.resolved;
+      if (!source) throw new VaultError("PERMISSION_DENIED", "Skill source is unavailable for trust assessment");
+      const audits = findNode<SkillNode>(this.graph, "skill", owner)?.audits;
+      trust = await inspectSkillTrust(source, file, content, audits);
+      if (!trust.allowed) throw new VaultError("PERMISSION_DENIED", "Skill content blocked by trust checks");
+    }
     const page = utf8Page(content, offsetBytes, requestedBytes);
     const truncated = page.nextOffsetBytes !== null;
     return {
@@ -2034,6 +2055,7 @@ export class Traverser {
       content_bytes: page.contentBytes,
       truncated,
       ...(stale ? { stale: true } : {}),
+      ...(trust ? { trust } : {}),
       content: page.content,
     };
   }

@@ -7,6 +7,9 @@ export interface SecretMatch {
 }
 
 const PATTERNS: Array<{ type: string; pattern: RegExp }> = [
+  { type: "structured-credential", pattern: /["'](?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization)["']\s*:\s*["'][^"'\s][^"']*["']/i },
+  { type: "credential-url", pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i },
+  { type: "basic-auth", pattern: /\bauthorization["']?\s*[:=]\s*["']?Basic\s+[a-zA-Z0-9+/]{8,}={0,2}/i },
   { type: "private-key", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/ },
   { type: "api-key", pattern: /(?:api[_-]?key|apikey)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{20,}["']?/i },
   { type: "generic-secret", pattern: /(?:api[_-]?key|token|secret|password)\s*[=:]\s*["']?[a-zA-Z0-9_\-]{16,}["']?/i },
@@ -35,9 +38,8 @@ export function scanForSecrets(content: string): SecretMatch[] {
     const line = lines[i];
     const detected = PATTERNS.filter(({ pattern }) => pattern.test(line));
     if (detected.length === 0) continue;
-    const snippet = detected.reduce((text, { pattern }) => text.replace(new RegExp(pattern.source, `${pattern.flags}g`), "[redacted]"), line).trim().slice(0, 80);
     for (const { type } of detected) {
-      matches.push({ type, line: i + 1, snippet });
+      matches.push({ type, line: i + 1, snippet: "[redacted]" });
     }
   }
 

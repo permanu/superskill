@@ -3,6 +3,13 @@ import { planDelegation } from "./orchestrate.js";
 import { loadCatalog } from "./catalog.js";
 
 describe("planDelegation", () => {
+  it.each(["build bank developer tooling with safe logs", "implement banking payments with synthetic test artifacts"])("routes both banking and leakage guidance: %s", async task => {
+    const packs = planDelegation(task, ["typescript"], { phase: "implement" }).specialists.map(s => s.pack);
+    expect(packs).toContain("security/banking");
+    expect(packs).toContain("security/logging");
+    const catalog = new Set((await loadCatalog()).map(s => s.id));
+    expect(packs.every(pack => catalog.has(pack))).toBe(true);
+  });
   it("is a single entry and keeps catalog-resolvable defaults", () => {
     const p = planDelegation("fix a typo", ["typescript"]);
     expect(p.entry).toBe("superskill");

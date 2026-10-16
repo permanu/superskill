@@ -81,7 +81,7 @@ _Plan complete: 265 rules across 25 prefixes. Batches 1-8 verified; 9 `ffi` (12)
 ## doc - Documentation and comments (12)
 
 - [doc-contract](doc-contract.md) - Document the contract of every public function at its declaration
-- [doc-data-comments](doc-data-comments.md) - Declare one object per line and comment what each one holds
+- [doc-data-comments](doc-data-comments.md) - Document data invariants that names and types cannot express
 - [doc-deprecated](doc-deprecated.md) - Mark retiring APIs with the deprecated attribute and a replacement
 - [doc-doxygen-brief](doc-doxygen-brief.md) - Open each documented entity with a one-line brief description
 - [doc-doxygen-params](doc-doxygen-params.md) - Document each parameter and return value with structured commands

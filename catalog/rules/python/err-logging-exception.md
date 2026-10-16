@@ -2,7 +2,7 @@
 id: python-err-logging-exception
 lang: python
 prefix: err
-title: Log a handled exception with logger.exception so its traceback survives
+title: Log a stable failure event without exporting the exception
 severity: should
 enforce: review
 baseline: latest
@@ -11,19 +11,21 @@ triggers:
   keywords: [logging, exception, traceback, handler, boundary]
   files: ["**/*.py"]
   symbols: [logging.exception, exc_info]
-related: [python-err-reraise-bare, python-err-warnings-vs-errors]
+related: [shared-obs-allowlisted-diagnostics, python-err-reraise-bare, python-err-warnings-vs-errors]
 sources:
+  - title: OWASP Logging Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
   - title: logging - Logger objects, exception()
     url: https://docs.python.org/3/library/logging.html
   - title: Python Tutorial - Handling Exceptions
     url: https://docs.python.org/3/tutorial/errors.html
 ---
 
-> Log handled exceptions with logger.exception; logger.error(str(exc)) drops the traceback.
+> Emit a stable event and approved code when handling an exception; keep exception details out of diagnostic sinks by default.
 
 ## Why
 
-`logger.exception` records the message at error level and attaches the active exception, so the log carries the full traceback and cause chain. Formatting `str(exc)` into a message loses the frames that show where the failure started. At a boundary, log once and either re-raise or convert; logging the same failure at every level multiplies noise without adding information.
+`logger.exception` and `exc_info` attach exception messages and tracebacks, which can contain credentials or personal data; formatting the exception as text has the same disclosure risk. Use a stable event and bounded code, and preserve the exception internally when propagation is required. Apply the same exclusion policy at outer handlers and test the actual log sink, because re-raising is not permission to serialize the exception later.
 
 ## Bad
 
@@ -60,7 +62,7 @@ def sync(payload: dict[str, str]) -> None:
     try:
         send(payload)
     except OSError:
-        logger.exception("sync failed")
+        logger.error("sync.failed", extra={"error_code": "IO_FAILURE"})
         raise
 ```
 

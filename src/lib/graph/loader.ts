@@ -2,6 +2,9 @@
 
 import { MAX_SKILL_FILE_BYTES, readBoundedSkillFile } from "../catalog.js";
 import { parseSkillId, resolveSkillSource } from "../skill-source.js";
+import { inspectSkillTrust } from "../skill-trust.js";
+import { logDiagnostic } from "../safe-diagnostics.js";
+import { taskHistoryLabel } from "./privacy.js";
 import type { ResolvedSkillSource } from "../skill-source.js";
 import type {
   Graph,
@@ -58,7 +61,7 @@ export function formatSystemBrief(
 
   const lines: string[] = [
     `# System brief`,
-    `Task: ${task.slice(0, 160) || "(none)"}`,
+    `Task: ${task ? taskHistoryLabel(task).slice(0, 160) : "(none)"}`,
     `Phase: ${phase}`,
     `Vertical (this repo): stack=[${index.project.stack.join(", ") || "unknown"}] tools=[${index.project.tools.join(", ") || "unknown"}]`,
     `Indexed skills: ${index.skills.length} (catalog/graph — not a remote dump)`,
@@ -68,7 +71,7 @@ export function formatSystemBrief(
     lines.push("Recent sessions (keep this model current):");
     for (const s of sessions) {
       const insight = s.insights[0] ? ` | ${s.insights[0]}` : "";
-      lines.push(`- ${s.intent.slice(0, 120)} [${s.skills.slice(0, 4).join(", ")}] ${s.outcome ?? "open"}${insight}`.slice(0, 220));
+      lines.push(`- ${taskHistoryLabel(s.intent).slice(0, 120)} [${s.skills.slice(0, 4).join(", ")}] ${s.outcome ?? "open"}${insight}`.slice(0, 220));
     }
   } else {
     lines.push("Recent sessions: none. After work, session complete + learn so the next review is not blind.");
@@ -161,9 +164,9 @@ const SKILL_CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CONTENT_SKILLS = 128;
 const MAX_CONTENT_BYTES = 8 * MAX_SKILL_FILE_BYTES;
 
-function logReadError(path: string, error: unknown): void {
+function logReadError(error: unknown): void {
   const code = (error as NodeJS.ErrnoException).code;
-  if (code !== "ENOENT" && code !== "ENOTDIR") console.error(`[graph-loader] failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  if (code !== "ENOENT" && code !== "ENOTDIR") logDiagnostic("skill.source-read-failed", error);
 }
 
 export async function loadContent(
@@ -197,18 +200,15 @@ export async function loadContent(
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (parsed.source !== "catalog" && code !== "ENOENT" && code !== "ENOTDIR") {
-        warnings.push(`WARN: ${skillId} — ${error instanceof Error ? error.message : String(error)}`);
+        warnings.push(`WARN: ${skillId} — source inspection failed`);
       }
-      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
-      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
-      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
+      logReadError(error);
+      warnings.push(`MISSING: ${skillId} — content unavailable`);
       continue;
     }
 
     if (!resolved) {
-      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
-      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
-      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
+      warnings.push(`MISSING: ${skillId} — content unavailable`);
       continue;
     }
 
@@ -218,22 +218,24 @@ export async function loadContent(
       stale = resolved.source === "cache" && Date.now() - mtimeMs > SKILL_CACHE_STALE_MS;
       content = bytes.toString("utf-8");
       if (stale) {
-        console.error(`[graph-loader] serving stale cache for skill: ${skillId} (${resolved.file})`);
         warnings.push(`WARN: ${skillId} — stale skill-cache (>7 days); served cached content`);
       }
     } catch (error) {
-      logReadError(resolved.file, error);
+      logReadError(error);
       const code = (error as NodeJS.ErrnoException).code;
       if (parsed.source !== "catalog" && code !== "ENOENT" && code !== "ENOTDIR") {
-        warnings.push(`WARN: ${skillId} — ${error instanceof Error ? error.message : String(error)}`);
+        warnings.push(`WARN: ${skillId} — source size, stability or access checks failed`);
       }
-      if (parsed.source === "native") console.error(`[graph-loader] native skill content not found: ${skillId}`);
-      else if (parsed.source === "catalog") console.error(`[graph-loader] catalog skill not found: ${skillId}`);
-      else console.error(`[graph-loader] content not found for skill: ${skillId}`);
+      warnings.push(`MISSING: ${skillId} — content unavailable`);
     }
 
     if (content !== null) {
-      skills.push(stale ? { id: skillId, content, stale: true } : { id: skillId, content });
+      const trust = await inspectSkillTrust(resolved, resolved.file, content);
+      if (!trust.allowed) {
+        warnings.push(`BLOCKED: ${skillId} — ${trust.reason}`);
+        continue;
+      }
+      skills.push({ id: skillId, content, trust, ...(stale ? { stale: true } : {}) });
     }
   }
 

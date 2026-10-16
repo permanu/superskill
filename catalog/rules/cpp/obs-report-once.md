@@ -11,7 +11,7 @@ triggers:
   keywords: [logging, exceptions, propagation, handlers]
   files: ["**/*.cpp", "**/*.hpp"]
   symbols: []
-related: [cpp-obs-exception-what, cpp-err-no-catch-all-swallow]
+related: [shared-obs-allowlisted-diagnostics, cpp-obs-exception-what, cpp-err-no-catch-all-swallow]
 sources:
   - title: isocpp.org FAQ - Exceptions and Error Handling
     url: https://isocpp.org/wiki/faq/exceptions
@@ -29,6 +29,7 @@ A catch block that logs and rethrows produces one entry per stack layer for a si
 ```cpp
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 int parse(const char* text) {
     try {
@@ -54,16 +55,17 @@ int main() {
 ```cpp
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 int parse(const char* text) {
-    return std::stoi(text); // propagates without logging
+    return std::stoi(text);
 }
 
 int main() {
     try {
         return parse("x");
-    } catch (const std::exception& e) {
-        std::cerr << "operation failed: " << e.what() << '\n'; // reported once
+    } catch (const std::exception&) {
+        std::cerr << "operation.failed code=PARSE_FAILED\n";
         return 1;
     }
 }
@@ -71,5 +73,5 @@ int main() {
 
 ## See Also
 
-- [cpp-obs-exception-what](obs-exception-what.md) - the message carried into the single report
+- [cpp-obs-exception-what](obs-exception-what.md) - the approved classification in the single report
 - [cpp-err-no-catch-all-swallow](err-no-catch-all-swallow.md) - the other half: never dropping the failure

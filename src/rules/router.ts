@@ -386,9 +386,21 @@ export function route(input: RouteInput, index: RulesIndex, options: RouteOption
   const scope = languageScope(input.stack, prompt, files);
   const includeDrafts = options.includeDrafts === true;
   const eligible = (rule: ParsedRule): boolean =>
-    (includeDrafts || rule.status === "verified") && (scope.size === 0 || scope.has(rule.lang));
+    (includeDrafts || rule.status === "verified") && (rule.lang === "shared" || scope.size === 0 || scope.has(rule.lang));
 
   const candidates = buildCandidates(index, eligible, prompt, files);
+  const included = new Set(candidates.map(candidate => candidate.rule.id));
+  const sharedReferences: Candidate[] = [];
+  for (const candidate of candidates) {
+    if (candidate.rule.lang === "shared") continue;
+    for (const id of candidate.rule.related ?? []) {
+      const rule = index.byId.get(id);
+      if (!rule || rule.lang !== "shared" || !eligible(rule) || included.has(id)) continue;
+      included.add(id);
+      sharedReferences.push({ rule, matched: [`shared control referenced by ${candidate.rule.id}`], score: candidate.score, keywordTotal: 0, symbolTotal: 0 });
+    }
+  }
+  candidates.unshift(...sharedReferences);
   const items = candidates.map((candidate) => ({
     id: candidate.rule.id,
     tokens: estimateRuleTokens(candidate.rule),
@@ -415,7 +427,7 @@ export function route(input: RouteInput, index: RulesIndex, options: RouteOption
     score: candidate.score,
   }));
   const dropped: PlanDrop[] = packed.dropped.map(({ id, reason, tokens }) => ({ id, reason, tokens }));
-  const langs = scope.size > 0 ? [...scope].sort() : [...index.langs];
+  const langs = scope.size > 0 ? [...scope].sort() : index.langs.filter(lang => lang !== "shared");
 
   return {
     phase: input.phase ?? inferPhase(prompt),

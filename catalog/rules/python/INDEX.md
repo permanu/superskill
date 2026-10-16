@@ -129,7 +129,7 @@ Plan complete: 287/287 rules authored across 21 categories. Verified: 286. In ve
 - [err-eafp-attempt](err-eafp-attempt.md) - Attempt the operation and handle its failure; checking first races the check against the act.
 - [err-exception-group](err-exception-group.md) - Handle concurrent failures with except* so each error type is matched and the rest still propagate.
 - [err-finally-no-control-flow](err-finally-no-control-flow.md) - Never return, break, or continue out of a finally block; it discards the in-flight exception.
-- [err-logging-exception](err-logging-exception.md) - Log handled exceptions with logger.exception; logger.error(str(exc)) drops the traceback.
+- [err-logging-exception](err-logging-exception.md) - Log a stable failure event without exporting the exception.
 - [err-no-bare-except](err-no-bare-except.md) - Catch the narrowest exception type; use a bare except nowhere.
 - [err-reraise-bare](err-reraise-bare.md) - Re-raise the active exception with a bare raise so the original traceback stays intact.
 - [err-retry-idempotent](err-retry-idempotent.md) - Retry only operations that are safe to repeat, with a bounded attempt count.

@@ -2,7 +2,7 @@
 id: typescript-doc-jsdoc-public
 lang: typescript
 prefix: doc
-title: Document exported symbols with JSDoc
+title: Document non-obvious public API contracts
 severity: should
 enforce: review
 baseline: latest
@@ -17,15 +17,16 @@ sources:
   - title: TypeScript Handbook - JSDoc Reference
     url: https://www.typescriptlang.org/docs/handbook/jsdoc-supported-types.html
 ---
-> Give every exported symbol a JSDoc summary so consumers read the contract without opening the implementation.
+> Document public API constraints that names and types cannot express; omit summaries that merely repeat the declaration.
 
 ## Why
 
-An exported name and its type say what a value is, not what it means or which corner cases it handles. A JSDoc summary is what editors show on hover and what documentation tools collect, so the reader stays at the call site instead of tracing the body.
+JSDoc appears in editor hovers and generated API documentation, so use it for units, ownership, exceptions, side effects and external compatibility constraints that callers cannot infer. Export status alone does not justify narration: first improve names and types, then document the remaining contract. Preserve documentation required by the project's public API tooling.
 
 ## Bad
 
 ```typescript
+/** Returns a retry delay. */
 export function retryDelay(attempt: number): number {
   return attempt * 100;
 }
@@ -34,8 +35,7 @@ export function retryDelay(attempt: number): number {
 ## Good
 
 ```typescript
-/** Returns the backoff delay in milliseconds for a retry attempt. */
-export function retryDelay(attempt: number): number {
+export function retryDelayMs(attempt: number): number {
   return attempt * 100;
 }
 ```

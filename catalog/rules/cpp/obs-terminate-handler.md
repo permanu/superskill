@@ -2,7 +2,7 @@
 id: cpp-obs-terminate-handler
 lang: cpp
 prefix: obs
-title: Install a terminate handler that reports the unhandled exception before aborting
+title: Keep termination diagnostics fixed and avoid dumping exception state
 severity: should
 enforce: review
 baseline: latest
@@ -11,18 +11,26 @@ triggers:
   keywords: [terminate, unhandled, abort, diagnostics]
   files: ["**/*.cpp", "**/*.hpp"]
   symbols: [std::set_terminate]
-related: [cpp-obs-exception-what, cpp-err-no-throw-across-c]
+related: [shared-obs-allowlisted-diagnostics, cpp-obs-exception-what, cpp-err-no-throw-across-c]
 sources:
+  - title: C++ draft - Termination
+    url: https://eel.is/c++draft/exception.terminate
+  - title: C++ draft - Start and termination
+    url: https://eel.is/c++draft/support.start.term
+  - title: cppreference - std::_Exit
+    url: https://en.cppreference.com/w/cpp/utility/program/_Exit
+  - title: OWASP Logging Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
   - title: cppreference - std::set_terminate
     url: https://en.cppreference.com/w/cpp/error/set_terminate
   - title: cppreference - std::exception
     url: https://en.cppreference.com/w/cpp/error/exception
 ---
-> Set a terminate handler that logs the in-flight exception, then aborts deliberately.
+> Make termination diagnostics best-effort and fixed; terminate without serializing exception state or requesting a core dump.
 
 ## Why
 
-When an exception escapes every handler, the default terminate prints a short message and aborts with no application context: no log line, no cleanup, no idea which request was in flight. `std::set_terminate` installs a function that runs instead; it can recover the in-flight exception with `std::current_exception`, report it, and then abort. The handler must not return, so the abort is explicit.
+A termination path cannot rely on normal recovery, object destruction or safe serialization of arbitrary exception state. A fixed diagnostic avoids leaking messages or causes, while `_Exit` terminates without stack unwinding or requesting the core dump associated with `abort`. The diagnostic remains best-effort and can be lost; configure OS crash collection and process supervision separately.
 
 ## Bad
 
@@ -34,7 +42,7 @@ void run() {
 }
 
 int main() {
-    run(); // unhandled: default terminate gives minimal context
+    run(); // default termination can expose exception text and request a core dump
 }
 ```
 
@@ -42,8 +50,8 @@ int main() {
 
 ```cpp
 #include <cstdlib>
+#include <cstdio>
 #include <exception>
-#include <iostream>
 #include <stdexcept>
 
 void run() {
@@ -52,14 +60,8 @@ void run() {
 
 int main() {
     std::set_terminate([] {
-        if (const std::exception_ptr current = std::current_exception()) {
-            try {
-                std::rethrow_exception(current);
-            } catch (const std::exception& e) {
-                std::cerr << "terminating: " << e.what() << '\n';
-            }
-        }
-        std::abort();
+        std::fputs("process.terminate\n", stderr);
+        std::_Exit(EXIT_FAILURE);
     });
     run();
 }
@@ -67,5 +69,5 @@ int main() {
 
 ## See Also
 
-- [cpp-obs-exception-what](obs-exception-what.md) - the message the handler reports
+- [cpp-obs-exception-what](obs-exception-what.md) - bounded failure classifications
 - [cpp-err-no-throw-across-c](err-no-throw-across-c.md) - boundaries where termination must not happen

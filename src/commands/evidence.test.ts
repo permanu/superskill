@@ -72,6 +72,15 @@ describe("evidenceCommand", () => {
   });
 
   describe("add", () => {
+    it("rejects secrets before truncating test output or mutating evidence", async () => {
+      await createTicket(ctx);
+      const ticketPath = "projects/test-project/tickets/ticket-001-implement.md";
+      const before = await vaultFs.read(ticketPath);
+      const output = `${"x".repeat(3995)}\nsk-${"a".repeat(32)}`;
+      await expect(evidenceCommand({ action: "add", ticket: "ticket-001", command: "npm test", output, commit: "c1", project: "test-project" }, ctx)).rejects.toMatchObject({ code: "SECRET_REJECTED" });
+      expect(await vaultFs.exists("projects/test-project/evidence/ticket-001.jsonl")).toBe(false);
+      expect(await vaultFs.read(ticketPath)).toBe(before);
+    });
     it.each([null, "0", "", false, Number.NaN, Infinity, -Infinity, 0.5])("rejects a supplied non-integer exit instead of recording success: %j", async (exit) => {
       await createTicket(ctx);
       const path = "projects/test-project/tickets/ticket-001-implement.md";

@@ -2,7 +2,7 @@
 id: cpp-doc-public-api
 lang: cpp
 prefix: doc
-title: Document every public declaration in the header
+title: Document public contracts that declarations cannot convey
 severity: should
 enforce: review
 baseline: latest
@@ -13,21 +13,24 @@ triggers:
   symbols: []
 related: [cpp-doc-file, cpp-doc-brief]
 sources:
+  - title: Google Engineering Practices - Comments and Documentation
+    url: https://google.github.io/eng-practices/review/reviewer/looking-for.html
   - title: Doxygen manual - Documenting the code
     url: https://www.doxygen.nl/manual/docblocks.html
 ---
-> A special comment block before each public declaration is the API documentation.
+> Put non-obvious public contracts in tool-compatible documentation next to the declaration, without mandatory boilerplate on self-explanatory APIs.
 
 ## Why
 
-Doxygen builds its reference from special comment blocks: a brief and a detailed description together form the documentation of an entity, and declarations without one simply do not appear in the generated reference. The header is the file users include and read, so a public function whose contract lives nowhere forces every caller to read the implementation or guess. The doc block sits directly in front of the declaration, where the tool picks it up and the reader finds it.
+Doxygen recognizes special comment blocks, but the project's documentation configuration determines what appears in the reference. A public header should expose semantics that types and names do not express, such as ownership, encoding or edge-case behavior. Preserve required documentation coverage while avoiding summaries that merely repeat declarations.
 
 ## Bad
 
 ```cpp
+/** @file */
 #include <string>
 
-std::string normalize(const std::string& input); // behavior left to the reader
+std::string normalize(const std::string& input);
 
 int main() {
     return 0;
@@ -37,12 +40,15 @@ int main() {
 ## Good
 
 ```cpp
+/** @file */
 #include <string>
 
 /**
- * @brief Collapse runs of whitespace in text to single spaces.
+ * @brief Return a copy with runs of ASCII whitespace collapsed to single spaces.
  *
- * The returned string never contains two adjacent spaces.
+ * Whitespace is space, tab, newline, carriage return, form feed, or vertical tab.
+ * Leading and trailing runs are preserved as one space, not trimmed.
+ * All other bytes are unchanged; empty input returns an empty string.
  */
 std::string normalize(const std::string& input);
 

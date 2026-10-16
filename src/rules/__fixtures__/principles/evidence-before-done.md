@@ -6,6 +6,7 @@ triggers:
   keywords: [evidence, verify, done]
 enforce: both
 status: verified
+sources: [{ title: Fixture specification, url: "https://example.test/spec" }]
 ---
 > Report the command and its result before claiming the work is done.
 

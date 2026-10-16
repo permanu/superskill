@@ -6,6 +6,7 @@ import { resolveWorkspaceContext } from "../lib/workspace-context.js";
 import { searchText, type SearchResult } from "../lib/search-engine.js";
 import { ensureProjectIndex } from "../lib/knowledge-index.js";
 import { MAX_OPEN_BYTES, openTraverser } from "../lib/graph/traverse.js";
+import { loadProjectRouting } from "../lib/project-routing.js";
 import type {
   TraverseChildrenResult,
   TraverseContent,
@@ -68,7 +69,8 @@ export async function graphTraverseCommand(
       if (!args.task || args.task.trim() === "") {
         throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=resolve requires task");
       }
-      return traverser.resolve(args.task, { limit: args.limit });
+      const routing = await loadProjectRouting({ ...ctx, projectSlug: workspace.projectSlug });
+      return traverser.resolve(args.task, { limit: args.limit, domains: routing.domains });
     }
     case "open": {
       if (!args.id) throw new VaultError("INVALID_ARGUMENT", "graph_traverse action=open requires id");

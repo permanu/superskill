@@ -1,23 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Skill Installer — install skills from GitHub repos via skills.sh or direct clone.
- *
- * Secure install flow (preferred):
- * 1. Parse source (owner/repo, full URL, local path)
- * 2. Fetch skill list from skills.sh publisher/repo page
- * 3. For each skill: fetch skills.sh page → check audit results (gen, socket, snyk)
- * 4. Block skills with "fail" audit status
- * 5. Scan skill content for prompt injection patterns
- * 6. Write verified content to ~/.claude/skills/
- *
- * Fallback (raw GitHub clone):
- * 1. Shallow clone with --depth 1
- * 2. Discover SKILL.md files
- * 3. Scan each for prompt injection
- * 4. Copy verified skills to install dir
- */
-
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { createHash } from "crypto";
@@ -30,11 +12,11 @@ import { auditIsBlocked, auditIsUnknown, auditIsWarn } from "./security-gate.js"
 import { PROMPT_SCAN_NOTICE, scanForPromptInjection } from "./security-scanner.js";
 import { MAX_SKILL_FILE_BYTES, readBoundedSkillFile } from "./catalog.js";
 import { assertNativeSkillMetadata } from "./native-skill.js";
+import { logDiagnostic } from "./safe-diagnostics.js";
 import type { AuditResult } from "./graph/schema.js";
 
 const exec = promisify(execFile);
 
-// ── Types ──────────────────────────────────────────
 
 export interface ParsedSource {
   repoUrl: string;
@@ -66,7 +48,6 @@ export interface InstallOptions {
   allowUnaudited?: boolean;
 }
 
-// ── Source Parsing ──────────────────────────────────
 
 /**
  * Parse a skill source string into a structured format.
@@ -105,7 +86,6 @@ function parsedGitHubSource(owner: string, repo: string, ref?: string, subpath?:
   return { repoUrl: `https://github.com/${owner}/${repo}.git`, owner, repo, ref, subpath };
 }
 
-// ── Git Operations ─────────────────────────────────
 
 /**
  * Shallow clone a repo to a temp directory.
@@ -151,7 +131,6 @@ async function cleanupClone(path: string): Promise<void> {
   }
 }
 
-// ── Skill Discovery ────────────────────────────────
 
 /** Priority directories to search for SKILL.md files */
 const SKILL_SEARCH_DIRS = [
@@ -238,7 +217,6 @@ async function findSkillsInDir(
   }
 }
 
-// ── Installation ───────────────────────────────────
 
 /**
  * Get the default skill install directory for the current tool.
@@ -348,7 +326,7 @@ function portableSkillPath(path: string): string {
   return path.split(sep).join("/");
 }
 
-async function scanSkillDirectory(skillDir: string): Promise<SkillDirScan> {
+export async function scanSkillDirectory(skillDir: string, installed = false): Promise<SkillDirScan> {
   const result: SkillDirScan = { warnings: [], files: [] };
   const root = await realpath(skillDir);
   const queue = [{ dir: root, depth: 0 }];
@@ -362,7 +340,11 @@ async function scanSkillDirectory(skillDir: string): Promise<SkillDirScan> {
       for await (const entry of entries) {
         const full = join(dir, entry.name);
         const label = relative(root, full);
-        if (entry.name === ".git" && dir === root) continue;
+        if (entry.name === ".git" && dir === root && !installed) continue;
+        if (installed && dir === root && [PROVENANCE_FILE, UNAUDITED_MARKER].includes(entry.name)) {
+          if (!entry.isFile() || entry.isSymbolicLink()) return { ...result, blockedReason: "Unsafe installer metadata" };
+          continue;
+        }
         if (++entryCount > 2000 || depth > 32) {
           result.blockedReason = `${label}: skill directory scan limit exceeded`;
           return result;
@@ -380,6 +362,10 @@ async function scanSkillDirectory(skillDir: string): Promise<SkillDirScan> {
           continue;
         }
         const fileInfo = await lstat(full);
+        if (fileInfo.size > MAX_SKILL_FILE_BYTES) {
+          result.blockedReason = "Skill file exceeds size limit";
+          return result;
+        }
         if (++scanned > MAX_SCANNED_FILES) {
           result.blockedReason = `${label}: skill file scan limit exceeded (${MAX_SCANNED_FILES} files)`;
           return result;
@@ -443,12 +429,12 @@ async function scanSkillDirectory(skillDir: string): Promise<SkillDirScan> {
         }
       }
     } catch (err) {
-      console.error(`[skill-installer] failed to scan ${dir}: ${(err as Error).message}`);
-      result.blockedReason = `${relative(root, dir) || "."}: unscannable content — ${(err as Error).message}`;
+      logDiagnostic("skill.bundle-scan-failed", err);
+      result.blockedReason = "Unscannable skill bundle";
       return result;
     }
   }
-  result.files.sort((left, right) => left.path.localeCompare(right.path));
+  result.files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   return result;
 }
 
@@ -514,17 +500,6 @@ async function installStagedSkill(installDir: string, name: string, prepare: (st
   }
 }
 
-/**
- * Install skills from skills.sh — the secure, preferred path.
- *
- * Flow:
- * 1. Fetch publisher/repo page from skills.sh to discover all available skills
- * 2. For each skill: fetch skill page → extract audit results + content
- * 3. Block skills with "fail" audit status
- * 4. Warn on "warn" audit status
- * 5. Scan content for prompt injection
- * 6. Write verified content to install dir
- */
 async function installFromSkillsSh(
   parsed: ParsedSource,
   options?: InstallOptions,
@@ -535,7 +510,6 @@ async function installFromSkillsSh(
   const blocked: string[] = [];
   const installed: string[] = [];
 
-  // Step 1: Discover skills from skills.sh publisher page
   const publisherSkills = await fetchPublisherSkills(parsed.owner, parsed.repo);
   if (publisherSkills.length === 0) {
     return {
@@ -577,7 +551,6 @@ async function installFromSkillsSh(
         continue;
       }
 
-      // Step 3: Fail-closed audit gate — "fail" always blocks; unknown/warn need an explicit opt-in
       const audits = pageData.audits;
       const auditDetail = `gen=${audits.gen}, socket=${audits.socket}, snyk=${audits.snyk}`;
       const hasFail = [audits.gen, audits.socket, audits.snyk].some((status) => status === "fail");
@@ -596,7 +569,6 @@ async function installFromSkillsSh(
         continue;
       }
 
-      // Step 4: Surface warn/unknown statuses that were explicitly allowed
       if (auditIsWarn(audits)) {
         warnings.push(`${skillRef.skill}: audit warning (${auditDetail})`);
       }
@@ -693,15 +665,6 @@ async function installFromSkillsSh(
   };
 }
 
-/**
- * Install skills via raw GitHub clone — the fallback path.
- *
- * Flow:
- * 1. Shallow clone
- * 2. Discover SKILL.md files
- * 3. Scan each for prompt injection
- * 4. Copy verified skills to install dir
- */
 async function installFromGitHub(
   parsed: ParsedSource,
   options?: InstallOptions,
@@ -713,7 +676,6 @@ async function installFromGitHub(
   const blocked: string[] = [];
 
   try {
-    // Clone
     tmpDir = await cloneRepo(parsed.repoUrl, parsed.ref);
     const commit = await resolveGitCommit(tmpDir);
 
@@ -790,12 +752,7 @@ async function installFromGitHub(
   }
 }
 
-/**
- * Install skills from a source (owner/repo, URL, etc.).
- *
- * Primary path: skills.sh (with audit + security scanning)
- * Fallback: raw GitHub clone (with security scanning)
- */
+/** INFO: Unaudited fallback requires explicit opt-in and an unsuccessful skills.sh fetch. */
 export async function installSkills(
   source: string,
   options?: InstallOptions,
@@ -811,7 +768,6 @@ export async function installSkills(
     };
   }
 
-  // Try skills.sh first (secure path with audit results)
   let shResult: InstallResult;
   let fetchFailed = false;
   let rejectedResponse = false;

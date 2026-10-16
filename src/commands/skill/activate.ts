@@ -2,6 +2,10 @@ import { assessWorktreeLifecycle, type WorktreeLifecycleAssessment } from "../..
 // SPDX-License-Identifier: Apache-2.0
 
 import { packagedCatalogVersion } from "../../lib/catalog.js";
+import { DEFAULT_POLICY } from "../../lib/default-policy.js";
+import { loadProjectRouting } from "../../lib/project-routing.js";
+import { minimizeTaskHistory, taskHistoryLabel } from "../../lib/graph/privacy.js";
+import type { SkillTrust } from "../../lib/skill-trust.js";
 import { initProject, type InitResult } from "./init.js";
 import type { CommandContext } from "../../core/types.js";
 import { loadGraph, mutateGraph } from "../../lib/graph/store.js";
@@ -70,7 +74,9 @@ export interface ActivateResult {
   initialization?: Pick<InitResult, "success" | "graph_path" | "skills_discovered" | "error">;
   worktree?: WorktreeLifecycleAssessment & { workspacePath: string };
   success: boolean;
-  skills_loaded: Array<{ id: string; source: string; stale?: boolean }>;
+  skills_loaded: Array<{ id: string; source: string; stale?: boolean; trust?: SkillTrust }>;
+  status?: "delivered" | "partial" | "missing" | "blocked" | "fallback" | "error";
+  delivery?: Array<{ id: string; status: "delivered" | "missing" | "blocked" | "omitted"; reason?: string }>;
   content: string;
   matched_skill_ids: string[];
   total_tokens: number;
@@ -169,9 +175,30 @@ export function installedSkillNameForId(skillId: string): string | null {
 
 export async function activateSkills(args: ActivateArgs, ctx: CommandContext, options: ActivateOptions = {}): Promise<ActivateResult> {
   const result = await activateSkillsContent(args, ctx, options);
+  const missingSpecialists = (result.orchestration?.specialists ?? []).map(specialist => specialist.pack)
+    .filter(id => result.warnings.some(warning => warning.startsWith(`MISSING: ${id} `)));
+  const expected = [...new Set([...result.matched_skill_ids, ...(args.skill_id ? [args.skill_id] : []), ...missingSpecialists])];
+  const delivery: NonNullable<ActivateResult["delivery"]> = expected.map(id => {
+    if (result.skills_loaded.some(skill => skill.id === id)) return { id, status: "delivered" };
+    const blocked = result.warnings.find(warning => warning.startsWith(`BLOCKED: ${id} `));
+    if (blocked) return { id, status: "blocked", reason: "Security or integrity checks refused this skill" };
+    const dropped = result.dropped.find(item => item.id === id);
+    if (dropped) return { id, status: "omitted", reason: dropped.reason };
+    return { id, status: "missing", reason: "Skill content unavailable" };
+  });
+  const delivered = delivery.filter(item => item.status === "delivered").length;
+  const baselineOnly = result.success && !args.skill_id && result.matched_skill_ids.length === 0;
+  const status: ActivateResult["status"] = baselineOnly ? "fallback" : expected.length === 0 ? "error"
+    : delivered === expected.length ? "delivered" : delivered > 0 ? "partial"
+    : delivery.some(item => item.status === "blocked") ? "blocked"
+    : delivery.some(item => item.status === "missing") ? "missing" : "partial";
+  if (!baselineOnly && expected.length > 0 && delivered === 0) result.success = false;
+  for (const item of delivery) {
+    if (item.status === "missing" && !result.warnings.some(warning => warning.startsWith(`MISSING: ${item.id} `))) result.warnings.push(`MISSING: ${item.id} — content unavailable`);
+  }
   const workspacePath = ctx.workspacePath ?? process.cwd();
   const assessment = await assessWorktreeLifecycle(workspacePath, { phase: "activation" });
-  return { ...result, worktree: { ...assessment, workspacePath } };
+  return { ...result, status, delivery, worktree: { ...assessment, workspacePath } };
 }
 
 async function activateSkillsContent(
@@ -212,7 +239,8 @@ async function activateSkillsContent(
     const phase = args.phase ?? getPhaseForTask(task);
     const project = findNode<ProjectNode>(graph, "project", "project");
     const stack = routingStack(project?.stack ?? [], args.files);
-    const routingContext = { files: args.files, phase };
+    const projectRouting = await loadProjectRouting(ctx);
+    const routingContext = { files: args.files, phase, domains: projectRouting.domains };
     const orchestration = planDelegation(task, stack, routingContext);
     const contextWindow = detectTool().contextWindow ?? FALLBACK_CONTEXT_WINDOW;
     const budget = getPhaseBudget(phase, contextWindow);
@@ -335,6 +363,9 @@ async function activateSkillsContent(
       const delegated = orchestration.specialists
         .map((s) => s.pack)
         .filter((id) => graphSkillIds.has(id));
+      for (const specialist of orchestration.specialists) {
+        if (!graphSkillIds.has(specialist.pack)) warnings.push(`MISSING: ${specialist.pack} — specialist not indexed; use applicable verified rules and primary documentation, never silently install a replacement`);
+      }
       matchedIds = [...new Set([...always, ...matched, ...delegated])];
     }
     const orchMd = `## Orchestration\n\n\`\`\`json\n${JSON.stringify(orchestration, null, 2)}\n\`\`\``;
@@ -343,6 +374,7 @@ async function activateSkillsContent(
       const brief = formatSystemBrief(graph, loadNeighborhood(graph, []), phase, task);
       const { items, dropped, usedTokens } = fitSkillsToBudget(
         [
+          { id: "system/default-policy", content: DEFAULT_POLICY },
           { id: "system/brief", content: brief },
           { id: "system/orchestration", content: orchMd },
           ...principleItems,
@@ -377,7 +409,7 @@ async function activateSkillsContent(
         warnings.push(`BLOCKED: ${skill.id} failed security audit`);
         continue;
       }
-      if (auditIsUnknown(skill.audits)) {
+      if (auditIsUnknown(skill.audits) && skill.source !== "catalog") {
         warnings.push(`WARN: ${skill.id} has unknown audit status`);
       }
       if (auditIsWarn(skill.audits)) {
@@ -413,11 +445,12 @@ async function activateSkillsContent(
 
     const brief = formatSystemBrief(graph, neighborhood, phase, task);
     const budgetItems: BudgetItem[] = [
+      { id: "system/default-policy", content: DEFAULT_POLICY },
       { id: "system/brief", content: brief },
       { id: "system/orchestration", content: orchMd },
-      ...principleItems,
-      ...ruleItems,
     ];
+    const policyItems: BudgetItem[] = [];
+    const skillItems: BudgetItem[] = [];
 
     for (const skill of contentResult.skills) {
       const scanResult = scanForPromptInjection(skill.content);
@@ -428,21 +461,28 @@ async function activateSkillsContent(
       for (const w of scanResult.warnings) {
         warnings.push(`WARN: ${skill.id} — ${w}`);
       }
-      budgetItems.push({ id: skill.id, content: skill.content });
+      const item = { id: skill.id, content: skill.content };
+      if (["security/banking", "security/logging", "pipeline/comment-discipline"].includes(skill.id)) {
+        policyItems.push(item);
+      } else {
+        skillItems.push(item);
+      }
     }
 
     const { items, dropped, usedTokens } = fitSkillsToBudget(
-      budgetItems,
+      [...budgetItems, ...policyItems, ...principleItems, ...ruleItems, ...skillItems],
       budget.totalBudget,
       CONTENT_SEPARATOR,
     );
     const isSkillItem = (id: string): boolean =>
       !id.startsWith("system/") && !ruleIds.has(id) && !principleIds.has(id);
+    const trustById = new Map(contentResult.skills.map(skill => [skill.id, skill.trust]));
     const loadedSkills = items
       .filter((item) => isSkillItem(item.id))
       .map((item) => ({
         id: item.id,
         source: "graph",
+        ...(trustById.get(item.id) ? { trust: trustById.get(item.id) } : {}),
         ...(staleIds.has(item.id) ? { stale: true } : {}),
       }));
 
@@ -472,7 +512,7 @@ async function activateSkillsContent(
         success: false,
         skills_loaded: [],
         content: finalContent,
-        matched_skill_ids: safeIds,
+        matched_skill_ids: matchedIds,
         total_tokens: usedTokens,
         usedTokens,
         allocatedTokens: budget.totalBudget,
@@ -487,7 +527,7 @@ async function activateSkillsContent(
 
     let sessionId: string | undefined;
     await mutateGraph(projectDir, (latest) => {
-      const session = findOrCreateSession(latest, task, args.session_id);
+      const session = findOrCreateSession(minimizeTaskHistory(latest), taskHistoryLabel(task), args.session_id);
       sessionId = session.sessionId;
       let updated = session.graph;
       for (const skill of loadedSkills) updated = recordActivation(updated, session.sessionId, skill.id, args.files ?? []);
@@ -501,7 +541,7 @@ async function activateSkillsContent(
       skills_loaded: loadedSkills,
       graph_session_id: sessionId,
       content: finalContent,
-      matched_skill_ids: safeIds,
+      matched_skill_ids: matchedIds,
       total_tokens: usedTokens,
       usedTokens,
       allocatedTokens: budget.totalBudget,
@@ -541,14 +581,18 @@ export function compactActivationResult(result: ActivateResult) {
   const dropped = droppedIds.slice(0, 8).map((id) => shorten(id, 160));
   const warnings = selectedWarnings.map((warning) => shorten(warning, 240));
   const diagnosticsTruncated = droppedIds.length > dropped.length || result.warnings.length > warnings.length
+    || (result.delivery?.length ?? 0) > 16
     || droppedIds.slice(0, 8).some((id) => id.length > 160)
     || selectedWarnings.some((warning) => warning.length > 240);
   const response = {
     success: result.success,
+    ...(result.status ? { status: result.status } : {}),
+    ...(result.delivery ? { delivery: result.delivery.slice(0, 16), delivery_count: result.delivery.length } : {}),
     ...(result.initialization ? { initialization: result.initialization } : {}),
     ...(result.worktree ? { worktree: result.worktree } : {}),
     content: result.content,
     skills_loaded: result.skills_loaded.map((skill) => skill.id),
+    skill_trust: result.skills_loaded.filter(skill => skill.trust).map(skill => ({ id: skill.id, ...skill.trust })),
     rules_loaded: result.rules_plan.selected.map((rule) => rule.id),
     principles_loaded: result.principles_plan.selected.map((principle) => principle.id),
     budget: {

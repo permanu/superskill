@@ -10,14 +10,14 @@ import { keywordKeys } from "./index-builder.js";
 import { isLanguageWideGlob } from "./router.js";
 import {
   RULE_ENFORCEMENTS,
-  RULE_LANGUAGES,
+  RULE_SCOPES,
   RULE_SEVERITIES,
   RULE_STATUSES,
-  isRuleLanguage,
+  isRuleScope,
   type HarnessResult,
   type RuleEnforce,
   type RuleFile,
-  type RuleLanguage,
+  type RuleScope,
   type RuleSeverity,
   type RuleSource,
   type RuleStatus,
@@ -28,7 +28,8 @@ import {
 
 export { isRuleFilename } from "./files.js";
 
-const FENCE_TAGS: Record<RuleLanguage, string[]> = {
+const FENCE_TAGS: Record<RuleScope, string[]> = {
+  shared: ["text"],
   rust: ["rust"],
   typescript: ["typescript", "ts"],
   python: ["python", "py"],
@@ -157,7 +158,7 @@ function fenceMask(lines: string[]): Set<number> {
   return mask;
 }
 
-function isBareElisionLine(trimmed: string, lang: RuleLanguage | null): boolean {
+function isBareElisionLine(trimmed: string, lang: RuleScope | null): boolean {
   if (trimmed === "..") return true;
   return trimmed === "..." && lang !== "python";
 }
@@ -172,7 +173,7 @@ interface CodeScanState {
   block: number;
 }
 
-function scanCodeLine(line: string, state: CodeScanState, lang: RuleLanguage | null): { code: string; comments: string } {
+function scanCodeLine(line: string, state: CodeScanState, lang: RuleScope | null): { code: string; comments: string } {
   let code = "";
   let comments = "";
   for (let i = 0; i < line.length;) {
@@ -231,7 +232,7 @@ function stripInlineCode(line: string): string {
   return line.replace(/(`+).*?\1(?!`)/g, " ");
 }
 
-function validateBody(abs: string, body: string, lang: RuleLanguage | null, issues: ValidationIssue[]): BodyResult {
+function validateBody(abs: string, body: string, lang: RuleScope | null, issues: ValidationIssue[]): BodyResult {
   const lines = body.split(/\r?\n/);
   const fenced = fenceMask(lines);
   const summaryIndex = lines.findIndex((line) => line.trim() !== "");
@@ -300,6 +301,7 @@ function validateBody(abs: string, body: string, lang: RuleLanguage | null, issu
       continue;
     }
     const block = blocks[0];
+    if (block.lines.every(line => line.trim() === "")) issues.push(issue("snippet-empty", "Bad/Good examples must not be empty", abs));
     snippets[section.title === "Bad" ? "bad" : "good"] = block.lines.join("\n");
     if (block.lines.length > 25) {
       issues.push(
@@ -440,8 +442,8 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
     fundamental = false;
   }
 
-  if (isNonEmptyString(data.lang) && !isRuleLanguage(data.lang)) {
-    issues.push(issue("enum", `invalid lang "${data.lang}" (expected: ${RULE_LANGUAGES.join(", ")})`, abs));
+  if (isNonEmptyString(data.lang) && !isRuleScope(data.lang)) {
+    issues.push(issue("enum", `invalid lang "${data.lang}" (expected: ${RULE_SCOPES.join(", ")})`, abs));
     fundamental = false;
   }
 
@@ -458,6 +460,9 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
   }
   if ((enforce === "tool" || enforce === "both") && !isNonEmptyString(data.tool)) {
     issues.push(issue("tool-required", `enforce "${enforce}" requires a non-empty "tool" id`, abs));
+  }
+  if (data.lang === "shared" && (enforce !== "review" || data.tool !== undefined || data.compile_exempt !== undefined)) {
+    issues.push(issue("shared-review-only", "shared rules require enforce: review and cannot claim a compiler, tool or compile exemption", abs));
   }
 
   let triggers: RuleTriggers | undefined;
@@ -476,7 +481,7 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
         parsedTriggers[key] = value as string[];
       }
       triggers = parsedTriggers;
-      if (isRuleLanguage(data.lang) &&
+      if (isRuleScope(data.lang) &&
           !(triggers.keywords ?? []).some((value) => keywordKeys(value).length > 0) &&
           !(triggers.symbols ?? []).some((value) => value.trim() !== "") &&
           !(triggers.files ?? []).some((value) => !isLanguageWideGlob(value, data.lang as string))) {
@@ -534,7 +539,7 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
   }
 
   const fileStem = basename(abs).replace(/\.md$/, "");
-  if (isNonEmptyString(data.lang) && isRuleLanguage(data.lang) && isNonEmptyString(data.id)) {
+  if (isNonEmptyString(data.lang) && isRuleScope(data.lang) && isNonEmptyString(data.id)) {
     const expectedId = `${data.lang}-${fileStem}`;
     if (data.id !== expectedId) {
       issues.push(issue("id-mismatch", `id "${data.id}" must equal "${expectedId}" (lang + file stem)`, abs));
@@ -545,11 +550,11 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
   }
   const root = rootForRule(abs);
   const parentName = root ? relative(root, abs).split(sep)[0] : basename(dirname(abs));
-  if (isRuleLanguage(parentName) && isRuleLanguage(data.lang) && data.lang !== parentName) {
+  if (isRuleScope(parentName) && isRuleScope(data.lang) && data.lang !== parentName) {
     issues.push(issue("lang-dir-mismatch", `lang "${data.lang}" does not match directory "${parentName}"`, abs));
   }
 
-  const lang = isRuleLanguage(data.lang) ? data.lang : null;
+  const lang = isRuleScope(data.lang) ? data.lang : null;
   const body = validateBody(abs, content, lang, issues);
 
   let rule: RuleFile | null = null;
@@ -558,7 +563,7 @@ function parseRule(abs: string, raw: string, knownIds: ReadonlySet<string> | nul
       path: abs,
       relPath: relativeToCatalog(abs),
       id: data.id as string,
-      lang: data.lang as RuleLanguage,
+      lang: data.lang as RuleScope,
       prefix: data.prefix as string,
       title: data.title as string,
       severity: severity as RuleSeverity,
@@ -584,7 +589,7 @@ function relativeToCatalog(abs: string): string {
 
 function rootForRule(abs: string): string | null {
   for (let dir = dirname(abs); dirname(dir) !== dir; dir = dirname(dir)) {
-    if (isRuleLanguage(basename(dir))) return dirname(dir);
+    if (isRuleScope(basename(dir))) return dirname(dir);
   }
   return null;
 }
@@ -600,7 +605,7 @@ async function collectKnownIds(root: string): Promise<Set<string>> {
       if (!raw.trimStart().startsWith("---")) return null;
       const { data } = matter(raw, {});
       const stem = basename(file, ".md");
-      if (!isRuleLanguage(data.lang) || !isNonEmptyString(data.id) ||
+      if (!isRuleScope(data.lang) || !isNonEmptyString(data.id) ||
           !isNonEmptyString(data.prefix) || !/^[a-z][a-z0-9-]*$/.test(data.prefix) ||
           !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/.test(stem) ||
           !stem.startsWith(`${data.prefix}-`) || data.id !== `${data.lang}-${stem}`) return null;
@@ -731,7 +736,7 @@ export async function validateFile(filePath: string, options: ValidateOptions = 
   if (parsed.rule && !hasError) {
     if (parsed.rule.compile_exempt) {
       issues.push(issue("compile-exempt", `compile check skipped: ${parsed.rule.compile_exempt}`, abs, "warning"));
-    } else if (options.compile !== false) {
+    } else if (options.compile !== false && parsed.rule.lang !== "shared") {
       for (const section of ["bad", "good"] as const) {
         const code = parsed.body.snippets[section];
         if (code === null) continue;
@@ -777,7 +782,7 @@ export async function validatePack(langDir: string, options: ValidateOptions = {
 
   let knownIds = options.knownIds;
   if (!knownIds) {
-    knownIds = await collectKnownIds(isRuleLanguage(basename(dir)) ? dirname(dir) : dir);
+    knownIds = await collectKnownIds(isRuleScope(basename(dir)) ? dirname(dir) : dir);
   }
 
   const concurrency = options.compile === false ? READ_CONCURRENCY : 1;
@@ -847,7 +852,7 @@ export async function validateAll(root = "catalog/rules", options: ValidateOptio
     validatePack(join(base, lang), { compile: options.compile, knownIds }),
   );
   for (const lang of languages) {
-    if (!isRuleLanguage(lang)) errors.push(issue("pack-language", `unknown language pack "${lang}"`, join(base, lang)));
+    if (!isRuleScope(lang)) errors.push(issue("pack-language", `unknown rule pack "${lang}"`, join(base, lang)));
   }
   for (const report of reports) {
     errors.push(...report.errors);
