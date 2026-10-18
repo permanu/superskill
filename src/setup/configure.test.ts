@@ -34,7 +34,7 @@ describe("buildMcpEntry", () => {
     expect(entry).toEqual({
       command: "npx",
       args: ["-y", "--prefer-online", "superskill@latest"],
-      env: { VAULT_PATH: "~/Vaults/ai" },
+      env: { VAULT_PATH: "~/Vaults/ai", PATH: expect.any(String) },
     });
   });
 
@@ -43,7 +43,7 @@ describe("buildMcpEntry", () => {
     expect(entry).toEqual({
       type: "local",
       command: ["npx", "-y", "--prefer-online", "superskill@latest"],
-      environment: { VAULT_PATH: "~/Vaults/ai" },
+      environment: { VAULT_PATH: "~/Vaults/ai", PATH: expect.any(String) },
     });
   });
 });
@@ -151,7 +151,7 @@ describe("configureClient", () => {
 
     const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
     expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
-    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep", PATH: expect.any(String) });
   });
 
   it("preserves a pinned legacy alias instead of removing it as managed", () => {

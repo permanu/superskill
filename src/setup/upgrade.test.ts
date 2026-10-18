@@ -36,6 +36,26 @@ function use(clients: DetectedClient[]): void {
 }
 
 describe("upgradeCommand", () => {
+  it.each(["claude-code", "opencode"])("repairs an existing latest %s launcher without a shell PATH", async (slug) => {
+    const detected = makeDetected(slug);
+    const { rootKey, commandType, envKey } = detected.config;
+    const launcher = commandType === "array"
+      ? { command: ["npx", "-y", "--prefer-online", "superskill@latest"] }
+      : { command: "npx", args: ["-y", "--prefer-online", "superskill@latest"] };
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({ [rootKey]: { superskill: { ...launcher, [envKey]: { VAULT_PATH: "/existing-vault", CUSTOM: "keep" } } } }));
+    use([detected]);
+    await upgradeCommand({ dryRun: true });
+    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf8"))[rootKey].superskill[envKey]).not.toHaveProperty("PATH");
+    expect((await upgradeCommand({})).clients[0].action).toBe("updated");
+    const upgraded = JSON.parse(readFileSync(detected.mcpConfigPath, "utf8"))[rootKey].superskill;
+    expect(upgraded[envKey]).toEqual({ VAULT_PATH: "/existing-vault", CUSTOM: "keep", PATH: expect.any(String) });
+    expect((await upgradeCommand({})).clients[0].action).toBe("unchanged");
+    upgraded[envKey].PATH = "/custom/path";
+    writeFileSync(detected.mcpConfigPath, JSON.stringify({ [rootKey]: { superskill: upgraded } }));
+    await upgradeCommand({});
+    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf8"))[rootKey].superskill[envKey].PATH).toBe("/custom/path");
+  });
+
   it("reports and reconciles launcher drift plus instruction refresh", async () => {
     const detected = makeDetected("claude-code");
     writeFileSync(
@@ -151,7 +171,7 @@ describe("upgradeCommand", () => {
     expect(report.clients[0].detail).toContain("reconciled launcher");
     const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
     expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
-    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep", PATH: expect.any(String) });
   });
 
   it("normalizes an exact string-form legacy launcher for OpenCode without retaining stale args", async () => {
@@ -173,7 +193,7 @@ describe("upgradeCommand", () => {
     const config = JSON.parse(readFileSync(detected.mcpConfigPath, "utf-8"));
     expect(config.mcp.superskill.command).toEqual(["npx", "-y", "--prefer-online", "superskill@latest"]);
     expect(config.mcp.superskill).not.toHaveProperty("args");
-    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep" });
+    expect(config.mcp.superskill.environment).toEqual({ VAULT_PATH: "/user/vault", EXTRA: "keep", PATH: expect.any(String) });
   });
 
   it("preserves custom entries while still refreshing their instruction block", async () => {

@@ -9,7 +9,7 @@ import {
   addMcpEntry,
   removeMcpEntry,
 } from "./json-config.js";
-import { isManagedLauncher, isOurTool, LATEST_ARGS, LATEST_ARRAY } from "./launcher.js";
+import { isManagedLauncher, isOurTool, launcherPath, LATEST_ARGS, LATEST_ARRAY, withLauncherPath } from "./launcher.js";
 import { insertTomlBlock } from "./toml-config.js";
 import {
   planMarkdownInstruction,
@@ -36,7 +36,7 @@ export function buildMcpEntry(
   const launcher = buildLauncher(commandType);
   base.command = launcher.command;
   if (launcher.args) base.args = launcher.args;
-  base[envKey] = { VAULT_PATH: vaultPath };
+  base[envKey] = { VAULT_PATH: vaultPath, PATH: launcherPath() };
   return base;
 }
 
@@ -46,7 +46,8 @@ command = "npx"
 args = ["-y", "--prefer-online", "superskill@latest"]
 
 [mcp_servers.superskill.env]
-VAULT_PATH = ${JSON.stringify(vaultPath).replace(/\x7f/g, "\\u007f")}`;
+VAULT_PATH = ${JSON.stringify(vaultPath).replace(/\x7f/g, "\\u007f")}
+PATH = ${JSON.stringify(launcherPath()).replace(/\x7f/g, "\\u007f")}`;
 }
 
 function appendSkip(current: string | undefined, message: string): string {
@@ -133,7 +134,7 @@ export function configureClient(
         let entry = buildMcpEntry(config.commandType, config.envKey, vaultPath, config.extraFields);
         if (!current[config.rootKey]?.superskill && !force) {
           const legacy = legacyMcpEntry(detected);
-          if (legacy) entry = { ...legacy, command: entry.command, args: entry.args };
+          if (legacy) entry = withLauncherPath({ ...legacy, command: entry.command, args: entry.args }, config.envKey);
         }
         return entry;
       };

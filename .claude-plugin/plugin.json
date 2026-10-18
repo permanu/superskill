@@ -1,6 +1,6 @@
 {
   "name": "superskill",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "One-entry orchestrator for coding agents: lazy skill routing, jailed project vault, spec/ticket/evidence gates, and 2,257 verified atomic rules including shared cross-language controls.",
   "author": {
     "name": "Permanu (Atharva Pandey)",

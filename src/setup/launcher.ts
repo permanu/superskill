@@ -1,4 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
+import { delimiter, dirname, isAbsolute } from "node:path";
+
+export function launcherPath(): string {
+  const paths = [dirname(process.execPath), ...(process.env.PATH ?? "").split(delimiter)];
+  return [...new Set(paths.filter(isAbsolute))].join(delimiter);
+}
+
+export function withLauncherPath(entry: Record<string, any>, envKey: string, path = launcherPath()): Record<string, any> {
+  const env = entry[envKey];
+  if (env !== undefined && (env === null || typeof env !== "object" || Array.isArray(env))) return entry;
+  if (env !== undefined && Object.hasOwn(env, "PATH")) return entry;
+  return { ...entry, [envKey]: { ...env, PATH: path } };
+}
+
 export const LATEST_ARGS = ["-y", "--prefer-online", "superskill@latest"];
 export const LATEST_ARRAY = ["npx", "-y", "--prefer-online", "superskill@latest"];
 
