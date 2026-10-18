@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-18
+
+### Fixed
+- MCP setup records the running Node directory and absolute terminal PATH entries so desktop clients can find NVM-managed `node` and `npx`, including when SuperSkill was installed globally with Bun.
+- Setup and upgrade repair missing PATH values in existing default JSON, OpenCode array and Codex TOML launchers while preserving vault paths, custom environment values, pinned launchers and unrelated client settings.
+
+### Upgrade notes
+- Update SuperSkill, run `superskill setup` or `superskill upgrade` from a terminal where Node and npx work, then restart the AI client. Bun installation still requires Node and npm; its optional postinstall guidance may remain blocked.
+- Explicit custom PATH values remain unchanged. If the Node installation was moved or removed, use setup with `--force` for the intended client to regenerate its environment.
+
 ## [0.16.0] - 2026-10-16
 
 ### Added

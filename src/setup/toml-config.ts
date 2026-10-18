@@ -85,7 +85,7 @@ function isOwnedTable(body: string): boolean {
   return launcher !== null && isOurTool(launcher);
 }
 
-function upgradeTable(content: string, span: TomlSpan, force: boolean): string | null {
+function upgradeTable(content: string, span: TomlSpan, force: boolean, block: string): string | null {
   const body = span.text;
   const launcher = tableLauncher(body);
   if (launcher === null || !isOurTool(launcher)) return null;
@@ -99,9 +99,8 @@ function upgradeTable(content: string, span: TomlSpan, force: boolean): string |
     const args = parseStringArray(body, "args");
     if (args === null) return null;
     const current = args.join(" ");
-    if (current === LATEST_ARGS.join(" ")) return null;
-    if (!force && current !== OLD_ARGS.join(" ")) return null;
-    updated = updated.replace(/^[ \t]*args[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARGS_LINE);
+    if (!force && current !== OLD_ARGS.join(" ") && current !== LATEST_ARGS.join(" ")) return null;
+    if (current !== LATEST_ARGS.join(" ")) updated = updated.replace(/^[ \t]*args[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARGS_LINE);
   } else if (command === "superskill" || command === "superskill-cli") {
     if (!force) return null;
     updated = updated.replace(/^([ \t]*)command[ \t]*=[ \t]*"superskill(?:-cli)?"[ \t]*$/m, "$1command = \"npx\"");
@@ -112,11 +111,20 @@ function upgradeTable(content: string, span: TomlSpan, force: boolean): string |
     }
   } else if (commandArray !== null) {
     const isNpx = commandArray[0] === "npx";
-    if (!force && (!isNpx || commandArray.join(" ") !== ["npx", ...OLD_ARGS].join(" "))) return null;
-    if (!force && commandArray.join(" ") === ["npx", ...LATEST_ARGS].join(" ")) return null;
+    if (!force && (!isNpx || ![["npx", ...OLD_ARGS].join(" "), ["npx", ...LATEST_ARGS].join(" ")].includes(commandArray.join(" ")))) return null;
     updated = updated.replace(/^[ \t]*command[ \t]*=[ \t]*\[[^\]]*\][ \t]*$/m, LATEST_ARRAY_LINE);
   } else {
     return null;
+  }
+
+  const desiredEnv = findTable(block, `${TABLE}.env`);
+  const path = desiredEnv && parseString(desiredEnv.text, "PATH");
+  const env = findTable(updated, `${TABLE}.env`);
+  if (path !== null && desiredEnv && env && !/^[ \t]*(?:PATH|"PATH"|'PATH')[ \t]*=/m.test(env.text)) {
+    const header = `[${TABLE}.env]`;
+    updated = updated.replace(header, `${header}\nPATH = ${JSON.stringify(path).replace(/\x7f/g, "\\u007f")}`);
+  } else if (path !== null && desiredEnv && !env && !findTable(content, `${TABLE}.env`) && !/^[ \t]*(?:env|"env"|'env')[ \t]*[.=]/m.test(body)) {
+    updated = `${updated.trimEnd()}\n\n[${TABLE}.env]\nPATH = ${JSON.stringify(path).replace(/\x7f/g, "\\u007f")}\n\n`;
   }
 
   if (updated === body) return null;
@@ -140,24 +148,18 @@ export function insertTomlBlock(
 
   if (hasBlock && !force) {
     const blocks = [...content.matchAll(new RegExp(`${escapeRegex(MARKER_START_TOML)}\\n([\\s\\S]*?)\\n${escapeRegex(MARKER_END_TOML)}`, "g"))];
-    const oldArgs = 'args = ["-y", "superskill"]';
-    const latestArgs = 'args = ["-y", "--prefer-online", "superskill@latest"]';
-    const prefix = `[mcp_servers.superskill]\ncommand = "npx"\n${oldArgs}\n\n[mcp_servers.superskill.env]\nVAULT_PATH = `;
-    if (blocks.length !== 1 || !blocks[0][1].startsWith(prefix) || !block.includes(latestArgs)) return null;
-    const oldBlock = blocks[0];
-    const vaultLiteral = oldBlock[1].slice(prefix.length).split("\n")[0];
-    try {
-      if (typeof JSON.parse(vaultLiteral) !== "string") return null;
-    } catch {
-      return null;
-    }
-    const upgraded = oldBlock[0].replace(oldArgs, latestArgs);
-    return content.slice(0, oldBlock.index) + upgraded + content.slice(oldBlock.index! + oldBlock[0].length);
+    if (blocks.length !== 1) return null;
+    const span = superskillTableSpan(blocks[0][1]);
+    if (!span) return null;
+    const upgraded = upgradeTable(blocks[0][1], span, false, block);
+    if (upgraded === null) return null;
+    const replacement = `${MARKER_START_TOML}\n${upgraded}\n${MARKER_END_TOML}`;
+    return content.slice(0, blocks[0].index) + replacement + content.slice(blocks[0].index! + blocks[0][0].length);
   }
 
   if (!hasBlock) {
     const span = superskillTableSpan(content);
-    if (span) return upgradeTable(content, span, force);
+    if (span) return upgradeTable(content, span, force, block);
   }
 
   let base = content;

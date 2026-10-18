@@ -10,6 +10,8 @@ Requires **Node 22.16+ on the 22.x line, or Node 24+**, with SQLite FTS5 enabled
 npm install -g superskill          # Node 22.16+ (22.x), or 24+
 ```
 
+Bun can install the package with `bun add -g superskill`, but Node and npm (including `npx`) are still required. Bun's blocked `postinstall` warning skips only the optional setup guidance; it does not install or replace Node.
+
 One binary, two faces: **`superskill <command>`** runs everything you run yourself (`setup`, `doctor`, `skill`, `graph`, `worktree`, …), and bare `superskill` in a terminal shows the help. With no arguments over piped stdio — how AI clients launch it — the same binary starts the **MCP server**. `superskill-cli` remains a permanent alias, and `SUPERSKILL_FORCE_MCP=1` forces server mode.
 
 ## Quick start
@@ -41,6 +43,8 @@ Verify any time with `superskill doctor`: install vs running MCP servers, vault 
 ## MCP configuration
 
 `setup` defaults to `npx -y --prefer-online superskill@latest`. Each new MCP process asks npm for fresh metadata and resolves the stable `latest` tag. Publishing a new version under that tag makes it available on the next MCP start; it does not replace an active server or push code into running sessions. Offline/cache behavior may retain a cached version or fail to start; no upgrade is guaranteed without registry access. Explicit pinned versions and direct installed binaries remain manual-update choices. See [npm exec configuration](https://docs.npmjs.com/cli/v11/commands/npm-exec/#prefer-online).
+
+Generated entries also save `PATH`, starting with the running Node executable's directory and including the terminal's absolute executable directories. This lets desktop clients find `node` and `npx` from NVM and other user-local installs without loading shell startup files. Relative and empty PATH entries are excluded. Run `superskill setup` or `superskill upgrade` from a terminal where `node` and `npx` work to repair an existing default entry, then restart the client. Existing custom PATH values and pinned or customized launchers are preserved. After removing or changing the Node installation, rerun setup with `--force` for the intended client to replace its saved environment.
 
 Run setup once to install or migrate the integration. Future MCP starts refresh an existing marked shared skill and safely owned instruction blocks, then reconcile recognized managed launchers and known legacy aliases for detected clients. They preserve custom or pinned launchers, ambiguous instruction blocks, and unrelated settings; they do not create missing integrations. Cursor MDC and OpenCode instruction files are refreshed only when the existing integration and SuperSkill-owned content are safely recognized. Start a new host session to load refreshed instructions.
 

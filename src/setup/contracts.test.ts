@@ -71,7 +71,7 @@ describe("documented harness contracts", () => {
     mkdirSync(dirname(legacy), { recursive: true });
     writeFileSync(legacy, JSON.stringify({ other: 42, mcpServers: { superskill: { command: "npx", args: ["-y", "superskill"], env: { VAULT_PATH: "/existing-vault", CUSTOM: "keep" } }, unrelated: { command: "keep" } } }));
     expect(configureClient(detected, "/tmp/vault").error).toBeUndefined();
-    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf8")).mcpServers.superskill.env).toEqual({ VAULT_PATH: "/existing-vault", CUSTOM: "keep" });
+    expect(JSON.parse(readFileSync(detected.mcpConfigPath, "utf8")).mcpServers.superskill.env).toEqual({ VAULT_PATH: "/existing-vault", CUSTOM: "keep", PATH: expect.any(String) });
     expect(JSON.parse(readFileSync(legacy, "utf8"))).toEqual({ other: 42, mcpServers: { unrelated: { command: "keep" } } });
     writeFileSync(legacy, JSON.stringify({ mcpServers: { superskill: { command: "custom-wrapper" } } }));
     configureClient(detected, "/tmp/vault");

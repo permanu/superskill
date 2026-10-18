@@ -12,6 +12,7 @@ import {
 import { randomBytes } from "crypto";
 import { dirname } from "path";
 import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safety.js";
+import { isLatestLauncher, isManagedLauncher, withLauncherPath } from "./launcher.js";
 
 const MAX_WRITE_ATTEMPTS = 3;
 
@@ -149,6 +150,14 @@ export function addMcpEntry(
       upgraded = { ...existing, args: entry.args };
     } else if (serverName === "superskill" && JSON.stringify(existing.command) === JSON.stringify(["npx", "-y", "superskill"]) && JSON.stringify(entry.command) === JSON.stringify(["npx", "-y", "--prefer-online", "superskill@latest"]) && existing.args === undefined && typeof existing.environment?.VAULT_PATH === "string") {
       upgraded = { ...existing, command: entry.command };
+    }
+    if (serverName === "superskill" && isManagedLauncher(existing) && isLatestLauncher(entry)) {
+      const envKey = Array.isArray(entry.command) ? "environment" : "env";
+      if (typeof existing[envKey]?.VAULT_PATH === "string" && typeof entry[envKey]?.PATH === "string") {
+        const before = upgraded ?? existing;
+        const repaired = withLauncherPath(before, envKey, entry[envKey].PATH);
+        if (repaired !== before) upgraded = repaired;
+      }
     }
     if (!upgraded) return { config: result, alreadyExists: true };
     return { config: { ...result, [rootKey]: { ...result[rootKey], [serverName]: upgraded } }, alreadyExists: false };

@@ -4,7 +4,7 @@ import { assertSafeSetupPath, readSetupText, writeSetupText } from "./file-safet
 import { detectClients } from "./detect.js";
 import type { DetectedClient } from "./types.js";
 import { readJsonConfig, updateJsonConfig, removeMcpEntry } from "./json-config.js";
-import { isManagedLauncher, isLatestLauncher, isOurTool, renderLauncher } from "./launcher.js";
+import { isManagedLauncher, isLatestLauncher, isOurTool, renderLauncher, withLauncherPath } from "./launcher.js";
 import { buildLauncher, buildTomlBlock } from "./configure.js";
 import { reconcileTomlBlock } from "./toml-config.js";
 import {
@@ -48,14 +48,14 @@ function reconcileJsonLauncher(
   }
   const changes: string[] = [];
   const launcher = buildLauncher(config.commandType);
-  if (!isLatestLauncher(entry)) {
+  if (!isLatestLauncher(entry) || withLauncherPath(entry, config.envKey) !== entry) {
     const desired = `${renderLauncher(config.commandType)}`;
     changes.push(`${dryRun ? "would reconcile" : "reconciled"} launcher to ${desired}`);
     if (!dryRun) {
       updateJsonConfig(mcpConfigPath, (current) => {
         const target = current[config.rootKey]?.superskill;
         if (target === undefined || !isManagedLauncher(target)) return null;
-        const nextEntry = { ...target, command: launcher.command };
+        const nextEntry = withLauncherPath({ ...target, command: launcher.command }, config.envKey);
         if (launcher.args) nextEntry.args = launcher.args;
         else delete nextEntry.args;
         return { ...current, [config.rootKey]: { ...current[config.rootKey], superskill: nextEntry } };
