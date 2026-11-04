@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-04
+
+### Added
+- On-demand source analysis guidance that separates observed facts, inferred relationships, unsupported coverage and unresolved questions.
+- Optional design-specification review with bounded source inspection and explicit limits on reviewer independence and evidence freshness.
+- Scoped documentation drift checks that distinguish contradicted contracts, stale references, proposed changes and insufficient evidence.
+- Synthetic evaluation fixtures and regression coverage for selective routing, context budgets, partial evidence and dirty-source changes.
+
+### Changed
+- Planning guidance now ties implementation steps to source evidence, assumptions, verification and unresolved dependencies.
+- New analysis and review guidance loads only for relevant requests and uses the existing activation budget. Ordinary task activation, specialist priority and completion gates remain unchanged; loading guidance does not launch scans or models.
+
+### Upgrade notes
+- Update with `npm install -g superskill` and restart the AI client. Existing project metadata refreshes through the normal version-aware initialization path; use `superskill skill init` to refresh a same-version checkout manually.
+
 ## [0.16.1] - 2026-10-18
 
 ### Fixed
