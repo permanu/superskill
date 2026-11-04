@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Upgrade notes
 - Update with `npm install -g superskill` and restart the AI client. Existing project metadata refreshes through the normal version-aware initialization path; use `superskill skill init` to refresh a same-version checkout manually.
 
+### Security
+- Update the MCP SDK, test tooling and affected transitive dependencies to resolve the release dependency-audit findings.
+
 ## [0.16.1] - 2026-10-18
 
 ### Fixed

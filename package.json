@@ -58,17 +58,17 @@
     "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "commander": "^13.1.0",
     "gray-matter": "^4.0.3",
     "web-tree-sitter": "0.24.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "license": "Apache-2.0",
   "author": "Permanu (Atharva Pandey)",
