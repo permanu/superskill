@@ -102,6 +102,21 @@ describe("built skill authoring and delivery", () => {
     expect(await readFile(path, "utf8")).toBe(before);
   });
 
+  it("delivers the analysis and planning packs completely through MCP", async () => {
+    for (const [task, id] of [
+      ["Analyze the storage subsystem", "pipeline/analyze"],
+      ["Write a plan for bounded storage", "pipeline/plan"],
+    ]) {
+      const result = await client.callTool({ name: "superskill", arguments: { task, files: ["src/storage.ts"], max_tokens: 12000 } });
+      expect(result.isError).not.toBe(true);
+      const parts = result.content as Array<{ type: string; text?: string }>;
+      const record = JSON.parse(parts.find(part => part.type === "text")?.text ?? "null") as { success: boolean; content: string; skills_loaded: string[] };
+      expect(record.success).toBe(true);
+      expect(record.skills_loaded).toContain(id);
+      expect(record.content).toContain(await readFile(new URL(`../catalog/${id}.md`, import.meta.url), "utf8"));
+    }
+  });
+
   it("opens principle and constitution targets without guessing package paths", async () => {
     for (const [id, path] of [
       ["constitution", "constitution.md"],

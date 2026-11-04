@@ -3,6 +3,23 @@ import { planDelegation } from "./orchestrate.js";
 import { loadCatalog } from "./catalog.js";
 
 describe("planDelegation", () => {
+  it("keeps existing security specialists when optional analysis exceeds the specialist limit", () => {
+    const result = planDelegation("Analyze the banking subsystem and fix security logging bug", ["typescript"], { phase: "review" });
+    expect(result.specialists.map(item => item.pack)).toEqual([
+      "review/architect", "security/banking", "security/logging", "pipeline/investigate", "security/compliance",
+    ]);
+  });
+
+  it("names source analysis only for a requested component investigation", () => {
+    const analysis = planDelegation("Analyze the storage subsystem", ["typescript"], { phase: "explore" });
+    expect(analysis.specialists.map(item => item.pack)).toContain("pipeline/analyze");
+    expect(analysis.defaults).not.toContain("pipeline/analyze");
+    expect(analysis.loop).toBe(false);
+    for (const task of ["Analyze this test failure", "Fix a typo", "Update the CI pipeline"]) {
+      expect(planDelegation(task).specialists.map(item => item.pack)).not.toContain("pipeline/analyze");
+    }
+  });
+
   it.each(["build bank developer tooling with safe logs", "implement banking payments with synthetic test artifacts"])("routes both banking and leakage guidance: %s", async task => {
     const packs = planDelegation(task, ["typescript"], { phase: "implement" }).specialists.map(s => s.pack);
     expect(packs).toContain("security/banking");

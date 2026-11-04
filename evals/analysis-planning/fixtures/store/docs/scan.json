@@ -1,0 +1,8 @@
+{
+  "scope": ["src/store.mjs"],
+  "symbols": ["createStore", "put", "get"],
+  "incoming_calls": [],
+  "confidence": "INFERRED",
+  "coverage": "partial",
+  "skipped": ["external plugin callbacks"]
+}

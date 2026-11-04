@@ -124,6 +124,31 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     expect(result.content).toContain("## Test and CI boundary");
   });
 
+  it("delivers optional analysis locally and reports omission at a small budget", async () => {
+    const fetch = vi.fn(() => { throw new Error("analysis activation must remain local"); });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const ctx = createMockCtx(projectDir);
+      await writeFile(join(projectDir, ".superskill", "graph.json"), JSON.stringify({ ...createTestGraph([]), catalogVersion: "pre-analysis-catalog" }));
+      const source = join(projectDir, "storage.ts");
+      await writeFile(source, "export const marker = 'unchanged';\n");
+      const before = await readFile(source, "utf8");
+      const result = await activateSkills({ task: "Analyze the storage subsystem", phase: "explore", max_tokens: 12000 }, ctx);
+      expect(result.success).toBe(true);
+      expect(result.initialization?.success).toBe(true);
+      expect(result.skills_loaded.map(skill => skill.id)).toContain("pipeline/analyze");
+      expect(result.content).toContain(await readFile(new URL("../../../catalog/pipeline/analyze.md", import.meta.url), "utf8"));
+      expect(await readFile(source, "utf8")).toBe(before);
+      expect(fetch).not.toHaveBeenCalled();
+      const small = await activateSkills({ skill_id: "pipeline/analyze", task: "Analyze the storage subsystem", max_tokens: 256 }, ctx);
+      expect(small.skills_loaded.map(skill => skill.id)).not.toContain("pipeline/analyze");
+      expect(small.usedTokens).toBeLessThanOrEqual(256);
+      expect(small.dropped.some(item => item.id === "pipeline/analyze")).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("loads banking guidance only for explicit project metadata or task scope", async () => {
     const contextPath = join(projectDir, "projects", "mapped", "context.md");
     await mkdir(join(projectDir, "projects", "mapped"), { recursive: true });

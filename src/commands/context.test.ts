@@ -384,7 +384,7 @@ Some content.
         `---
 type: context
 project: test-project
-updated: "2026-09-20"
+updated: "${new Date().toISOString().slice(0, 10)}"
 ---
 
 # Project Context

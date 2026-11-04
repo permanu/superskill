@@ -1,0 +1,7 @@
+{
+  "status": "completed",
+  "commit": "1111111111111111111111111111111111111111",
+  "source_hashes": {},
+  "findings": [],
+  "limitations": "Source bytes and dirty working tree were not recorded."
+}

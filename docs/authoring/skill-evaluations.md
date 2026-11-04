@@ -195,3 +195,37 @@ Run only the focused tests; no build, install, provider call, or full-suite comm
 ```sh
 node --test scripts/skill-evals/*.test.mjs
 ```
+
+## Analysis and planning pack baseline
+
+`evals/analysis-planning/core.v1.json` adds four synthetic scenarios: source/document contradictions, incomplete caller and review evidence, a bounded-store implementation plan, and a two-sentence retrieval question. Its `baseline/manifest.json` pins the pre-change revision and planning-pack hash; that revision had no analysis pack. The fixture's misleading current documentation and incomplete scan are intentional. Source tests establish replacement and mutation-before-journal-failure behavior.
+
+`pipeline/analyze` is optional host guidance, selected for explicit source/subsystem analysis or by skill ID. `pipeline/plan` keeps its existing triggers. Neither pack starts a model, network request, worker, or documentation write. Both use the existing security and token-budget gates; inspect delivery/omission diagnostics when content does not fit. Existing graphs refresh on package-version changes. When testing changed catalog files without changing the package version, run `skill init` to refresh the checkout's catalog index first.
+
+Validate these fixtures without invoking a model:
+
+```sh
+node scripts/skill-evals/cli.mjs validate-profile evals/analysis-planning/core.v1.json
+node --test scripts/skill-evals/analysis-planning.test.mjs evals/analysis-planning/fixtures/store/test/store.test.mjs
+```
+
+Profile validation establishes structure, not answer quality. The existing controlled-arm runner targets the native `superskill` skill; it does not automatically switch catalog packs. A future controlled pack comparison must verify the exact delivered catalog bodies as well as common runner controls before attributing an improvement to these packs.
+
+During implementation, eight fresh-context agent exercises used separate temporary fixture directories: one baseline and one candidate for each scenario. The baseline received the saved planning body; the candidate received the new analysis and revised planning bodies. No parent conversation was forwarded. Requests allowed read-only file commands because the available harness lacked a dedicated file-read tool. Consequently these exercises are qualitative observations, not compliant runs of the profile's command-denying trace protocol. Isolation, model identity, spend, latency, and complete action traces were not independently attested. No human-review score or controlled aggregate is claimed.
+
+Observed answer comparison:
+
+| Scenario | Baseline | Candidate |
+| --- | --- | --- |
+| Component contract | Found replacement, repeated appends, retained mutation on failure, and proposed versus current files | Found the same behaviors and explicit freshness limits; incorrectly counted six inspected files rather than five, including guidance |
+| Incomplete evidence | Rejected no-callers and current-review conclusions | Rejected both with the partial-scan and missing source-fingerprint evidence |
+| Implementation plan | Preserved defaults, invalid capacities, replacement, and journal-failure semantics | Preserved these and explicitly covered replacement of an existing `undefined` value; used two cohesive tasks |
+| Simple retrieval | Correct two-sentence answer | Same correct two-sentence answer |
+
+These samples demonstrate usable guidance, not a statistically established quality gain. Text rubrics check subject coverage only; factual correctness and proportionality require reviewing the answers. Do not turn a completed analysis or this evaluation into spec approval or ticket evidence.
+
+Candidate fingerprints for these observations (SHA-256):
+
+- `catalog/pipeline/analyze.md`: `1f77af6f42535b740fe4df25c4cbcdc41c51c2123f5d1eb0210bcdc612432b48`
+- `catalog/pipeline/plan.md`: `28622935469e4efc23d94518a52c0e1ead46d1efeb4444cb5105d9d2a488fb30`
+- `evals/analysis-planning/core.v1.json`: `fe2eff0d781c376e295e30af50372819c7bc23c94e2cdbbaccc53ab881f34e42`

@@ -93,6 +93,12 @@ export function isGraphNoteQaTask(task: string, files: readonly string[] = []): 
     files.some(isGraphNoteFile);
 }
 
+export function isSourceAnalysisTask(task: string): boolean {
+  return /\bpipeline\/analyze\b/i.test(task) ||
+    /\b(?:analy[sz]e|map|inspect|explain|document)\b[^.!?\n]{0,80}\b(?:codebase|subsystem|module|component contracts|repository architecture)\b/i.test(task) ||
+    /\bsource[- ]backed analysis\b/i.test(task);
+}
+
 function alwaysSkillApplies(skill: SkillNode, task: string, files: readonly string[]): boolean {
   if (task.toLowerCase().includes(skill.id.toLowerCase())) return true;
   if (skill.id === "optimizer/algorithm") return ALGORITHM_TASK_RE.test(task) || files.some(file => ALGORITHM_FILE_RE.test(file));
@@ -315,6 +321,7 @@ export function matchTask(task: string, graph: Graph, context: RoutingContext = 
     if (skill.id === "security/banking" && !bankingApplies(task, context)) continue;
     if (!langOk(skill, stack, keywords)) continue;
     if (skill.id === "pipeline/qa" && !isGraphNoteQaTask(task, context.files)) continue;
+    if (skill.id === "pipeline/analyze" && !isSourceAnalysisTask(task)) continue;
     if (skill.id === "ui/foundations" && !task.toLowerCase().includes(skill.id) && !isUiFoundationTask(task, context.files ?? [])) continue;
     if (!packAllowed(skill, load, keywords, task)) continue;
     const edge = edgeMap.get(id);

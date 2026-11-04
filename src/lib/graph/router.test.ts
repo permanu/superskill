@@ -63,6 +63,31 @@ async function currentCatalogGraph(): Promise<Graph> {
 }
 
 describe("matchTask", () => {
+  it.each([
+    "Analyze the codebase boundaries",
+    "Analyse the storage subsystem",
+    "Map component contracts for src/storage",
+    "Explain this module from source",
+    "pipeline/analyze src/storage",
+  ])("selects optional source analysis for %s", async task => {
+    const graph = await currentCatalogGraph();
+    expect(matchTask(task, graph, { phase: "explore" })).toContain("pipeline/analyze");
+    expect(alwaysOnSkillIds(graph, task)).not.toContain("pipeline/analyze");
+  });
+
+  it.each([
+    "Fix a typo in README.md",
+    "Analyze this test failure",
+    "Change the button component color",
+    "Update the CI pipeline",
+    "Write a plan for pagination",
+  ])("preserves existing selection for unrelated work: %s", async task => {
+    const graph = await currentCatalogGraph();
+    const previous = { ...graph, nodes: graph.nodes.filter(node => node.id !== "pipeline/analyze") };
+    expect(matchTask(task, graph)).toEqual(matchTask(task, previous));
+    expect(alwaysOnSkillIds(graph, task)).toEqual(alwaysOnSkillIds(previous, task));
+  });
+
   it("tokenizes multiword and punctuated triggers like tasks and supports Unicode", () => {
     const graph: Graph = {
       nodes: [

@@ -2,7 +2,7 @@
 // Single SuperSkill entry: diagnose, then name specialists. Host stays one agent;
 // packs are the specialists. Sequence is not a waterfall.
 
-import { isGraphNoteQaTask, routingStack, type RoutingContext } from "./graph/router.js";
+import { isGraphNoteQaTask, isSourceAnalysisTask, routingStack, type RoutingContext } from "./graph/router.js";
 import { bankingApplies } from "./project-routing.js";
 
 export interface Specialist {
@@ -93,6 +93,8 @@ export function planDelegation(task: string, stack: string[] = [], context: Rout
       if (spec) add(spec);
     }
   }
+
+  if (isSourceAnalysisTask(task)) add({ agent: "analyze", pack: "pipeline/analyze", reason: "source-backed component analysis" });
 
   const loop = /\b(still|again|loop|broken|retry)\b/i.test(lower) || (specialists.some((s) => s.agent === "investigate") && specialists.some((s) => s.agent === "review"));
 
