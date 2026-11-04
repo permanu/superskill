@@ -63,6 +63,19 @@ async function currentCatalogGraph(): Promise<Graph> {
 }
 
 describe("matchTask", () => {
+  it.each(["Review this design spec independently", "Independent design review of the storage proposal", "Review this specification for implementation readiness", "review/design-spec"])("selects design review only on demand: %s", async task => {
+    const graph = await currentCatalogGraph();
+    expect(matchTask(task, graph)).toContain("review/design-spec");
+    expect(alwaysOnSkillIds(graph, task)).not.toContain("review/design-spec");
+  });
+
+  it.each(["Review this diff", "Review the code for regressions", "Write a plan for pagination", "Implement the approved spec", "Analyze the storage subsystem", "Fix a typo", "Design a login form", "Review API implementation", "Review the code against the specification", "Review this diff against the design document", "Review implementation against the specification"])("adds no design-review selection for %s", async task => {
+    const graph = await currentCatalogGraph();
+    const previous = { ...graph, nodes: graph.nodes.filter(node => node.id !== "review/design-spec") };
+    expect(matchTask(task, graph)).toEqual(matchTask(task, previous));
+    expect(alwaysOnSkillIds(graph, task)).toEqual(alwaysOnSkillIds(previous, task));
+  });
+
   it.each([
     "Analyze the codebase boundaries",
     "Analyse the storage subsystem",

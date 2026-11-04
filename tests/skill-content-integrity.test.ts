@@ -117,6 +117,18 @@ describe("built skill authoring and delivery", () => {
     }
   });
 
+  it("delivers only the requested design-review pack without adding a new MCP tool", async () => {
+    const before = (await client.listTools()).tools.map(tool => tool.name);
+    const result = await client.callTool({ name: "superskill", arguments: { skill_id: "review/design-spec", max_tokens: 4000 } });
+    expect(result.isError).not.toBe(true);
+    const parts = result.content as Array<{ type: string; text?: string }>;
+    const record = JSON.parse(parts.find(part => part.type === "text")?.text ?? "null") as { success: boolean; content: string; skills_loaded: string[] };
+    expect(record.success).toBe(true);
+    expect(record.skills_loaded).toEqual(["review/design-spec"]);
+    expect(record.content).toContain(await readFile(new URL("../catalog/review/design-spec.md", import.meta.url), "utf8"));
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(before);
+  });
+
   it("opens principle and constitution targets without guessing package paths", async () => {
     for (const [id, path] of [
       ["constitution", "constitution.md"],

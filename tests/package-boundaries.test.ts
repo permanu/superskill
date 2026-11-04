@@ -19,6 +19,9 @@ describe("published package boundaries", () => {
     expect(files).toContain("dist/main.js");
     expect(files).toContain("dist/mcp-server.js");
     expect(files).toContain("skills/superskill/SKILL.md");
+    expect(files).toContain("catalog/review/design-spec.md");
+    expect(files).toContain("docs/authoring/design-review.md");
+    expect(files.some(path => path.startsWith("scripts/skill-evals/") || path.startsWith("evals/"))).toBe(false);
     expect(files.some((path) => path.endsWith(".wasm"))).toBe(true);
     expect(files.filter((path) => /(^|\/)(?:\.superskill|node_modules|coverage|tests|__fixtures__|coordination|sessions)(?:\/|$)/.test(path))).toEqual([]);
     expect(files.filter((path) => /(?:\.test\.[cm]?js|\.map|\.jsonl|\.corrupt-\d+|\.bak\.superskill)$/.test(path))).toEqual([]);

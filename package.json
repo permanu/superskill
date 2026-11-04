@@ -36,7 +36,8 @@
     "hooks/",
     "docs/harness.md",
     "docs/SKILL-TEMPLATE.md",
-    "docs/authoring/CONTRACT.md"
+    "docs/authoring/CONTRACT.md",
+    "docs/authoring/design-review.md"
   ],
   "scripts": {
     "build": "tsc && node scripts/vendor-grammars.mjs",

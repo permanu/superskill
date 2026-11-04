@@ -87,6 +87,40 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     return dir;
   }
 
+  it("loads design review on demand within budget and leaves ordinary activation unchanged", async () => {
+    const ctx = createMockCtx(projectDir);
+    const fetch = vi.fn(() => { throw new Error("review activation must remain local"); });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const ordinary = await activateSkills({ task: "Fix a typo", files: ["src/app.ts"], max_tokens: 6000 }, ctx);
+      expect(ordinary.skills_loaded.map(skill => skill.id)).not.toContain("review/design-spec");
+      expect(ordinary.matched_skill_ids).not.toContain("review/design-spec");
+      const graphPath = join(projectDir, ".superskill", "graph.json");
+      const indexed = JSON.parse(await readFile(graphPath, "utf8")) as Graph;
+      const withoutReview = { ...indexed, nodes: indexed.nodes.filter(node => node.id !== "review/design-spec"), edges: indexed.edges.filter(edge => edge.from !== "review/design-spec" && edge.to !== "review/design-spec") };
+      await writeFile(graphPath, JSON.stringify(withoutReview));
+      const baseline = await activateSkills({ task: "Fix a typo", files: ["src/app.ts"], max_tokens: 6000 }, ctx);
+      await writeFile(graphPath, JSON.stringify(indexed));
+      const current = await activateSkills({ task: "Fix a typo", files: ["src/app.ts"], max_tokens: 6000 }, ctx);
+      expect(current.skills_loaded).toEqual(baseline.skills_loaded);
+      expect(current.usedTokens).toBe(baseline.usedTokens);
+      const selected = await activateSkills({ skill_id: "review/design-spec", max_tokens: 4000 }, ctx);
+      expect(selected.skills_loaded.map(skill => skill.id), JSON.stringify({ dropped: selected.dropped, warnings: selected.warnings })).toEqual(["review/design-spec"]);
+      expect(selected.usedTokens).toBeLessThanOrEqual(4000);
+      const body = await readFile(new URL("../../../catalog/review/design-spec.md", import.meta.url), "utf8");
+      expect(body.length).toBeLessThanOrEqual(2600);
+      expect(selected.content).toContain(body);
+      const small = await activateSkills({ skill_id: "review/design-spec", max_tokens: 256 }, ctx);
+      expect(small.success).toBe(false);
+      expect(small.skills_loaded).toEqual([]);
+      expect(small.delivery?.find(item => item.id === "review/design-spec")?.status).toBe("omitted");
+      expect(small.usedTokens).toBeLessThanOrEqual(256);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("initializes a fresh graph locally before the first activation", async () => {
     const emptyGraph: Graph = { nodes: [], edges: [] };
     await writeFile(

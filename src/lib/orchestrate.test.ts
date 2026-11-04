@@ -3,6 +3,14 @@ import { planDelegation } from "./orchestrate.js";
 import { loadCatalog } from "./catalog.js";
 
 describe("planDelegation", () => {
+  it("does not add orchestration defaults or displace existing specialists for design review", () => {
+    const result = planDelegation("Independent design review of the banking subsystem, fix security logging bug", ["typescript"], { phase: "review" });
+    expect(result.specialists.map(item => item.pack)).toEqual([
+      "review/architect", "security/banking", "security/logging", "pipeline/investigate", "security/compliance",
+    ]);
+    expect(result.defaults).not.toContain("review/design-spec");
+  });
+
   it("keeps existing security specialists when optional analysis exceeds the specialist limit", () => {
     const result = planDelegation("Analyze the banking subsystem and fix security logging bug", ["typescript"], { phase: "review" });
     expect(result.specialists.map(item => item.pack)).toEqual([
