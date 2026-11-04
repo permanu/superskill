@@ -229,3 +229,23 @@ Candidate fingerprints for these observations (SHA-256):
 - `catalog/pipeline/analyze.md`: `1f77af6f42535b740fe4df25c4cbcdc41c51c2123f5d1eb0210bcdc612432b48`
 - `catalog/pipeline/plan.md`: `28622935469e4efc23d94518a52c0e1ead46d1efeb4444cb5105d9d2a488fb30`
 - `evals/analysis-planning/core.v1.json`: `fe2eff0d781c376e295e30af50372819c7bc23c94e2cdbbaccc53ab881f34e42`
+
+## Scoped drift checks
+
+`review/drift` is optional host guidance for selected documentation contracts, not a semantic-diff engine or a background scan. It distinguishes contradicted behavior, stale current references, proposed changes, insufficient evidence, and consistency within the inspected scope. It adds no tool definitions, orchestration defaults, model calls, persistent records, or gate semantics. Its body uses the same 2,600-character ceiling as design review; the existing content-budget checks still determine delivery. Refresh same-version checkout metadata with `skill init` when adding the catalog file locally.
+
+Routing requires a documentation-drift request or a direct docs-to-source comparison. A code review against a specification, ordinary documentation edit, design review, clock drift, or Terraform drift does not itself select this pack. The activation regression compares ordinary skill selection and estimated tokens with and without its catalog entry. Explicit activation uses `skill activate --skill-id review/drift --max-tokens 4000`; a 256-token request must report omission rather than partial skill instructions.
+
+Structural checks reuse `claims` unchanged. That command scans its entire root; passing fewer claims does not restrict the scan. Use it only when the selected root fits the user's authorized boundary and resource budget. For file-only allowlists, inspect approved files instead of implicitly scanning their parent repository. A refuted existence claim for an explicitly proposed file is not a drift defect. Behavioral claims require source/test evidence, and graph absence or unsupported languages must not be upgraded to proof of absence.
+
+`evals/scoped-drift/core.v1.json` contains three synthetic cases: current versus proposed contracts, incomplete/stale evidence, and a single-claim request limited to two sentences. Its automated rubrics check access scope only; the listed human-review questions assess semantic classification. Fixture validation and word presence cannot establish semantic correctness. The existing controlled runner still targets native-skill treatments; these catalog fixtures do not automatically constitute a controlled pack comparison.
+
+```sh
+node --test scripts/skill-evals/scoped-drift.test.mjs evals/scoped-drift/fixtures/store/test/store.test.mjs
+npm run build
+./node_modules/.bin/vitest run tests/scoped-drift.test.ts --maxWorkers=2
+```
+
+The structural tests use the real command and parsers on a disposable fixture repository. They verify exports, missing references, unsupported Lua, incomplete caller evidence, root containment, read-only behavior, and fresh results after dirty source changes without a HEAD change. Unsupported behavioral claim kinds remain rejected; no new claims vocabulary is introduced.
+
+Three fresh-context advisory exercises used separate copies of only the listed case inputs and the drift brief. The full-contract answer distinguished contradictions, a stale current reference, a proposed missing file, and scoped consistency; it also limited idempotency conclusions to observable journal behavior. The stale-evidence answer rejected unchanged HEAD and incomplete graph coverage as proof. The narrow answer stayed within two sentences and inspected only the requested missing-key claim. These exercises allowed read-only shell inspection and lack complete host/bootstrap captures, so they are not compliant traces under the profile's command-denying policy and do not establish isolation or a measured quality improvement.

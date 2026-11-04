@@ -117,15 +117,15 @@ describe("built skill authoring and delivery", () => {
     }
   });
 
-  it("delivers only the requested design-review pack without adding a new MCP tool", async () => {
+  it.each(["review/design-spec", "review/drift"])("delivers only %s without adding a new MCP tool", async skillId => {
     const before = (await client.listTools()).tools.map(tool => tool.name);
-    const result = await client.callTool({ name: "superskill", arguments: { skill_id: "review/design-spec", max_tokens: 4000 } });
+    const result = await client.callTool({ name: "superskill", arguments: { skill_id: skillId, max_tokens: 4000 } });
     expect(result.isError).not.toBe(true);
     const parts = result.content as Array<{ type: string; text?: string }>;
     const record = JSON.parse(parts.find(part => part.type === "text")?.text ?? "null") as { success: boolean; content: string; skills_loaded: string[] };
     expect(record.success).toBe(true);
-    expect(record.skills_loaded).toEqual(["review/design-spec"]);
-    expect(record.content).toContain(await readFile(new URL("../catalog/review/design-spec.md", import.meta.url), "utf8"));
+    expect(record.skills_loaded).toEqual([skillId]);
+    expect(record.content).toContain(await readFile(new URL(`../catalog/${skillId}.md`, import.meta.url), "utf8"));
     expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(before);
   });
 

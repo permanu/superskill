@@ -1,0 +1,10 @@
+{
+  "commit": "1111111111111111111111111111111111111111",
+  "status": "consistent",
+  "source_hashes": {},
+  "claim": "put rolls back memory on journal failure",
+  "scope": [
+    "src/store.mjs"
+  ],
+  "limitations": "Dirty source bytes were not recorded."
+}

@@ -1,0 +1,12 @@
+{
+  "scope": [
+    "src/store.mjs"
+  ],
+  "confidence": "INFERRED",
+  "coverage": "partial",
+  "incoming_calls": [],
+  "skipped": [
+    "external plugins",
+    "unsupported Lua"
+  ]
+}

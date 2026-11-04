@@ -63,6 +63,40 @@ async function currentCatalogGraph(): Promise<Graph> {
 }
 
 describe("matchTask", () => {
+  it.each([
+    "Check documentation drift for the cache",
+    "Review docs against current source",
+    "Compare documented contracts with the implementation",
+    "Check the README against the code",
+    "Audit spec drift in the storage subsystem",
+    "review/drift",
+  ])("selects scoped drift checks on demand: %s", async task => {
+    const graph = await currentCatalogGraph();
+    expect(matchTask(task, graph)).toContain("review/drift");
+    expect(alwaysOnSkillIds(graph, task)).not.toContain("review/drift");
+  });
+
+  it("permits a docs comparison without enabling the whole review pack", async () => {
+    const task = "Compare documented contracts with the implementation";
+    const graph = await currentCatalogGraph();
+    expect(packsToLoad(task, "implement").has("review")).toBe(false);
+    const selected = matchTask(task, graph, { phase: "implement" });
+    expect(selected).toContain("review/drift");
+    expect(selected).not.toContain("review/architect");
+    expect(selected).not.toContain("review/design-spec");
+  });
+
+  it.each([
+    "Fix a typo in the README", "Review this code diff", "Review code against the specification",
+    "Write a plan for pagination", "Analyze the storage subsystem", "Independent design review",
+    "Fix clock drift", "Check Terraform drift", "Implement documentation drift detection", "Update documentation",
+  ])("does not add drift guidance for unrelated work: %s", async task => {
+    const graph = await currentCatalogGraph();
+    const previous = { ...graph, nodes: graph.nodes.filter(node => node.id !== "review/drift") };
+    expect(matchTask(task, graph)).toEqual(matchTask(task, previous));
+    expect(alwaysOnSkillIds(graph, task)).toEqual(alwaysOnSkillIds(previous, task));
+  });
+
   it.each(["Review this design spec independently", "Independent design review of the storage proposal", "Review this specification for implementation readiness", "review/design-spec"])("selects design review only on demand: %s", async task => {
     const graph = await currentCatalogGraph();
     expect(matchTask(task, graph)).toContain("review/design-spec");
