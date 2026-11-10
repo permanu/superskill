@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-10
+
+### Fixed
+- Reserve the primary routed methodology or explicitly requested skill before supporting context consumes the token budget. Mixed Rust/React security reviews now deliver `review/architect` within a 4,000-token budget.
+- Preserve default safety policy priority, response ordering, token limits, and explicit reporting of omitted content. Skills that cannot fit or fail trust checks are still not reported as delivered.
+
+### Upgrade notes
+- Update SuperSkill and restart running MCP clients to load the allocation fix. Existing 4,000-token review calls do not require a larger budget for the primary review methodology.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

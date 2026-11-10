@@ -469,11 +469,17 @@ async function activateSkillsContent(
       }
     }
 
+    const primaryId = args.skill_id ?? orchestration.specialists[0]?.pack ?? skillItems[0]?.id;
+    const primaryItems = [...policyItems, ...skillItems].filter(item => item.id === primaryId);
+    const supportingPolicies = policyItems.filter(item => item.id !== primaryId);
+    const supportingSkills = skillItems.filter(item => item.id !== primaryId);
     const { items, dropped, usedTokens } = fitSkillsToBudget(
-      [...budgetItems, ...policyItems, ...principleItems, ...ruleItems, ...skillItems],
+      [budgetItems[0], ...primaryItems, ...budgetItems.slice(1), ...supportingPolicies, ...principleItems, ...ruleItems, ...supportingSkills],
       budget.totalBudget,
       CONTENT_SEPARATOR,
     );
+    const displayOrder = new Map([...budgetItems, ...policyItems, ...principleItems, ...ruleItems, ...skillItems].map((item, index) => [item.id, index]));
+    items.sort((left, right) => displayOrder.get(left.id)! - displayOrder.get(right.id)!);
     const isSkillItem = (id: string): boolean =>
       !id.startsWith("system/") && !ruleIds.has(id) && !principleIds.has(id);
     const trustById = new Map(contentResult.skills.map(skill => [skill.id, skill.trust]));

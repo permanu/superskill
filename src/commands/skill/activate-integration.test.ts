@@ -87,6 +87,21 @@ describe("activateSkills (graph-driven)", { timeout: 30_000 }, () => {
     return dir;
   }
 
+  it.each([undefined, ["crates/api/src/lib.rs", "frontend/src/App.tsx"]])("reserves the primary review methodology under a mixed-stack 4000-token budget (files: %j)", async files => {
+    const result = await activateSkills({
+      task: "Round-2 adversarial security review and code audit across Rust backend crates/* and React 19 frontend/src/* using Elephant + Goldfish dual-pass method",
+      phase: "review",
+      files,
+      max_tokens: 4000,
+    }, createMockCtx(projectDir));
+    expect(result.success).toBe(true);
+    expect(result.skills_loaded.map(skill => skill.id)).toContain("review/architect");
+    expect(result.delivery).toContainEqual({ id: "review/architect", status: "delivered" });
+    expect(result.usedTokens).toBeLessThanOrEqual(4000);
+    expect(result.content).toContain("Default safety and comment policy");
+    expect(result.dropped.length).toBeGreaterThan(0);
+  });
+
   it.each(["review/design-spec", "review/drift"])("loads %s on demand within budget and leaves ordinary activation unchanged", async skillId => {
     const ctx = createMockCtx(projectDir);
     const fetch = vi.fn(() => { throw new Error("review activation must remain local"); });
