@@ -15,7 +15,7 @@ let work: string;
 
 beforeEach(async () => {
   vault = await mkdtemp(join(tmpdir(), "register-vault-"));
-  work = await mkdtemp(join(tmpdir(), "register-work-"));
+  work = await realpath(await mkdtemp(join(tmpdir(), "register-work-")));
 });
 
 afterEach(async () => {
@@ -32,6 +32,18 @@ describe("deriveSlug", () => {
 });
 
 describe("registerProject", () => {
+  it("preserves a custom slug while canonicalizing an existing alias mapping", async () => {
+    const repo = join(work, "actual");
+    const alias = join(work, "alias");
+    await mkdir(repo);
+    await symlink(repo, alias);
+    await writeFile(join(vault, "project-map.json"), JSON.stringify({ [alias]: "custom" }));
+    const result = await registerProject(vault, alias);
+    expect(result.slug).toBe("custom");
+    expect(result.key).toBe(repo);
+    expect((await registerProject(vault, repo)).changed).toBe(false);
+  });
+
   it.each(["[]", "null", '{"/other/repo":42}', '{"/other/repo":"../escape"}'])("preserves structurally invalid mappings: %s", async raw => {
     const path = join(vault, "project-map.json");
     await writeFile(path, raw);
@@ -111,11 +123,13 @@ describe("registerProject", () => {
     expect(raw[repo]).toBe("mine");
   });
 
-  it("rejects invalid slugs and missing vaults", async () => {
+  it("rejects invalid slugs and initializes missing vaults", async () => {
     const repo = join(work, "x");
     await mkdir(repo, { recursive: true });
     await expect(registerProject(vault, repo, "bad slug!")).rejects.toThrow(/Invalid project slug/);
-    await expect(registerProject(join(work, "no-vault"), repo)).rejects.toThrow(/Vault not found/);
+    const result = await registerProject(join(work, "no-vault"), repo);
+    expect(result.changed).toBe(true);
+    expect((await stat(join(work, "no-vault"))).isDirectory()).toBe(true);
   });
 
   it("refuses to overwrite a malformed map", async () => {

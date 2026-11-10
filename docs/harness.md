@@ -211,3 +211,18 @@ npm run test              # vitest
 npm run build             # tsc
 npm run validate:rules    # node dist/rules/cli.js validate
 ```
+
+## Direct CLI and UTCP
+
+`superskill tools` prints a UTCP manual. Each tool accepts an `arguments` string containing the JSON object described by its `contentSchema`. Its CLI call template invokes the installed executable directly; it does not start an MCP server or download a package.
+
+For direct shell use:
+
+```sh
+superskill register /absolute/path/to/repo
+superskill invoke project_context --json '{"workspace_path":"/absolute/path/to/repo"}'
+```
+
+Registration initializes a missing vault, preserves existing project mappings, and can be repeated. `register` maps a repository; `setup --all` configures harnesses. Package installation runs `setup --all`, including in noninteractive environments, so supported harness configurations exist before their first launch. If package-manager lifecycle scripts are disabled, run `superskill setup --all` explicitly. Custom entries are preserved; malformed or unwritable configurations are reported for repair. Restart an already-running harness to load its configuration.
+
+Direct calls share the command registry, argument validation, project isolation and `SUPERSKILL_MCP_ALLOWED_TOOLS` policy with MCP. Invalid calls still return errors and a nonzero exit status. The UTCP CLI client must support safe argument substitution; pass the complete JSON string as one argument.

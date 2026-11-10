@@ -40,7 +40,7 @@ export function probeTool(
   const probe = new Promise<ToolInfo>((resolve) => {
     execFile(cmd, args, { timeout: PROBE_TIMEOUT_MS }, (err, stdout, stderr) => {
       const raw = `${stdout ?? ""}${stderr ?? ""}`.trim();
-      if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (err) {
         resolve({ available: false, compiler: "skipped" });
         return;
       }

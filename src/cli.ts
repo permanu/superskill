@@ -49,6 +49,7 @@ import { hygieneCommand, renderHygieneReport } from "./commands/hygiene.js";
 import { watchdogCommand } from "./commands/watchdog.js";
 import { parseAcceptanceItem } from "./lib/gates/spec.js";
 import type { TicketStatus } from "./lib/gates/tickets.js";
+import { invokeTool, toolManual } from "./core/direct.js";
 import { createScopedCtx, createCtx } from "./app-context.js";
 import { openInObsidian, obsidianDeepLink, scopeGraphFilter } from "./lib/obsidian.js";
 import { registerSetupCommands } from "./setup/index.js";
@@ -95,6 +96,21 @@ export function createProgram(): Command {
     .name("superskill")
     .description("Universal agentic knowledge base + context optimizer + skill marketplace for AI tools")
     .version(version);
+
+  program.command("tools").description("Discover direct CLI tools as a UTCP manual")
+    .action(() => console.log(JSON.stringify(toolManual())));
+
+  program.command("invoke <tool>").description("Call a tool directly without an MCP server")
+    .requiredOption("--json <arguments>", "JSON object matching the tool schema")
+    .action(async (tool: string, options: { json: string }) => {
+      try {
+        const result = await invokeTool(tool, JSON.parse(options.json));
+        console.log(JSON.stringify(result));
+      } catch (error) {
+        console.log(JSON.stringify({ error: error instanceof SyntaxError ? "INVALID_JSON" : "TOOL_FAILED", message: error instanceof Error ? error.message : "Tool call failed" }));
+        process.exitCode = 1;
+      }
+    });
 
   program.addHelpText(
     "after",

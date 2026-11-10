@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
+import { VaultFS, VaultError } from "./vault-fs.js";
 import { basename, resolve, isAbsolute } from "node:path";
 import { validateProjectSlug } from "../config.js";
 import { getGitRoot, invalidateProjectMapCache } from "./project-detector.js";
@@ -60,16 +61,16 @@ export async function registerProject(
   dirPath: string,
   slug?: string
 ): Promise<RegisterProjectResult> {
-  if (!existsSync(vaultPath)) {
-    throw new Error(`Vault not found at ${vaultPath}. Run \`superskill-cli onboard\` or set VAULT_PATH.`);
-  }
-  const resolved = resolve(dirPath);
+  const resolved = await realpath(resolve(dirPath));
+  if (!(await stat(resolved)).isDirectory()) throw new VaultError("INVALID_ARGUMENT", "Registration path must be a directory");
+  if (slug !== undefined) validateProjectSlug(slug);
+  await new VaultFS(vaultPath).initialize();
   const gitRoot = await getGitRoot(resolved);
   const key = gitRoot ?? resolved;
   const mapPath = resolve(vaultPath, "project-map.json");
   return withCoordinationLock(vaultPath, "coordination/locks/project-map.lock", async lock => {
     const map = await readMap(vaultPath);
-    const previous = map[key] ?? null;
+    const previous = map[key] ?? map[resolve(dirPath)] ?? null;
 
     let target: string;
     if (slug !== undefined) {
@@ -84,7 +85,7 @@ export async function registerProject(
       validateProjectSlug(target);
     }
 
-    const changed = previous !== target;
+    const changed = map[key] !== target;
     if (changed) {
       map[key] = target;
       const sorted = Object.fromEntries(Object.entries(map).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

@@ -29,7 +29,7 @@ describe("shared skill install", () => {
     const description = content.match(/^description: (.+)$/m)?.[1] ?? "";
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(description).toContain("Use when this host exposes superskill MCP tools");
-    expect(content).toContain("not a standalone API or offline service");
+    expect(content).toContain("executes a tool directly without an MCP server");
     expect(content).toContain("OpenCode Code Mode uses `tools.superskill.<tool>`");
     expect(content).toContain("Claude Code exposes `mcp__superskill__<tool>`");
     expect(content).toContain("never guess or mechanically rewrite a tool name");

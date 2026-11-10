@@ -74,6 +74,12 @@ export class VaultFS {
     this._projectSlug = options.projectSlug;
   }
 
+  async initialize(): Promise<void> {
+    if (this._projectSlug !== undefined) throw new VaultError("PERMISSION_DENIED", "Only an unscoped vault can be initialized");
+    await mkdir(this._root, { recursive: true, mode: 0o700 });
+    if (!(await stat(this._root)).isDirectory()) throw new VaultError("INVALID_ARGUMENT", "Vault root must be a directory");
+  }
+
   get root(): string {
     return this._root;
   }

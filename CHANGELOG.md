@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-10
+
+### Added
+- Direct tool discovery with `superskill tools`, emitting a UTCP CLI manual, and validated JSON calls through `superskill invoke <tool> --json <arguments>` without a running MCP server.
+
+### Fixed
+- First-run repository registration initializes a missing vault and canonicalizes filesystem aliases while preserving existing custom project slugs.
+- Shared command dispatch uses the resolved workspace project when the caller omits the project argument.
+- Noninteractive package installation configures all supported harnesses, including configurations for harnesses installed later, preserving custom entries and reporting partial failures.
+- MCP reports actionable, fixed messages for common filesystem failures.
+- Compiler probes treat failed runtime launchers as unavailable instead of reporting repeated compilation failures.
+
+### Upgrade notes
+- Restart running harnesses after updating. If lifecycle scripts are disabled, run `superskill setup --all` explicitly.
+- `register` maps repositories; `setup` configures harnesses. Direct calls preserve schema validation, project isolation, and the configured tool allowlist.
+- UTCP CLI callers supply a JSON-encoded `arguments` string and must support safe argument substitution. MCP remains supported.
+
 ## [0.17.0] - 2026-11-04
 
 ### Added

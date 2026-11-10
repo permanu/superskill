@@ -1,24 +1,17 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+import { Command } from "commander";
+import { registerSetupCommands } from "./index.js";
+
 try {
-  const { detectClients } = await import("./detect.js");
-  const { CLIENT_REGISTRY } = await import("./clients.js");
-
-  if (!process.stdout.isTTY) process.exit(0);
-
-  const detected = detectClients();
-
-  console.log("\n  superskill installed!\n");
-
-  if (detected.length > 0) {
-    console.log(`  Detected: ${detected.map((c) => c.config.name).join(", ")}`);
-    console.log('  Run "superskill setup" to auto-configure them as your knowledge base.');
-  } else {
-    console.log("  No AI clients detected.");
+  const program = new Command();
+  registerSetupCommands(program);
+  await program.parseAsync(["setup", "--all"], { from: "user" });
+  if (process.exitCode) {
+    console.error('[setup-postinstall] Some clients could not be configured. Run "superskill setup --all" to retry.');
+    process.exitCode = 0;
   }
-
-  console.log(`  Run "superskill setup --all" to configure all ${CLIENT_REGISTRY.filter(client => client.support === "documented").length} supported clients.\n`);
-} catch {
-  // Postinstall must never fail the install
-  process.exit(0);
+} catch (error) {
+  console.error(`[setup-postinstall] Automatic setup failed: ${error instanceof Error ? error.message : String(error)}. Run "superskill setup --all" to retry.`);
+  process.exitCode = 0;
 }

@@ -42,7 +42,7 @@ describe("compileRust", () => {
   it("compiles proc-macro snippets in the proc-macro fixture", async () => {
     const result = await compileRust(PROC_MACRO_SNIPPET);
     if (result.skipped) {
-      expect(result.output).toContain("fixture unavailable");
+      expect(result.output).toMatch(/fixture unavailable|rustc is not available/);
       return;
     }
     expect(result.ok, result.output).toBe(true);

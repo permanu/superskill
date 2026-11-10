@@ -7,7 +7,7 @@ description: Routes authorized coding work through the superskill project knowle
 
 # SuperSkill
 
-SuperSkill is a consumer skill for a host-configured `superskill` MCP server, not a standalone API or offline service. Use only tool names actually exposed by the host: OpenCode Code Mode uses `tools.superskill.<tool>`, while Claude Code exposes `mcp__superskill__<tool>`. Other hosts may differ; never guess or mechanically rewrite a tool name. If a tool is unavailable, report that or use an already-installed CLI after verifying it with `superskill --help`. Do not install tools or use `npx` unless network use is explicitly approved.
+SuperSkill supports direct CLI calls and host-configured MCP. Verify the installed CLI with `superskill --help`; `superskill tools` returns a UTCP manual with tool schemas, and `superskill invoke <tool> --json <arguments>` executes a tool directly without an MCP server. Encode arguments as one JSON object and pass them as a single process argument. Use only tool names actually exposed by the host: OpenCode Code Mode uses `tools.superskill.<tool>`, while Claude Code exposes `mcp__superskill__<tool>`. Other hosts may differ; never guess or mechanically rewrite a tool name. If a tool is unavailable, report that or use an already-installed CLI after verifying it with `superskill --help`. Do not install tools or use `npx` unless network use is explicitly approved.
 
 ## Scope and authorization
 

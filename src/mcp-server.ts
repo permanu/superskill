@@ -76,6 +76,15 @@ function errorResponse(error: unknown, operation: "tool call" | "resource read" 
   if (error instanceof WorkspaceNotMappedError) {
     return { error: "PERMISSION_DENIED", message: "Workspace is not mapped to the requested project. Register the workspace first." };
   }
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  const recovery: Record<string, string> = {
+    ENOENT: "Required file or directory is missing. Run superskill register for the workspace, or check VAULT_PATH.",
+    EACCES: "Filesystem access denied. Check permissions for the workspace and VAULT_PATH.",
+    EPERM: "Filesystem operation denied. Check sandbox permissions for the workspace and VAULT_PATH.",
+    ENOTDIR: "A configured directory is a file. Check the workspace and VAULT_PATH.",
+    ENOSPC: "Storage is full. Free space and retry.",
+  };
+  if (code && Object.hasOwn(recovery, code)) return { error: code, message: recovery[code] };
   const events = { "tool call": "mcp.tool-failed", "resource read": "mcp.resource-failed", "prompt load": "mcp.prompt-failed" } as const;
   logDiagnostic(events[operation], error);
   return { error: "INTERNAL_ERROR", message: "An internal error occurred. Check the MCP server logs for details." };

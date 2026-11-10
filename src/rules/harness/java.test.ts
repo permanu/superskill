@@ -47,7 +47,7 @@ class PointTest {
     }
 }`);
     if (result.skipped) {
-      expect(result.output).toContain("missing-dependency");
+      expect(result.output).toMatch(/missing-dependency|javac is not available/);
       return;
     }
     expect(result.ok, result.output).toBe(true);
@@ -63,7 +63,7 @@ public class StringJoinBenchmark {
     }
 }`);
     if (result.skipped) {
-      expect(result.output).toContain("missing-dependency");
+      expect(result.output).toMatch(/missing-dependency|javac is not available/);
       return;
     }
     expect(result.ok, result.output).toBe(true);

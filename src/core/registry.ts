@@ -154,7 +154,11 @@ export class CommandRegistry {
     if (!reg) throw new VaultError("INVALID_ARGUMENT", `Unknown command: ${name}`);
     validateArguments(reg.toolDef.inputSchema, rawArgs);
 
-    const adaptedArgs = reg.adaptArgs ? reg.adaptArgs(rawArgs) : rawArgs;
+    const fields = rawArgs as Record<string, unknown>;
+    const scopedArgs = ctx.projectSlug && reg.toolDef.inputSchema.properties?.project && fields.project === undefined
+      ? { ...fields, project: ctx.projectSlug }
+      : rawArgs;
+    const adaptedArgs = reg.adaptArgs ? reg.adaptArgs(scopedArgs) : scopedArgs;
     return reg.handler(adaptedArgs, ctx);
   }
 

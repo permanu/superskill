@@ -59,6 +59,8 @@ const CLI_TO_MCP_OVERRIDES: Record<string, string> = {
  * Key = full CLI path, value = why it is CLI-only.
  */
 const CLI_ONLY_ALLOWLIST: Record<string, string> = {
+  tools: "Direct CLI discovery emits a UTCP manual.",
+  invoke: "Direct CLI transport dispatches registered tools.",
   onboard: "CLI onboarding; configures local AI clients, no vault command counterpart.",
   setup: "Machine-local client configuration (src/setup); intentionally not an MCP tool.",
   teardown: "Machine-local client deconfiguration (src/setup); intentionally not an MCP tool.",
